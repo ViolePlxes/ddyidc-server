@@ -197,9 +197,21 @@ func (m *Manager) processHelperResults(ctx context.Context) {
 		if parseErr != nil {
 			continue
 		}
-		_ = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, sanitizeOutput(result.Log))
+		existing, _ := m.repo.Get(ctx, id)
+		_ = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, mergeTaskLogs(existing, result.Log))
 		_ = m.locker.Release(context.Background(), result.TaskID)
 		_ = os.Remove(path)
 		_ = os.Remove(strings.TrimSuffix(path, ".result.json") + ".plan.json")
 	}
+}
+
+func mergeTaskLogs(existing *Task, helperLog string) string {
+	parts := make([]string, 0, 2)
+	if existing != nil && strings.TrimSpace(existing.Log) != "" {
+		parts = append(parts, sanitizeOutput(existing.Log))
+	}
+	if strings.TrimSpace(helperLog) != "" {
+		parts = append(parts, sanitizeOutput(helperLog))
+	}
+	return strings.Join(parts, "\n")
 }

@@ -42,6 +42,16 @@ func TestPackageVersionComparisonValue(t *testing.T) {
 	}
 }
 
+func TestMergeTaskLogsPreservesPreflightAndHelperOutput(t *testing.T) {
+	existing := &Task{Log: "前置检查通过\n构建完成"}
+	merged := mergeTaskLogs(existing, "新进程启动\n后置检查通过")
+	for _, expected := range []string{"前置检查通过", "构建完成", "新进程启动", "后置检查通过"} {
+		if !strings.Contains(merged, expected) {
+			t.Fatalf("merged log lost %q: %s", expected, merged)
+		}
+	}
+}
+
 func TestDirectoryRollbackRestoresBackup(t *testing.T) {
 	root := t.TempDir()
 	dist := filepath.Join(root, "dist")
