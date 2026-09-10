@@ -23,7 +23,7 @@ func (e *BusinessError) Error() string { return e.Message }
 
 type PostPaymentCoordinator interface {
 	ProvisionAfterPayment(context.Context, int64, int64, string) error
-	AfterRechargePayment(context.Context, int64, string, int64, int64) error
+	AfterRechargePayment(context.Context, int64, int64, int64) error
 }
 
 type Dispatcher interface {
@@ -48,10 +48,10 @@ func (d *AsyncDispatcher) Dispatch(payment *dom.Payment) {
 		if copyPayment.BizType == dom.BizOrder {
 			err = d.coordinator.ProvisionAfterPayment(ctx, copyPayment.CustomerID, copyPayment.BizID, copyPayment.Channel)
 		} else {
-			err = d.coordinator.AfterRechargePayment(ctx, copyPayment.BizID, copyPayment.OutTradeNo, copyPayment.CustomerID, copyPayment.AmountFen)
+			err = d.coordinator.AfterRechargePayment(ctx, copyPayment.BizID, copyPayment.CustomerID, copyPayment.AmountFen)
 		}
 		if err != nil {
-			logx.Errorf("post-payment action failed payment_id=%d biz_type=%s biz_id=%d: %v", copyPayment.ID, copyPayment.BizType, copyPayment.BizID, err)
+			logx.Errorf("post-payment action failed payment_id=%d biz_type=%s biz_id=%d", copyPayment.ID, copyPayment.BizType, copyPayment.BizID)
 		}
 	}()
 }
@@ -69,6 +69,9 @@ func NewService(repo rep.Repository, config Config, channels map[string]Channel,
 }
 
 func BuildChannels(ctx context.Context, config Config) (map[string]Channel, error) {
+	if config.MockEnabled {
+		return nil, errors.New("支付 Mock 已被生产构建禁用")
+	}
 	channels := make(map[string]Channel, 2)
 	if config.Wechat.Enabled {
 		channel, err := newWechatChannel(ctx, config.Wechat)
@@ -87,7 +90,7 @@ func BuildChannels(ctx context.Context, config Config) (map[string]Channel, erro
 	return channels, nil
 }
 
-func (s *Service) CreateOrder(ctx context.Context, customerID, orderID int64, channelName string) (*types.CheckoutResponse, error) {
+func (s *Service) CreateOrder(ctx context.Context, customerID, orderID int64, channelName, mode string) (*types.CheckoutResponse, error) {
 	channelName, channel, err := s.channel(channelName)
 	if err != nil {
 		return nil, err
@@ -96,14 +99,14 @@ func (s *Service) CreateOrder(ctx context.Context, customerID, orderID int64, ch
 	if err != nil {
 		return nil, mapRepositoryError(err)
 	}
-	checkout, err := channel.Create(ctx, prepared.Payment, prepared.Subject)
+	checkout, err := channel.Create(ctx, prepared.Payment, prepared.Subject, mode)
 	if err != nil {
 		return nil, fmt.Errorf("创建渠道支付单失败: %w", err)
 	}
 	return checkoutResponse(prepared.Payment, checkout), nil
 }
 
-func (s *Service) CreateRecharge(ctx context.Context, customerID, rechargeID int64, channelName string) (*types.CheckoutResponse, error) {
+func (s *Service) CreateRecharge(ctx context.Context, customerID, rechargeID int64, channelName, mode string) (*types.CheckoutResponse, error) {
 	channelName, channel, err := s.channel(channelName)
 	if err != nil {
 		return nil, err
@@ -112,7 +115,7 @@ func (s *Service) CreateRecharge(ctx context.Context, customerID, rechargeID int
 	if err != nil {
 		return nil, mapRepositoryError(err)
 	}
-	checkout, err := channel.Create(ctx, prepared.Payment, prepared.Subject)
+	checkout, err := channel.Create(ctx, prepared.Payment, prepared.Subject, mode)
 	if err != nil {
 		return nil, fmt.Errorf("创建渠道支付单失败: %w", err)
 	}
@@ -132,10 +135,89 @@ func (s *Service) Status(ctx context.Context, customerID int64, bizType dom.BizT
 			payment = closed
 		}
 	}
-	response := &types.StatusResponse{Status: string(payment.Status), Channel: payment.Channel, PaidAmount: payment.Amount}
+	response := &types.StatusResponse{PayNo: payment.PaymentNo, Status: string(payment.Status), Channel: payment.Channel, PaidAmount: payment.Amount}
 	if payment.PaidAt != nil {
 		response.PaidAt = payment.PaidAt.Format(time.RFC3339)
 	}
+	return response, nil
+}
+
+func (s *Service) StatusByPayNo(ctx context.Context, customerID int64, payNo string) (*types.StatusResponse, error) {
+	payment, err := s.repo.FindByPaymentNo(ctx, strings.TrimSpace(payNo))
+	if err != nil {
+		return nil, err
+	}
+	if payment == nil {
+		return nil, &BusinessError{Code: 40001, Message: "支付单不存在"}
+	}
+	if payment.CustomerID != customerID {
+		return nil, &BusinessError{Code: 40002, Message: "无权查询该支付单"}
+	}
+	if payment.Status == dom.StatusPending && !payment.ExpireAt.After(s.now()) {
+		if closed, closeErr := s.Close(ctx, customerID, payment.BizType, payment.BizID); closeErr == nil {
+			payment = closed
+		}
+	}
+	response := &types.StatusResponse{PayNo: payment.PaymentNo, Status: string(payment.Status), Channel: payment.Channel, PaidAmount: payment.Amount}
+	if payment.PaidAt != nil {
+		response.PaidAt = payment.PaidAt.Format(time.RFC3339)
+	}
+	return response, nil
+}
+
+func (s *Service) QueryAlipay(ctx context.Context, payNo string) (*types.QueryResponse, error) {
+	payNo = strings.TrimSpace(payNo)
+	if payNo == "" || len(payNo) > 64 {
+		return nil, &BusinessError{Code: 40000, Message: "支付单号格式错误"}
+	}
+	channel, ok := s.channels["alipay"].(QueryableChannel)
+	if !ok {
+		return nil, &BusinessError{Code: 40003, Message: "支付宝通道尚未配置"}
+	}
+	payment, err := s.repo.FindByPaymentNo(ctx, payNo)
+	if err != nil {
+		return nil, err
+	}
+	outTradeNo := payNo
+	if payment != nil {
+		outTradeNo = payment.OutTradeNo
+	}
+	platform, err := channel.Query(ctx, outTradeNo)
+	if err != nil {
+		var queryErr *PlatformQueryError
+		if errors.As(err, &queryErr) {
+			message := "支付宝查询失败（" + queryErr.Code
+			if queryErr.SubCode != "" {
+				message += "/" + queryErr.SubCode
+			}
+			message += "）"
+			return nil, &BusinessError{Code: 40006, Message: message}
+		}
+		return nil, err
+	}
+	response := &types.QueryResponse{PayNo: payNo, Connected: true, Found: platform.Found, Status: platform.Status, TradeNo: platform.TransactionID}
+	if !platform.Found || payment == nil {
+		return response, nil
+	}
+	if payment.Channel != "alipay" || platform.OutTradeNo != payment.OutTradeNo || platform.AmountFen != payment.AmountFen || platform.Currency != payment.Currency {
+		return nil, &BusinessError{Code: 40005, Message: "支付宝查询结果与本地支付单不一致"}
+	}
+	if platform.Status != "TRADE_SUCCESS" && platform.Status != "TRADE_FINISHED" {
+		return response, nil
+	}
+	completed, transitioned, err := s.repo.Complete(ctx, dom.VerifiedNotification{
+		Channel: "alipay", OutTradeNo: platform.OutTradeNo, TransactionID: platform.TransactionID,
+		AmountFen: platform.AmountFen, Currency: platform.Currency, PaidAt: platform.PaidAt,
+		SafeRaw: `{"source":"alipay.trade.query","verified":true}`,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if transitioned && s.dispatcher != nil {
+		s.dispatcher.Dispatch(completed)
+	}
+	response.Reconciled = transitioned
+	response.Status = string(completed.Status)
 	return response, nil
 }
 
@@ -146,7 +228,7 @@ func (s *Service) Close(ctx context.Context, customerID int64, bizType dom.BizTy
 	}
 	if channel := s.channels[payment.Channel]; channel != nil {
 		if err := channel.Close(ctx, payment); err != nil {
-			logx.Errorf("channel close failed payment_id=%d channel=%s: %v", payment.ID, payment.Channel, err)
+			logx.Errorf("channel close failed payment_id=%d channel=%s", payment.ID, payment.Channel)
 		}
 	}
 	return payment, nil
@@ -203,13 +285,13 @@ func (s *Service) channel(name string) (string, Channel, error) {
 
 func checkoutResponse(payment *dom.Payment, checkout *Checkout) *types.CheckoutResponse {
 	response := &types.CheckoutResponse{
-		PaymentID: fmt.Sprintf("%d", payment.ID), Status: string(payment.Status), ExpireAt: payment.ExpireAt.Format(time.RFC3339),
+		PaymentID: fmt.Sprintf("%d", payment.ID), PayNo: payment.PaymentNo, Status: string(payment.Status), ExpireAt: payment.ExpireAt.Format(time.RFC3339),
 	}
 	if checkout.CodeURL != "" {
 		response.Wechat = &types.WechatCheckout{CodeURL: checkout.CodeURL}
 	}
-	if checkout.Form != "" {
-		response.Alipay = &types.AlipayCheckout{Form: checkout.Form}
+	if checkout.PayURL != "" {
+		response.Alipay = &types.AlipayCheckout{PayURL: checkout.PayURL, Mode: checkout.Mode}
 	}
 	return response
 }

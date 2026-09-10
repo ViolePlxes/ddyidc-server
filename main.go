@@ -182,7 +182,6 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	// 订单/充值（M2/M4 挂钩分销与优惠券）
 	orderSvc := orderservice.NewService(repositories.Order, marketingapi.NewOrderHooks(marketingSvc), snapshotKey)
 	orderSvc.SetNotifier(notifyManager)
-	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt)
 	if err := paymentrepo.EnsureSchemaAndDefaults(context.Background(), db.G); err != nil {
 		panic("payment schema initialization failed: " + err.Error())
 	}
@@ -195,6 +194,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("payment channel initialization failed: " + err.Error())
 	}
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(orderSvc))
+	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
 	remoteRegistry := remoteconsole.NewRegistry()

@@ -29,6 +29,7 @@ type Repository interface {
 	PrepareOrder(context.Context, int64, int64, string, time.Time) (*Prepared, error)
 	PrepareRecharge(context.Context, int64, int64, string, time.Time) (*Prepared, error)
 	FindByOutTradeNo(context.Context, string) (*dom.Payment, error)
+	FindByPaymentNo(context.Context, string) (*dom.Payment, error)
 	FindByBiz(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
 	Complete(context.Context, dom.VerifiedNotification) (*dom.Payment, bool, error)
 	Close(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
@@ -65,14 +66,15 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 			return ErrNotPayable
 		}
 		orderIDCopy := row.ID
+		paymentNo := generatePaymentNo()
 		payment := &dom.Payment{
-			PaymentNo:  generatePaymentNo(),
+			PaymentNo:  paymentNo,
 			BizType:    dom.BizOrder,
 			BizID:      row.ID,
 			OrderID:    &orderIDCopy,
 			CustomerID: customerID,
 			Channel:    channel,
-			OutTradeNo: row.OrderNo,
+			OutTradeNo: paymentNo,
 			Amount:     centsToYuan(row.PayAmount),
 			AmountFen:  row.PayAmount,
 			Currency:   "CNY",
@@ -114,13 +116,14 @@ func (r *GormRepository) PrepareRecharge(ctx context.Context, customerID, rechar
 		if row.Status != 1 || row.Amount <= 0 {
 			return ErrNotPayable
 		}
+		paymentNo := generatePaymentNo()
 		payment := &dom.Payment{
-			PaymentNo:  generatePaymentNo(),
+			PaymentNo:  paymentNo,
 			BizType:    dom.BizRecharge,
 			BizID:      row.ID,
 			CustomerID: customerID,
 			Channel:    channel,
-			OutTradeNo: row.RechargeNo,
+			OutTradeNo: paymentNo,
 			Amount:     centsToYuan(row.Amount),
 			AmountFen:  row.Amount,
 			Currency:   "CNY",
@@ -138,17 +141,39 @@ func (r *GormRepository) PrepareRecharge(ctx context.Context, customerID, rechar
 
 func (r *GormRepository) insertOrReuse(tx *gorm.DB, payment *dom.Payment) error {
 	var existing dom.Payment
-	err := tx.Table(existing.TableName()).Where("biz_type = ? AND biz_id = ?", payment.BizType, payment.BizID).First(&existing).Error
+	err := tx.Table(existing.TableName()).Where("biz_type = ? AND biz_id = ?", payment.BizType, payment.BizID).Order("created_at DESC, id DESC").First(&existing).Error
 	if err == nil {
-		if existing.Status == dom.StatusPending {
-			return ErrPaymentExists
+		if existing.Status == dom.StatusPaid {
+			return ErrNotPayable
 		}
-		return ErrNotPayable
+		if existing.Status == dom.StatusPending && existing.ExpireAt.After(time.Now()) {
+			if existing.Channel != payment.Channel {
+				return ErrPaymentExists
+			}
+			*payment = existing
+			return nil
+		}
+		if existing.Status == dom.StatusPending {
+			now := time.Now()
+			if updateErr := tx.Table(existing.TableName()).Where("id = ? AND status = ?", existing.ID, dom.StatusPending).Updates(map[string]any{"status": dom.StatusClosed, "closed_at": now, "updated_at": now}).Error; updateErr != nil {
+				return updateErr
+			}
+		}
+		err = gorm.ErrRecordNotFound
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 	return tx.Table(payment.TableName()).Create(payment).Error
+}
+
+func (r *GormRepository) FindByPaymentNo(ctx context.Context, paymentNo string) (*dom.Payment, error) {
+	var payment dom.Payment
+	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("payment_no = ?", paymentNo).First(&payment).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &payment, err
 }
 
 func (r *GormRepository) FindByOutTradeNo(ctx context.Context, outTradeNo string) (*dom.Payment, error) {
@@ -162,7 +187,7 @@ func (r *GormRepository) FindByOutTradeNo(ctx context.Context, outTradeNo string
 
 func (r *GormRepository) FindByBiz(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
 	var payment dom.Payment
-	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).First(&payment).Error
+	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).Order("created_at DESC, id DESC").First(&payment).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}

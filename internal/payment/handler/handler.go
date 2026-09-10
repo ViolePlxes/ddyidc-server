@@ -28,10 +28,14 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, manager *auth.M
 		{Method: http.MethodPost, Path: "/api/v1/payment/recharge/create", Handler: h.createRecharge},
 		{Method: http.MethodGet, Path: "/api/v1/payment/order/:orderId/status", Handler: h.orderStatus},
 		{Method: http.MethodGet, Path: "/api/v1/payment/recharge/:id/status", Handler: h.rechargeStatus},
+		{Method: http.MethodGet, Path: "/api/v1/payment/:payNo/status", Handler: h.paymentStatus},
 		{Method: http.MethodPost, Path: "/api/v1/payment/order/:orderId/close", Handler: h.closeOrder},
 		{Method: http.MethodPost, Path: "/api/v1/payment/refund", Handler: h.refund},
 		{Method: http.MethodPost, Path: "/api/v1/payment/notify/wechat", Handler: h.wechatNotify},
 		{Method: http.MethodPost, Path: "/api/v1/payment/notify/alipay", Handler: h.alipayNotify},
+		{Method: http.MethodPost, Path: "/api/v1/payment/alipay/notify", Handler: h.alipayNotify},
+		{Method: http.MethodPost, Path: "/api/v1/payment/alipay/query", Handler: h.alipayQuery},
+		{Method: http.MethodPost, Path: "/admin/v1/payment/alipay/query", Handler: h.alipayQuery},
 	})
 }
 
@@ -48,7 +52,7 @@ func (h *handler) createOrder(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	response, err := h.service.CreateOrder(r.Context(), customerID, orderID, input.Channel)
+	response, err := h.service.CreateOrder(r.Context(), customerID, orderID, input.Channel, input.Mode)
 	writeResult(w, response, err)
 }
 
@@ -66,7 +70,7 @@ func (h *handler) createRecharge(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, 40001, "充值单不存在")
 		return
 	}
-	response, err := h.service.CreateRecharge(r.Context(), customerID, rechargeID, input.Channel)
+	response, err := h.service.CreateRecharge(r.Context(), customerID, rechargeID, input.Channel, input.Mode)
 	writeResult(w, response, err)
 }
 
@@ -76,6 +80,20 @@ func (h *handler) orderStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) rechargeStatus(w http.ResponseWriter, r *http.Request) {
 	h.status(w, r, dom.BizRecharge, "id")
+}
+
+func (h *handler) paymentStatus(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.customer(w, r)
+	if !ok {
+		return
+	}
+	payNo := strings.TrimSpace(pathvar.Vars(r)["payNo"])
+	if payNo == "" || len(payNo) > 64 {
+		writeError(w, http.StatusBadRequest, 40001, "支付单号格式错误")
+		return
+	}
+	response, err := h.service.StatusByPayNo(r.Context(), customerID, payNo)
+	writeResult(w, response, err)
 }
 
 func (h *handler) status(w http.ResponseWriter, r *http.Request, bizType dom.BizType, key string) {
@@ -133,13 +151,44 @@ func (h *handler) wechatNotify(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) alipayNotify(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := h.service.HandleNotification("alipay", r); err != nil {
-		logx.Errorf("alipay payment notification rejected: %v", err)
+		logx.Error("alipay payment notification rejected")
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("failure"))
 		return
 	}
 	_, _ = w.Write([]byte("success"))
+}
+
+func (h *handler) alipayQuery(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	var input types.QueryRequest
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	response, err := h.service.QueryAlipay(r.Context(), input.PayNo)
+	writeResult(w, response, err)
+}
+
+func (h *handler) admin(w http.ResponseWriter, r *http.Request) bool {
+	cookie, err := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		writeError(w, http.StatusUnauthorized, 401, "登录已失效，请重新登录")
+		return false
+	}
+	claims, err := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if err != nil || claims == nil {
+		writeError(w, http.StatusUnauthorized, 401, "登录已失效，请重新登录")
+		return false
+	}
+	if claims.Role != "admin" {
+		writeError(w, http.StatusForbidden, 403, "没有支付查询权限")
+		return false
+	}
+	return true
 }
 
 func (h *handler) customer(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -190,7 +239,7 @@ func writeResult(w http.ResponseWriter, data any, err error) {
 		writeError(w, http.StatusBadRequest, businessError.Code, businessError.Message)
 		return
 	}
-	logx.Errorf("payment request failed: %v", err)
+	logx.Error("payment request failed")
 	writeError(w, http.StatusInternalServerError, 50000, "支付服务暂不可用")
 }
 

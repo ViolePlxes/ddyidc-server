@@ -693,9 +693,16 @@ func (s *Service) PayRecharge(ctx context.Context, customerID, rechargeID int64)
 
 // AfterRechargePayment runs non-balance side effects after the payment and
 // balance ledger transaction has committed. The marketing hook is idempotent.
-func (s *Service) AfterRechargePayment(ctx context.Context, rechargeID int64, rechargeNo string, customerID, amountCents int64) error {
-	hookErr := s.hooks.OnRechargePaid(ctx, rechargeID, rechargeNo, customerID, amountCents)
-	if notifyErr := s.notifyRecharge(ctx, rechargeID, rechargeNo, customerID, amountCents); notifyErr != nil && hookErr == nil {
+func (s *Service) AfterRechargePayment(ctx context.Context, rechargeID, customerID, amountCents int64) error {
+	recharge, err := s.repo.FindRecharge(ctx, rechargeID)
+	if err != nil {
+		return fmt.Errorf("查询已支付充值单失败: %w", err)
+	}
+	if recharge == nil || recharge.CustomerID != customerID || recharge.Amount != amountCents || recharge.Status != 2 {
+		return errors.New("已支付充值单校验失败")
+	}
+	hookErr := s.hooks.OnRechargePaid(ctx, rechargeID, recharge.RechargeNo, customerID, amountCents)
+	if notifyErr := s.notifyRecharge(ctx, rechargeID, recharge.RechargeNo, customerID, amountCents); notifyErr != nil && hookErr == nil {
 		hookErr = notifyErr
 	}
 	return hookErr

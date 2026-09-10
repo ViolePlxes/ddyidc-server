@@ -1,14 +1,19 @@
 package payment
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
 	"gorm.io/gorm"
 )
+
+const defaultAlipaySecretPath = `D:\ddy\.tools\secrets\alipay.json`
 
 type WechatConfig struct {
 	Enabled    bool
@@ -26,15 +31,26 @@ type AlipayConfig struct {
 	AppID           string
 	AppPrivateKey   string
 	AlipayPublicKey string
+	SellerID        string
 	Gateway         string
 	NotifyURL       string
 	ReturnURL       string
+	QuitURL         string
 }
 
 type Config struct {
 	Wechat        WechatConfig
 	Alipay        AlipayConfig
 	ExpireMinutes int
+	MockEnabled   bool
+}
+
+type alipaySecretFile struct {
+	AppID           string `json:"app_id"`
+	AppPrivateKey   string `json:"app_private_key"`
+	AlipayPublicKey string `json:"alipay_public_key"`
+	SignType        string `json:"sign_type"`
+	SellerID        string `json:"seller_id"`
 }
 
 type configRow struct {
@@ -55,6 +71,14 @@ func LoadConfig(ctx context.Context, database *gorm.DB) (Config, error) {
 	if err != nil || expireMinutes <= 0 || expireMinutes > 1440 {
 		expireMinutes = 15
 	}
+	secret, secretFound, err := loadAlipaySecrets(defaultAlipaySecretPath)
+	if err != nil {
+		return Config{}, err
+	}
+	gateway := strings.TrimSpace(values["payment.alipay.gateway"])
+	if gateway == "" {
+		gateway = "https://openapi.alipay.com/gateway.do"
+	}
 	cfg := Config{
 		Wechat: WechatConfig{
 			Enabled:    configBool(values["payment.wechat.enabled"]),
@@ -66,15 +90,18 @@ func LoadConfig(ctx context.Context, database *gorm.DB) (Config, error) {
 			BaseURL:    strings.TrimRight(values["payment.wechat.base_url"], "/"),
 		},
 		Alipay: AlipayConfig{
-			Enabled:         configBool(values["payment.alipay.enabled"]),
-			AppID:           values["payment.alipay.app_id"],
-			AppPrivateKey:   values["payment.alipay.app_private_key"],
-			AlipayPublicKey: values["payment.alipay.alipay_public_key"],
-			Gateway:         values["payment.alipay.gateway"],
+			Enabled:         secretFound,
+			AppID:           secret.AppID,
+			AppPrivateKey:   secret.AppPrivateKey,
+			AlipayPublicKey: secret.AlipayPublicKey,
+			SellerID:        secret.SellerID,
+			Gateway:         gateway,
 			NotifyURL:       values["payment.alipay.notify_url"],
 			ReturnURL:       values["payment.alipay.return_url"],
+			QuitURL:         values["payment.alipay.quit_url"],
 		},
 		ExpireMinutes: expireMinutes,
+		MockEnabled:   configBool(values["payment.mock_enabled"]),
 	}
 	if cfg.Wechat.BaseURL != "" {
 		cfg.Wechat.NotifyURL = cfg.Wechat.BaseURL + "/api/v1/payment/notify/wechat"
@@ -92,6 +119,30 @@ func LoadConfig(ctx context.Context, database *gorm.DB) (Config, error) {
 	return cfg, nil
 }
 
+func loadAlipaySecrets(path string) (alipaySecretFile, bool, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return alipaySecretFile{}, false, nil
+	}
+	if err != nil {
+		return alipaySecretFile{}, false, errors.New("读取支付宝本地凭据失败")
+	}
+	var secret alipaySecretFile
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+	if err := json.Unmarshal(raw, &secret); err != nil {
+		return alipaySecretFile{}, false, errors.New("支付宝本地凭据格式无效")
+	}
+	secret.AppID = strings.TrimSpace(secret.AppID)
+	secret.AppPrivateKey = strings.TrimSpace(secret.AppPrivateKey)
+	secret.AlipayPublicKey = strings.TrimSpace(secret.AlipayPublicKey)
+	secret.SignType = strings.ToUpper(strings.TrimSpace(secret.SignType))
+	secret.SellerID = strings.TrimSpace(secret.SellerID)
+	if secret.AppID == "" || secret.AppPrivateKey == "" || secret.AlipayPublicKey == "" || secret.SignType != "RSA2" {
+		return alipaySecretFile{}, false, errors.New("支付宝本地凭据不完整或签名类型不是 RSA2")
+	}
+	return secret, true, nil
+}
+
 func configBool(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	return value == "1" || value == "true" || value == "yes" || value == "on"
@@ -105,14 +156,25 @@ func validateWechatConfig(cfg WechatConfig) error {
 }
 
 func validateAlipayConfig(cfg AlipayConfig) error {
-	if cfg.AppID == "" || cfg.AppPrivateKey == "" || cfg.AlipayPublicKey == "" || cfg.Gateway == "" || cfg.NotifyURL == "" {
+	if cfg.AppID == "" || cfg.AppPrivateKey == "" || cfg.AlipayPublicKey == "" || cfg.Gateway == "" || cfg.NotifyURL == "" || cfg.ReturnURL == "" {
 		return errors.New("支付宝已启用但凭据、网关或回调地址不完整")
 	}
 	u, err := url.Parse(cfg.Gateway)
 	if err != nil || u.Scheme != "https" || (u.Host != "openapi.alipay.com" && u.Host != "openapi.alipaydev.com" && u.Host != "openapi-sandbox.dl.alipaydev.com") {
 		return errors.New("支付宝网关必须使用官方 HTTPS 地址")
 	}
-	return validateCallbackURL(cfg.NotifyURL)
+	if err := validateCallbackURL(cfg.NotifyURL); err != nil {
+		return err
+	}
+	if err := validateCallbackURL(cfg.ReturnURL); err != nil {
+		return errors.New("支付宝同步返回地址无效")
+	}
+	if cfg.QuitURL != "" {
+		if err := validateCallbackURL(cfg.QuitURL); err != nil {
+			return errors.New("支付宝手机网站退出地址无效")
+		}
+	}
+	return nil
 }
 
 func validateCallbackURL(raw string) error {

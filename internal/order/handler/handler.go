@@ -1,21 +1,23 @@
-﻿// Package order exposes the real order/recharge HTTP boundary.
+// Package order exposes the real order/recharge HTTP boundary.
 package order
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 
 	svc "ddyidc/internal/order/service"
+	paymenttypes "ddyidc/internal/payment/types"
 	"ddyidc/pkg/auth"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 )
 
 // RegisterOrderHandlers 注册订单/充值路由（JWT customer 角色）。
-func RegisterOrderHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
-	h := &orderHandler{service: service, jwt: jwt}
+func RegisterOrderHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager, payments PaymentCreator) {
+	h := &orderHandler{service: service, jwt: jwt, payments: payments}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/v1/orders", Handler: h.createOrder},
 		{Method: http.MethodGet, Path: "/api/v1/orders", Handler: h.listOrders},
@@ -29,8 +31,14 @@ func RegisterOrderHandlers(server *rest.Server, service *svc.Service, jwt *auth.
 }
 
 type orderHandler struct {
-	service *svc.Service
-	jwt     *auth.Manager
+	service  *svc.Service
+	jwt      *auth.Manager
+	payments PaymentCreator
+}
+
+type PaymentCreator interface {
+	CreateOrder(context.Context, int64, int64, string, string) (*paymenttypes.CheckoutResponse, error)
+	CreateRecharge(context.Context, int64, int64, string, string) (*paymenttypes.CheckoutResponse, error)
 }
 
 func writeJSON(w http.ResponseWriter, data any) {
@@ -163,7 +171,13 @@ func (h *orderHandler) payOrder(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &input) {
 		return
 	}
-	view, err := h.service.PayOrder(r.Context(), customerID, id, input.Method)
+	if input.Method == "" {
+		input.Method = "alipay"
+	}
+	if input.Mode == "" {
+		input.Mode = "page"
+	}
+	view, err := h.payments.CreateOrder(r.Context(), customerID, id, input.Method, input.Mode)
 	if err != nil {
 		writeError(w, http.StatusOK, err.Error())
 		return
@@ -230,7 +244,17 @@ func (h *orderHandler) payRecharge(w http.ResponseWriter, r *http.Request) {
 	if id <= 0 {
 		return
 	}
-	view, err := h.service.PayRecharge(r.Context(), customerID, id)
+	input := svc.PayOrderInput{Method: "alipay", Mode: "page"}
+	if r.ContentLength > 0 && !decodeBody(w, r, &input) {
+		return
+	}
+	if input.Method == "" {
+		input.Method = "alipay"
+	}
+	if input.Mode == "" {
+		input.Mode = "page"
+	}
+	view, err := h.payments.CreateRecharge(r.Context(), customerID, id, input.Method, input.Mode)
 	if err != nil {
 		writeError(w, http.StatusOK, err.Error())
 		return
