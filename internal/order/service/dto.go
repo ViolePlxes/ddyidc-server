@@ -89,4 +89,5 @@ type RechargeView struct {
 // PayOrderInput 支付请求。balance 表示使用已配置上游供应商的真实余额。
 type PayOrderInput struct {
 	Method string `json:"method"` // alipay | wechat | balance
+	Mode   string `json:"mode"`   // page | wap
 }

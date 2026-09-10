@@ -28,6 +28,14 @@ coverage.out
 .env
 .env.local
 
+# Payment credentials (local only, never commit)
+alipay.json
+**/alipay.json
+secrets/
+**/secrets/
+*.private.pem
+*.key
+
 # Logs
 *.log
 logs/

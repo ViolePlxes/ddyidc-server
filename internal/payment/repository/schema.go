@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,13 +18,12 @@ var paymentDefaults = []struct{ key, value, description string }{
 	{"payment.wechat.mch_private_key", "", "微信支付商户私钥（凭据占位）"},
 	{"payment.wechat.cert_serial", "", "微信支付商户证书序列号"},
 	{"payment.wechat.base_url", "http://127.0.0.1:8080", "微信支付回调公开基地址；生产必须 HTTPS"},
-	{"payment.alipay.enabled", "0", "支付宝支付开关"},
-	{"payment.alipay.app_id", "", "支付宝应用 ID（沙箱/正式凭据占位）"},
-	{"payment.alipay.app_private_key", "", "支付宝应用私钥（凭据占位）"},
-	{"payment.alipay.alipay_public_key", "", "支付宝公钥（凭据占位）"},
-	{"payment.alipay.gateway", "https://openapi.alipaydev.com/gateway.do", "支付宝官方网关（当前为沙箱）"},
-	{"payment.alipay.notify_url", "http://127.0.0.1:8080/api/v1/payment/notify/alipay", "支付宝异步通知地址；生产必须 HTTPS"},
-	{"payment.alipay.return_url", "http://localhost:3100/console/orders", "支付宝同步返回地址（不作为支付结果依据）"},
+	{"payment.alipay.enabled", "1", "本地凭据齐全时自动启用支付宝"},
+	{"payment.alipay.gateway", "https://openapi.alipay.com/gateway.do", "支付宝官方网关"},
+	{"payment.alipay.notify_url", "http://127.0.0.1:8080/api/v1/payment/alipay/notify", "支付宝异步通知地址；生产必须 HTTPS"},
+	{"payment.alipay.return_url", "http://localhost:3100/console/payment/result", "支付宝同步返回地址（不作为支付结果依据）"},
+	{"payment.alipay.quit_url", "http://localhost:3100/console/payment/result", "手机网站支付退出返回地址"},
+	{"payment.mock_enabled", "0", "支付 Mock 兼容开关；生产默认关闭"},
 	{"payment.expire_minutes", "15", "支付单过期分钟数"},
 }
 
@@ -35,6 +35,23 @@ func EnsureSchemaAndDefaults(ctx context.Context, database *gorm.DB) error {
 		).Error; err != nil {
 			return fmt.Errorf("seed %s: %w", item.key, err)
 		}
+	}
+	// Credentials are local-file-only. Clear legacy database slots without ever
+	// reading their values into process logs or application configuration.
+	if err := database.WithContext(ctx).Exec("UPDATE system.system_configs SET value='' WHERE `key` IN ('payment.alipay.app_id','payment.alipay.app_private_key','payment.alipay.alipay_public_key')").Error; err != nil {
+		return errors.New("clear legacy alipay credential slots")
+	}
+	if err := database.WithContext(ctx).Exec("UPDATE system.system_configs SET value='https://openapi.alipay.com/gateway.do' WHERE `key`='payment.alipay.gateway' AND value IN ('https://openapi.alipaydev.com/gateway.do','https://openapi-sandbox.dl.alipaydev.com/gateway.do')").Error; err != nil {
+		return errors.New("migrate alipay gateway")
+	}
+	if err := database.WithContext(ctx).Exec("UPDATE system.system_configs SET value='http://127.0.0.1:8080/api/v1/payment/alipay/notify' WHERE `key`='payment.alipay.notify_url' AND value='http://127.0.0.1:8080/api/v1/payment/notify/alipay'").Error; err != nil {
+		return errors.New("migrate alipay notify url")
+	}
+	if err := database.WithContext(ctx).Exec("UPDATE system.system_configs SET value='http://localhost:3100/console/payment/result' WHERE `key`='payment.alipay.return_url' AND value IN ('http://localhost:3100/console/orders','http://localhost:3100/payment/result')").Error; err != nil {
+		return errors.New("migrate alipay return url")
+	}
+	if err := database.WithContext(ctx).Exec("UPDATE system.system_configs SET value='http://localhost:3100/console/payment/result' WHERE `key`='payment.alipay.quit_url' AND value='http://localhost:3100/payment/result'").Error; err != nil {
+		return errors.New("migrate alipay quit url")
 	}
 	columns := []struct{ name, ddl string }{
 		{"biz_type", "ALTER TABLE payment.payments ADD COLUMN biz_type VARCHAR(16) NULL AFTER payment_no"},
@@ -103,7 +120,30 @@ func EnsureSchemaAndDefaults(ctx context.Context, database *gorm.DB) error {
 	if err := ensureIndex(ctx, database, "uk_out_trade_no", "ALTER TABLE payment.payments ADD UNIQUE KEY uk_out_trade_no (out_trade_no)"); err != nil {
 		return err
 	}
-	return ensureIndex(ctx, database, "uk_biz", "ALTER TABLE payment.payments ADD UNIQUE KEY uk_biz (biz_type,biz_id)")
+	if err := ensureIndex(ctx, database, "uk_payment_no", "ALTER TABLE payment.payments ADD UNIQUE KEY uk_payment_no (payment_no)"); err != nil {
+		return err
+	}
+	return ensureBizIndex(ctx, database)
+}
+
+func ensureBizIndex(ctx context.Context, database *gorm.DB) error {
+	var count int64
+	if err := database.WithContext(ctx).Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='payment' AND table_name='payments' AND index_name='uk_biz'").Scan(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		if err := database.WithContext(ctx).Exec("ALTER TABLE payment.payments DROP INDEX uk_biz").Error; err != nil {
+			return err
+		}
+	}
+	var regularCount int64
+	if err := database.WithContext(ctx).Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='payment' AND table_name='payments' AND index_name='idx_biz'").Scan(&regularCount).Error; err != nil {
+		return err
+	}
+	if regularCount == 0 {
+		return database.WithContext(ctx).Exec("ALTER TABLE payment.payments ADD INDEX idx_biz (biz_type,biz_id)").Error
+	}
+	return nil
 }
 
 func columnExists(ctx context.Context, database *gorm.DB, schema, table, column string) (bool, error) {

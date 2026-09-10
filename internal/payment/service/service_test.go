@@ -27,6 +27,9 @@ func (f *fakeRepository) PrepareRecharge(context.Context, int64, int64, string, 
 func (f *fakeRepository) FindByOutTradeNo(context.Context, string) (*dom.Payment, error) {
 	return f.payment, nil
 }
+func (f *fakeRepository) FindByPaymentNo(context.Context, string) (*dom.Payment, error) {
+	return f.payment, nil
+}
 func (f *fakeRepository) FindByBiz(context.Context, int64, dom.BizType, int64) (*dom.Payment, error) {
 	return f.payment, nil
 }
@@ -55,7 +58,17 @@ type fakeChannel struct {
 	created      *dom.Payment
 }
 
-func (f *fakeChannel) Create(_ context.Context, payment *dom.Payment, _ string) (*Checkout, error) {
+type fakeQueryableChannel struct {
+	fakeChannel
+	query PlatformQuery
+	err   error
+}
+
+func (f *fakeQueryableChannel) Query(context.Context, string) (PlatformQuery, error) {
+	return f.query, f.err
+}
+
+func (f *fakeChannel) Create(_ context.Context, payment *dom.Payment, _, _ string) (*Checkout, error) {
 	f.created = payment
 	return &Checkout{CodeURL: "weixin://wxpay/test"}, nil
 }
@@ -135,7 +148,7 @@ func TestCreateOrderUsesRepositoryServerAmount(t *testing.T) {
 	channel := &fakeChannel{}
 	service := NewService(repository, Config{ExpireMinutes: 15}, map[string]Channel{"wechat": channel}, nil)
 
-	response, err := service.CreateOrder(context.Background(), payment.CustomerID, payment.BizID, "wechat")
+	response, err := service.CreateOrder(context.Background(), payment.CustomerID, payment.BizID, "wechat", "page")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,5 +169,42 @@ func TestParseYuanToCentsExact(t *testing.T) {
 		if _, err := parseYuanToCents(input); err == nil {
 			t.Fatalf("expected invalid amount %q to fail", input)
 		}
+	}
+}
+
+func TestAdminQueryReconcilesVerifiedPaidTradeOnce(t *testing.T) {
+	payment := pendingPayment()
+	payment.PaymentNo = "PAY-QUERY"
+	payment.OutTradeNo = payment.PaymentNo
+	payment.Channel = "alipay"
+	repository := &fakeRepository{payment: payment}
+	dispatcher := &fakeDispatcher{}
+	channel := &fakeQueryableChannel{query: PlatformQuery{
+		Found: true, OutTradeNo: payment.OutTradeNo, TransactionID: "ALI-QUERY", Status: "TRADE_SUCCESS",
+		AmountFen: payment.AmountFen, Currency: payment.Currency, PaidAt: time.Now(),
+	}}
+	service := NewService(repository, Config{}, map[string]Channel{"alipay": channel}, dispatcher)
+
+	first, err := service.QueryAlipay(context.Background(), payment.PaymentNo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.QueryAlipay(context.Background(), payment.PaymentNo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !first.Connected || !first.Found || !first.Reconciled || second.Reconciled || dispatcher.calls != 1 || payment.Status != dom.StatusPaid {
+		t.Fatalf("unexpected query reconciliation: first=%#v second=%#v dispatches=%d status=%s", first, second, dispatcher.calls, payment.Status)
+	}
+}
+
+func TestStatusByPayNoRejectsOtherCustomer(t *testing.T) {
+	payment := pendingPayment()
+	payment.PaymentNo = "PAY-OWNER"
+	service := NewService(&fakeRepository{payment: payment}, Config{}, nil, nil)
+	_, err := service.StatusByPayNo(context.Background(), payment.CustomerID+1, payment.PaymentNo)
+	var businessErr *BusinessError
+	if !errors.As(err, &businessErr) || businessErr.Code != 40002 {
+		t.Fatalf("expected ownership rejection, got %v", err)
 	}
 }

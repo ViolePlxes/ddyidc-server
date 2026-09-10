@@ -42,7 +42,7 @@ func newWechatChannel(ctx context.Context, cfg WechatConfig) (Channel, error) {
 	return &wechatChannel{config: cfg, api: native.NativeApiService{Client: client}, notify: handler}, nil
 }
 
-func (c *wechatChannel) Create(ctx context.Context, payment *dom.Payment, subject string) (*Checkout, error) {
+func (c *wechatChannel) Create(ctx context.Context, payment *dom.Payment, subject, _ string) (*Checkout, error) {
 	if len([]rune(subject)) > 127 {
 		subject = string([]rune(subject)[:127])
 	}
