@@ -818,6 +818,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		return nil, 0, parseErr
 	}
 	isQKIDC := parsed.Hostname() == "qkidc.cn" || strings.HasSuffix(parsed.Hostname(), ".qkidc.cn")
+	remoteAudit := isRemoteAudit(bodyBytes)
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
 		if isQKIDC {
@@ -837,7 +838,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		}
 		response, err := client.Do(req)
 		if err != nil {
-			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err)
+			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)
 			lastErr = err
 			if attempt == 0 {
 				if isQKIDC {
@@ -850,7 +851,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 20<<20))
 		response.Body.Close()
 		if readErr != nil {
-			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr)
+			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr, remoteAudit)
 			lastErr = readErr
 			if attempt == 0 {
 				if isQKIDC {
@@ -860,7 +861,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			}
 			break
 		}
-		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil)
+		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil, remoteAudit)
 		retryable := response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 		if retryable && attempt == 0 {
 			lastErr = fmt.Errorf("upstream HTTP status %d", response.StatusCode)
@@ -886,7 +887,7 @@ func waitForRequestSlot(host string, minimum time.Duration) {
 	requestGates.last[host] = time.Now()
 }
 
-func writeAudit(endpoint, method string, attempt int, requestBody []byte, status int, responseBody []byte, requestErr error) {
+func writeAudit(endpoint, method string, attempt int, requestBody []byte, status int, responseBody []byte, requestErr error, remoteAction bool) {
 	path := strings.TrimSpace(os.Getenv("DDYIDC_UPSTREAM_AUDIT_LOG"))
 	if path == "" {
 		return
@@ -896,13 +897,16 @@ func writeAudit(endpoint, method string, attempt int, requestBody []byte, status
 		return
 	}
 	record := map[string]any{
-		"timestamp": time.Now().Format(time.RFC3339Nano), "host": parsed.Hostname(),
-		"method": method, "path": parsed.EscapedPath(), "query": parsed.Query(),
+		"timestamp": time.Now().Format(time.RFC3339Nano), "host": "[UPSTREAM]",
+		"method": method, "path": parsed.EscapedPath(), "query": redactPayload([]byte(parsed.RawQuery)),
 		"attempt": attempt, "request": redactPayload(requestBody), "status": status,
 		"response": redactPayload(responseBody),
 	}
+	if remoteAction {
+		record["response"] = "[REDACTED_REMOTE_CONSOLE]"
+	}
 	if requestErr != nil {
-		record["error"] = requestErr.Error()
+		record["error"] = "upstream request failed"
 	}
 	encoded, err := json.Marshal(record)
 	if err != nil {
@@ -919,6 +923,11 @@ func writeAudit(endpoint, method string, attempt int, requestBody []byte, status
 	}
 	defer file.Close()
 	_, _ = file.Write(append(encoded, '\n'))
+}
+
+func isRemoteAudit(requestBody []byte) bool {
+	values, err := url.ParseQuery(string(requestBody))
+	return err == nil && strings.EqualFold(values.Get("func"), "vnc")
 }
 
 func redactPayload(raw []byte) any {
@@ -970,7 +979,7 @@ func sensitiveKey(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "[", "_"), "]", ""))
 	sensitiveParts := []string{
 		"password", "token", "secret", "authorization", "username", "email",
-		"phone", "address", "postcode", "card", "wechat", "signature", "company",
+		"phone", "address", "postcode", "card", "wechat", "signature", "company", "pass", "url",
 	}
 	for _, part := range sensitiveParts {
 		if strings.Contains(key, part) {
@@ -1348,10 +1357,16 @@ func (p *Provider) ExecuteInstanceAction(hostID int64, input contracts.InstanceA
 	form := instanceActionForm(hostID, upstreamFunc, input)
 	body, err := p.authorizedFormPost("/provision/default", form)
 	if err != nil {
+		if input.Action == "remote" {
+			return nil, errors.New("remote console upstream unavailable")
+		}
 		return nil, fmt.Errorf("execute upstream instance action: %w", err)
 	}
 	data, err := businessData(body, "instance action")
 	if err != nil {
+		if input.Action == "remote" {
+			return nil, errors.New("remote console upstream unavailable")
+		}
 		return nil, err
 	}
 	message := firstJSONValue(body, "msg", "message")
@@ -1359,9 +1374,10 @@ func (p *Provider) ExecuteInstanceAction(hostID int64, input contracts.InstanceA
 		message = "上游已接受实例操作"
 	}
 	return &contracts.InstanceActionResult{
-		Status:    normalizePowerStatus(firstMapString(data, "status", "power_status")),
-		Message:   message,
-		RemoteURL: firstMapString(data, "url", "remote_url", "vnc_url"),
+		Status:         normalizePowerStatus(firstMapString(data, "status", "power_status")),
+		Message:        message,
+		RemoteEndpoint: firstMapString(data, "url", "remote_url", "vnc_url"),
+		RemotePassword: firstMapString(data, "vnc_pass", "vnc_password", "password", "pass"),
 	}, nil
 }
 

@@ -202,9 +202,10 @@ type InstanceActionInput struct {
 }
 
 type InstanceActionResult struct {
-	Status    string `json:"status,omitempty"`
-	Message   string `json:"message"`
-	RemoteURL string `json:"remoteUrl,omitempty"`
+	Status         string `json:"status,omitempty"`
+	Message        string `json:"message"`
+	RemoteEndpoint string `json:"-"`
+	RemotePassword string `json:"-"`
 }
 
 type MonitorPoint struct {

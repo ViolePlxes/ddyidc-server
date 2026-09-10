@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	svc "ddyidc/internal/instance/service"
+	"ddyidc/internal/remoteconsole"
 	"ddyidc/pkg/auth"
+	"github.com/gorilla/websocket"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 )
@@ -28,6 +31,7 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/images", Handler: h.images},
 		{Method: http.MethodPost, Path: "/api/v1/instance/:instanceId/action", Handler: h.action},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/monitor", Handler: h.monitor},
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/vnc/ws", Handler: h.vncWebSocket},
 	})
 }
 
@@ -46,6 +50,42 @@ func (h *handler) images(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, result)
+}
+
+var vncUpgrader = websocket.Upgrader{
+	HandshakeTimeout: 10 * time.Second,
+	Subprotocols:     []string{"binary"},
+	CheckOrigin: func(r *http.Request) bool {
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		if origin == "" {
+			return true
+		}
+		parsed, err := url.Parse(origin)
+		return err == nil && strings.EqualFold(parsed.Host, r.Host)
+	},
+}
+
+func (h *handler) vncWebSocket(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	instanceID := pathID(w, r)
+	if instanceID == 0 {
+		return
+	}
+	session, err := h.service.ClaimRemoteSession(r.Context(), customerID, instanceID, r.URL.Query().Get("token"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	connection, err := vncUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.service.DiscardRemoteSession(session)
+		return
+	}
+	defer connection.Close()
+	_ = h.service.ProxyRemoteSession(r.Context(), session, remoteconsole.NewWebSocketConn(connection))
 }
 
 func (h *handler) legacyList(w http.ResponseWriter, r *http.Request) {
@@ -210,6 +250,12 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "实例不存在")
 	case errors.Is(err, svc.ErrUnsupported):
 		writeError(w, http.StatusNotImplemented, err.Error())
+	case errors.Is(err, remoteconsole.ErrSessionInvalid):
+		writeError(w, http.StatusUnauthorized, "远程会话无效或已过期")
+	case errors.Is(err, remoteconsole.ErrSessionBusy):
+		writeError(w, http.StatusConflict, "该远程会话正在使用中")
+	case errors.Is(err, remoteconsole.ErrEngineUnavailable), errors.Is(err, remoteconsole.ErrUpstreamUnavailable):
+		writeError(w, http.StatusUnprocessableEntity, "远程控制暂时不可用，请稍后重试")
 	default:
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	}

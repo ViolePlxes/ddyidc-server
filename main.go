@@ -20,6 +20,7 @@ import (
 	paymentservice "ddyidc/internal/payment/service"
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
+	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/shared/logger"
 	"ddyidc/internal/shared/middleware"
 	systemrepo "ddyidc/internal/system/repository"
@@ -68,12 +69,13 @@ func main() {
 
 	var c struct {
 		rest.RestConf
-		MySQL  db.Config
-		Redis  cache.Config
-		Notify notify.Config
-		Update update.Config
-		Crypto struct{ AESKey string }
-		JWT    struct {
+		MySQL         db.Config
+		Redis         cache.Config
+		Notify        notify.Config
+		Update        update.Config
+		RemoteConsole remoteconsole.Config
+		Crypto        struct{ AESKey string }
+		JWT           struct {
 			AccessSecret  string
 			AccessExpire  int64
 			RefreshSecret string
@@ -139,7 +141,7 @@ func main() {
 	server.Use(middleware.Logger())
 
 	// 注册路由（各域 handler 在此注册）
-	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey))
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole)
 	notifyManager.StartExpiryScanner(context.Background())
 	updateManager.StartResultWatcher(context.Background())
 
@@ -157,7 +159,7 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config) {
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
@@ -195,6 +197,14 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(orderSvc))
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
+	remoteRegistry := remoteconsole.NewRegistry()
+	if err := remoteRegistry.Register(remoteconsole.NewNoVNCProvider(instanceSvc)); err != nil {
+		panic("remote console provider initialization failed")
+	}
+	if err := remoteRegistry.Use(remoteConfig.Engine); err != nil {
+		panic("remote console engine is not registered")
+	}
+	instanceSvc.SetRemoteConsole(remoteRegistry)
 	if err := instanceSvc.EnsureSchema(context.Background()); err != nil {
 		panic("instance schema migration failed: " + err.Error())
 	}

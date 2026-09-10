@@ -168,6 +168,34 @@ func TestAuditPayloadRedactsEveryCredentialShape(t *testing.T) {
 	}
 }
 
+func TestRemoteAuditNeverContainsUpstreamLocationOrPassword(t *testing.T) {
+	path := t.TempDir() + "/upstream-audit.log"
+	t.Setenv("DDYIDC_UPSTREAM_AUDIT_LOG", path)
+	writeAudit(
+		"https://secret-upstream.example/provision/default",
+		http.MethodPost,
+		1,
+		[]byte("id=52483&func=vnc&is_api=true"),
+		http.StatusOK,
+		[]byte(`{"status":200,"data":{"vnc_url":"wss://secret-upstream.example/websockify","vnc_pass":"private-pass"}}`),
+		fmt.Errorf("dial https://secret-upstream.example failed"),
+		true,
+	)
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(contents)
+	for _, forbidden := range []string{"secret-upstream.example", "private-pass", "wss://", "https://"} {
+		if strings.Contains(text, forbidden) {
+			t.Fatalf("remote audit leaked %q: %s", forbidden, text)
+		}
+	}
+	if !strings.Contains(text, "[REDACTED_REMOTE_CONSOLE]") {
+		t.Fatalf("remote audit did not record redaction marker: %s", text)
+	}
+}
+
 func TestExtractProvisionResult(t *testing.T) {
 	body := []byte(`{"status":200,"data":{"invoiceid":7001,"hostid":[8002]},"user":{"credit":"85.00"}}`)
 	if got := firstJSONValue(body, "hostid", "host_id"); got != "8002" {
