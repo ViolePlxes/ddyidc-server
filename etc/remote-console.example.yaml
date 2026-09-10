@@ -1,0 +1,4 @@
+# 将此段合并到部署环境的 config.yaml。
+RemoteConsole:
+  # 当前注册引擎：novnc。后续适配器完成注册后可切换为 kasmvnc 或 guacamole。
+  Engine: "novnc"

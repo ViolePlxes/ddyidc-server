@@ -2,11 +2,13 @@ package instance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
 	dom "ddyidc/internal/instance/domain"
+	"ddyidc/internal/remoteconsole"
 	upprovider "ddyidc/internal/upstream/provider"
 	"ddyidc/internal/upstream/provider/contracts"
 )
@@ -25,7 +27,12 @@ func (r *imageResolver) GetOrderPageByLocalProduct(string) (*contracts.OrderPage
 	return r.page, nil
 }
 
-type ownershipRepo struct{ host *dom.Host }
+type ownershipRepo struct {
+	host             *dom.Host
+	event            *dom.Event
+	finishedResponse string
+	finishedError    string
+}
 
 func (r *ownershipRepo) Create(context.Context, *dom.Host) error             { return nil }
 func (r *ownershipRepo) Update(context.Context, *dom.Host) error             { return nil }
@@ -38,8 +45,15 @@ func (r *ownershipRepo) List(context.Context, int, int, map[string]any) ([]*dom.
 func (r *ownershipRepo) EnsureSchema(context.Context) error                        { return nil }
 func (r *ownershipRepo) UpdateFields(context.Context, int64, map[string]any) error { return nil }
 func (r *ownershipRepo) FindOrderNo(context.Context, int64) (string, error)        { return "", nil }
-func (r *ownershipRepo) CreateEvent(context.Context, *dom.Event) error             { return nil }
-func (r *ownershipRepo) FinishEvent(context.Context, int64, uint8, *uint8, string, string) error {
+
+func (r *ownershipRepo) CreateEvent(_ context.Context, event *dom.Event) error {
+	event.ID = 1
+	r.event = event
+	return nil
+}
+func (r *ownershipRepo) FinishEvent(_ context.Context, _ int64, _ uint8, _ *uint8, response, failure string) error {
+	r.finishedResponse = response
+	r.finishedError = failure
 	return nil
 }
 func (r *ownershipRepo) ListEvents(context.Context, int64, int) ([]*dom.Event, error) {
@@ -84,5 +98,69 @@ func TestReinstallRejectsImageOutsideProductWhitelistBeforeProviderCall(t *testi
 	}
 	if resolver.providerCalls != 0 {
 		t.Fatalf("provider called %d times before whitelist rejection", resolver.providerCalls)
+	}
+}
+
+type remoteInstanceProvider struct {
+	upprovider.UpstreamProvider
+	contracts.InstanceProvider
+	result *contracts.InstanceActionResult
+}
+
+func (p *remoteInstanceProvider) ExecuteInstanceAction(int64, contracts.InstanceActionInput) (*contracts.InstanceActionResult, error) {
+	return p.result, nil
+}
+
+type remoteResolver struct{ provider *remoteInstanceProvider }
+
+func (r *remoteResolver) ProviderFor(string) (upprovider.UpstreamProvider, error) {
+	return r.provider, nil
+}
+func (r *remoteResolver) GetOrderPageByLocalProduct(string) (*contracts.OrderPage, error) {
+	return nil, nil
+}
+
+func TestRemoteActionResponseAndEventNeverExposeUpstreamMaterial(t *testing.T) {
+	supplierID := int64(9)
+	repository := &ownershipRepo{host: &dom.Host{
+		ID: 123, CustomerID: 456, UpstreamProviderID: &supplierID, UpstreamInstanceID: "52483",
+	}}
+	resolver := &remoteResolver{provider: &remoteInstanceProvider{result: &contracts.InstanceActionResult{
+		Status: "running", Message: "https://secret-upstream.example/accepted",
+		RemoteEndpoint: "wss://secret-upstream.example/websockify?ticket=private", RemotePassword: "vnc-secret",
+	}}}
+	service := NewService(repository, resolver)
+	registry := remoteconsole.NewRegistry()
+	if err := registry.Register(remoteconsole.NewNoVNCProvider(service)); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Use("novnc"); err != nil {
+		t.Fatal(err)
+	}
+	service.SetRemoteConsole(registry)
+
+	result, err := service.Action(context.Background(), 456, 123, ActionInput{Action: "remote"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{string(encoded), repository.finishedResponse, repository.finishedError} {
+		for _, forbidden := range []string{"secret-upstream.example", "websockify", "vnc-secret", "private", "remoteUrl"} {
+			if strings.Contains(text, forbidden) {
+				t.Fatalf("remote response or event leaked %q: %s", forbidden, text)
+			}
+		}
+	}
+	if result.Remote == nil || result.Remote.Type != "novnc" || !strings.HasPrefix(result.Remote.URL, "/console/instance/123/vnc?") {
+		t.Fatalf("unexpected remote response: %#v", result)
+	}
+	if repository.event == nil || repository.event.UpstreamRequest != `{"action":"remote"}` {
+		t.Fatalf("unsafe or missing remote event: %#v", repository.event)
+	}
+	if _, err := service.ClaimRemoteSession(context.Background(), 999, 123, result.Remote.Token); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("foreign claim error = %v", err)
 	}
 }

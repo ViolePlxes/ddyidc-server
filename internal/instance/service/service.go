@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	dom "ddyidc/internal/instance/domain"
 	repo "ddyidc/internal/instance/repository"
+	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/upstream/provider"
 	"ddyidc/internal/upstream/provider/contracts"
 
@@ -32,11 +34,14 @@ type ProviderResolver interface {
 type Service struct {
 	repo      repo.Repository
 	providers ProviderResolver
+	remote    *remoteconsole.Registry
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
 	return &Service{repo: repository, providers: providers}
 }
+
+func (s *Service) SetRemoteConsole(registry *remoteconsole.Registry) { s.remote = registry }
 
 func (s *Service) EnsureSchema(ctx context.Context) error { return s.repo.EnsureSchema(ctx) }
 
@@ -140,9 +145,9 @@ type ActionInput struct {
 }
 
 type ActionView struct {
-	Status    string `json:"status,omitempty"`
-	Message   string `json:"message"`
-	RemoteURL string `json:"remoteUrl,omitempty"`
+	Status  string                       `json:"status,omitempty"`
+	Message string                       `json:"message"`
+	Remote  *remoteconsole.RemoteSession `json:"remote,omitempty"`
 }
 
 type rawSnapshot struct {
@@ -362,6 +367,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 		in.ImageID = strconv.Itoa(imageID)
 		in.Port = strconv.Itoa(port)
 	}
+	if in.Action == "remote" {
+		return s.createRemoteSession(ctx, host, customerID)
+	}
 	upstream, warning := s.provider(host)
 	if warning != "" {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, warning)
@@ -388,7 +396,73 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	if in.Action != "remote" && in.Action != "reset_password" {
 		go s.pollStatus(host.ID, host.UpstreamProviderID, host.UpstreamInstanceID)
 	}
-	return &ActionView{Status: result.Status, Message: result.Message, RemoteURL: result.RemoteURL}, nil
+	return &ActionView{Status: result.Status, Message: result.Message}, nil
+}
+
+func (s *Service) createRemoteSession(ctx context.Context, host *dom.Host, customerID int64) (*ActionView, error) {
+	if s.remote == nil {
+		return nil, remoteconsole.ErrEngineUnavailable
+	}
+	operatorID := customerID
+	event := &dom.Event{
+		InstanceID: host.ID, EventType: "remote", FromStatus: &host.Status,
+		OperatorType: 1, OperatorID: &operatorID, Status: 1,
+		UpstreamRequest: `{"action":"remote"}`, UpstreamResponse: "{}",
+	}
+	if err := s.repo.CreateEvent(ctx, event); err != nil {
+		return nil, err
+	}
+	session, err := s.remote.CreateSession(ctx, host.ID, customerID)
+	if err != nil {
+		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", "远程控制暂时不可用")
+		return nil, err
+	}
+	safeResponse, _ := json.Marshal(map[string]any{
+		"type": session.Type, "expiresAt": session.ExpiresAt,
+	})
+	_ = s.repo.FinishEvent(ctx, event.ID, 2, nil, string(safeResponse), "")
+	return &ActionView{Status: "ready", Message: "远程会话已创建", Remote: session}, nil
+}
+
+// CreateRemoteUpstream is called only by a server-side console provider. The
+// returned endpoint and password never cross an HTTP serialization boundary.
+func (s *Service) CreateRemoteUpstream(ctx context.Context, instanceID, customerID int64) (*remoteconsole.RemoteUpstream, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	upstream, warning := s.provider(host)
+	if warning != "" {
+		return nil, remoteconsole.ErrUpstreamUnavailable
+	}
+	result, err := upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{Action: "remote"})
+	if err != nil || result == nil || strings.TrimSpace(result.RemoteEndpoint) == "" {
+		return nil, remoteconsole.ErrUpstreamUnavailable
+	}
+	return &remoteconsole.RemoteUpstream{URL: result.RemoteEndpoint, Password: result.RemotePassword}, nil
+}
+
+func (s *Service) ClaimRemoteSession(ctx context.Context, customerID, instanceID int64, token string) (*remoteconsole.RemoteSession, error) {
+	if _, err := s.owned(ctx, customerID, instanceID); err != nil {
+		return nil, err
+	}
+	if s.remote == nil {
+		return nil, remoteconsole.ErrEngineUnavailable
+	}
+	return s.remote.Claim(instanceID, customerID, strings.TrimSpace(token))
+}
+
+func (s *Service) ProxyRemoteSession(ctx context.Context, session *remoteconsole.RemoteSession, client net.Conn) error {
+	if s.remote == nil {
+		return remoteconsole.ErrEngineUnavailable
+	}
+	return s.remote.Proxy(ctx, session, client)
+}
+
+func (s *Service) DiscardRemoteSession(session *remoteconsole.RemoteSession) {
+	if s.remote != nil {
+		s.remote.Discard(session)
+	}
 }
 
 func (s *Service) owned(ctx context.Context, customerID, instanceID int64) (*dom.Host, error) {
