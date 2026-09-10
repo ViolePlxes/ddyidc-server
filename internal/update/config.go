@@ -10,10 +10,10 @@ import (
 type TargetConfig struct {
 	Workspace  string
 	Branch     string
-	Executable string
-	ConfigFile string
-	HelperPath string
-	StaticURL  string
+	Executable string `json:",optional"`
+	ConfigFile string `json:",optional"`
+	HelperPath string `json:",optional"`
+	StaticURL  string `json:",optional"`
 }
 
 type Config struct {
