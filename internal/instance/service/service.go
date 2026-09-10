@@ -234,7 +234,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	}
 	detail, err := upstream.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
 	if err != nil {
-		result.Warning = "上游实例信息暂时不可用：" + err.Error()
+		result.Warning = "实例实时信息暂时不可用，请稍后重试"
 		return result, nil
 	}
 	result.Capabilities = detail.Capabilities
@@ -280,7 +280,7 @@ func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*Im
 	}
 	page, err := s.providers.GetOrderPageByLocalProduct(strconv.FormatInt(host.ProductID, 10))
 	if err != nil {
-		return nil, fmt.Errorf("读取商品镜像目录失败: %w", err)
+		return nil, errors.New("读取商品镜像目录失败，请稍后重试")
 	}
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
 	currentID, currentName := snapshotImage(snapshot)
@@ -316,7 +316,7 @@ func (s *Service) Monitor(ctx context.Context, customerID, instanceID int64, sta
 	}
 	monitor, err := upstream.GetInstanceMonitor(parseHostID(host.UpstreamInstanceID), start, end)
 	if err != nil {
-		return &contracts.InstanceMonitor{Available: false, Message: "监控数据暂时不可用：" + err.Error()}, nil
+		return &contracts.InstanceMonitor{Available: false, Message: "监控数据暂时不可用，请稍后重试"}, nil
 	}
 	return monitor, nil
 }
@@ -386,8 +386,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 		Action: in.Action, Password: in.Password, ImageID: in.ImageID, Port: in.Port, FormatDataDisk: in.FormatDataDisk,
 	})
 	if err != nil {
-		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", err.Error())
-		return nil, err
+		message := "实例操作暂时不可用，请稍后重试"
+		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", message)
+		return nil, errors.New(message)
 	}
 	toStatus := statusAfterAction(in.Action, host.Status, result.Status)
 	response, _ := json.Marshal(result)
@@ -485,7 +486,7 @@ func (s *Service) provider(host *dom.Host) (contracts.InstanceProvider, string) 
 	}
 	resolved, err := s.providers.ProviderFor(strconv.FormatInt(*host.UpstreamProviderID, 10))
 	if err != nil {
-		return nil, "无法加载上游供应商：" + err.Error()
+		return nil, "实例操作通道暂时不可用"
 	}
 	instanceProvider, ok := resolved.(contracts.InstanceProvider)
 	if !ok {
