@@ -1,0 +1,33 @@
+# Binaries
+bin/
+*.exe
+*.exe~
+*.dll
+
+# Runtime configuration and credentials
+etc/config.yaml
+etc/config.docker.yaml
+etc/config.local.yaml
+.env*
+!.env.example
+
+# Runtime data
+storage/
+server_out.log
+*.pid
+
+# Test
+coverage.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Env
+.env
+.env.local
+
+# Logs
+*.log
+logs/

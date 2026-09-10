@@ -1,0 +1,593 @@
+package instance
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	dom "ddyidc/internal/instance/domain"
+	repo "ddyidc/internal/instance/repository"
+	"ddyidc/internal/upstream/provider"
+	"ddyidc/internal/upstream/provider/contracts"
+
+	"gorm.io/gorm"
+)
+
+var (
+	ErrNotFound    = errors.New("instance not found")
+	ErrForbidden   = errors.New("instance access forbidden")
+	ErrUnsupported = errors.New("instance action unsupported")
+)
+
+type ProviderResolver interface {
+	ProviderFor(string) (provider.UpstreamProvider, error)
+	GetOrderPageByLocalProduct(string) (*contracts.OrderPage, error)
+}
+
+type Service struct {
+	repo      repo.Repository
+	providers ProviderResolver
+}
+
+func NewService(repository repo.Repository, providers ProviderResolver) *Service {
+	return &Service{repo: repository, providers: providers}
+}
+
+func (s *Service) EnsureSchema(ctx context.Context) error { return s.repo.EnsureSchema(ctx) }
+
+type ListInput struct {
+	Page, PageSize int
+	Search         string
+	Status         *uint8
+}
+
+type ListItem struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	ProductName  string `json:"productName"`
+	PrimaryIP    string `json:"primaryIp,omitempty"`
+	Status       uint8  `json:"status"`
+	PowerStatus  string `json:"powerStatus,omitempty"`
+	BillingCycle string `json:"billingCycle,omitempty"`
+	ExpiresAt    string `json:"expiresAt,omitempty"`
+	CreatedAt    string `json:"createdAt"`
+}
+
+type ListResult struct {
+	Items    []ListItem `json:"items"`
+	Total    int64      `json:"total"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"pageSize"`
+}
+
+type ConfigItem struct {
+	ID           string `json:"id"`
+	Field        string `json:"field,omitempty"`
+	DisplayName  string `json:"displayName"`
+	DisplayValue string `json:"displayValue"`
+	Position     int    `json:"position"`
+}
+
+type EventView struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Status      uint8  `json:"status"`
+	Message     string `json:"message,omitempty"`
+	CreatedAt   string `json:"createdAt"`
+	ProcessedAt string `json:"processedAt,omitempty"`
+}
+
+type DetailView struct {
+	ID                 string                         `json:"id"`
+	Name               string                         `json:"name"`
+	OrderID            string                         `json:"orderId"`
+	OrderNo            string                         `json:"orderNo,omitempty"`
+	ProductID          string                         `json:"productId"`
+	ProductName        string                         `json:"productName"`
+	ModuleType         string                         `json:"moduleType"`
+	UpstreamInstanceID string                         `json:"upstreamInstanceId,omitempty"`
+	Hostname           string                         `json:"hostname,omitempty"`
+	PrimaryIP          string                         `json:"primaryIp,omitempty"`
+	SubnetMask         string                         `json:"subnetMask,omitempty"`
+	Gateway            string                         `json:"gateway,omitempty"`
+	OperatingSystem    string                         `json:"operatingSystem,omitempty"`
+	CurrentImageID     string                         `json:"currentImageId,omitempty"`
+	CurrentImageName   string                         `json:"currentImageName,omitempty"`
+	CurrentImageGroup  string                         `json:"currentImageGroup,omitempty"`
+	Status             uint8                          `json:"status"`
+	PowerStatus        string                         `json:"powerStatus,omitempty"`
+	BillingCycle       string                         `json:"billingCycle,omitempty"`
+	PasswordMasked     string                         `json:"passwordMasked,omitempty"`
+	ActivatedAt        string                         `json:"activatedAt,omitempty"`
+	ExpiresAt          string                         `json:"expiresAt,omitempty"`
+	CreatedAt          string                         `json:"createdAt"`
+	Config             []ConfigItem                   `json:"config"`
+	IPs                []contracts.InstanceIP         `json:"ips"`
+	Capabilities       contracts.InstanceCapabilities `json:"capabilities"`
+	Events             []EventView                    `json:"events"`
+	Warning            string                         `json:"warning,omitempty"`
+}
+
+type ImageItem struct {
+	ID      string  `json:"id"`
+	Version string  `json:"version"`
+	Pricing float64 `json:"pricing"`
+}
+
+type ImageGroup struct {
+	Name  string      `json:"name"`
+	Child []ImageItem `json:"child"`
+}
+
+type ImageListView struct {
+	CurrentImageID    string       `json:"currentImageId,omitempty"`
+	CurrentImageName  string       `json:"currentImageName,omitempty"`
+	CurrentImageGroup string       `json:"currentImageGroup,omitempty"`
+	Groups            []ImageGroup `json:"groups"`
+}
+
+type ActionInput struct {
+	Action         string `json:"action"`
+	Password       string `json:"password,omitempty"`
+	ImageID        string `json:"imageId,omitempty"`
+	Port           string `json:"port,omitempty"`
+	FormatDataDisk bool   `json:"formatDataDisk,omitempty"`
+}
+
+type ActionView struct {
+	Status    string `json:"status,omitempty"`
+	Message   string `json:"message"`
+	RemoteURL string `json:"remoteUrl,omitempty"`
+}
+
+type rawSnapshot struct {
+	ConfigOptions map[string]struct {
+		Value        string `json:"value"`
+		Field        string `json:"field"`
+		DisplayName  string `json:"displayName"`
+		DisplayValue string `json:"displayValue"`
+		Position     int    `json:"position"`
+	} `json:"configOptions"`
+	Hostname           string `json:"hostname"`
+	BillingCycle       string `json:"billingCycle"`
+	PasswordCiphertext string `json:"passwordCiphertext"`
+}
+
+func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*ListResult, error) {
+	if in.Page < 1 {
+		in.Page = 1
+	}
+	if in.PageSize < 1 || in.PageSize > 100 {
+		in.PageSize = 20
+	}
+	filters := map[string]any{"customer_id": customerID, "search": in.Search}
+	if in.Status != nil {
+		filters["status"] = *in.Status
+	}
+	rows, total, err := s.repo.List(ctx, in.Page, in.PageSize, filters)
+	if err != nil {
+		return nil, err
+	}
+	items := make([]ListItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, listItem(row))
+	}
+	return &ListResult{Items: items, Total: total, Page: in.Page, PageSize: in.PageSize}, nil
+}
+
+func (s *Service) LegacyList(ctx context.Context, customerID int64) ([]ListItem, error) {
+	result, err := s.List(ctx, customerID, ListInput{Page: 1, PageSize: 100})
+	if err != nil {
+		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*DetailView, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+
+	orderNo, _ := s.repo.FindOrderNo(ctx, host.OrderID)
+	config, snapshot := parseSnapshot(host.ConfigSnapshot)
+	events, _ := s.repo.ListEvents(ctx, host.ID, 50)
+	result := &DetailView{
+		ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo,
+		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
+		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
+		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
+		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
+		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
+		Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
+		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
+	}
+	result.CurrentImageID, result.CurrentImageName = snapshotImage(snapshot)
+	result.CurrentImageGroup = imageGroupName(result.CurrentImageName)
+	if result.OperatingSystem == "" {
+		result.OperatingSystem = result.CurrentImageName
+	}
+	if snapshot.PasswordCiphertext != "" {
+		result.PasswordMasked = "************"
+	}
+	if host.ActivatedAt != nil {
+		result.ActivatedAt = formatTime(*host.ActivatedAt)
+	}
+	if host.ExpiresAt != nil {
+		result.ExpiresAt = formatTime(*host.ExpiresAt)
+	}
+
+	upstream, warning := s.provider(host)
+	if warning != "" {
+		result.Warning = warning
+		return result, nil
+	}
+	detail, err := upstream.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
+	if err != nil {
+		result.Warning = "上游实例信息暂时不可用：" + err.Error()
+		return result, nil
+	}
+	result.Capabilities = detail.Capabilities
+	result.IPs = detail.IPs
+	if detail.Hostname != "" {
+		result.Hostname = detail.Hostname
+	}
+	if detail.PrimaryIP != "" {
+		result.PrimaryIP = detail.PrimaryIP
+	}
+	if detail.SubnetMask != "" {
+		result.SubnetMask = detail.SubnetMask
+	}
+	if detail.Gateway != "" {
+		result.Gateway = detail.Gateway
+	}
+	if detail.OperatingSystem != "" {
+		result.OperatingSystem = detail.OperatingSystem
+		result.CurrentImageName = detail.OperatingSystem
+		result.CurrentImageGroup = imageGroupName(detail.OperatingSystem)
+	}
+	if detail.PowerStatus != "" {
+		result.PowerStatus = detail.PowerStatus
+	}
+	status := statusCode(detail.Status, host.Status)
+	result.Status = status
+	now := time.Now()
+	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{
+		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
+		"operating_system": result.OperatingSystem, "power_status": result.PowerStatus,
+		"status": status, "last_synced_at": now,
+	})
+	return result, nil
+}
+
+func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*ImageListView, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if s.providers == nil {
+		return nil, fmt.Errorf("%w: 该实例没有可用的镜像目录", ErrUnsupported)
+	}
+	page, err := s.providers.GetOrderPageByLocalProduct(strconv.FormatInt(host.ProductID, 10))
+	if err != nil {
+		return nil, fmt.Errorf("读取商品镜像目录失败: %w", err)
+	}
+	_, snapshot := parseSnapshot(host.ConfigSnapshot)
+	currentID, currentName := snapshotImage(snapshot)
+	result := &ImageListView{CurrentImageID: currentID, CurrentImageName: currentName, CurrentImageGroup: imageGroupName(currentName), Groups: []ImageGroup{}}
+	groups := page.ImageGroups
+	if len(groups) == 0 && len(page.Images) > 0 {
+		groups = []contracts.ImageGroup{{Name: "其他", Child: page.Images}}
+	}
+	for _, group := range groups {
+		view := ImageGroup{Name: group.Name, Child: make([]ImageItem, 0, len(group.Child))}
+		for _, image := range group.Child {
+			view.Child = append(view.Child, ImageItem{ID: strconv.Itoa(image.ID), Version: cleanImageName(image.Name), Pricing: image.Price})
+			if strconv.Itoa(image.ID) == currentID {
+				result.CurrentImageName = cleanImageName(image.Name)
+				result.CurrentImageGroup = group.Name
+			}
+		}
+		if len(view.Child) > 0 {
+			result.Groups = append(result.Groups, view)
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) Monitor(ctx context.Context, customerID, instanceID int64, start, end time.Time) (*contracts.InstanceMonitor, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	upstream, warning := s.provider(host)
+	if warning != "" {
+		return &contracts.InstanceMonitor{Available: false, Message: warning}, nil
+	}
+	monitor, err := upstream.GetInstanceMonitor(parseHostID(host.UpstreamInstanceID), start, end)
+	if err != nil {
+		return &contracts.InstanceMonitor{Available: false, Message: "监控数据暂时不可用：" + err.Error()}, nil
+	}
+	return monitor, nil
+}
+
+func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in ActionInput) (*ActionView, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	in.Action = strings.TrimSpace(strings.ToLower(in.Action))
+	if in.Action == "destroy" {
+		return nil, ErrUnsupported
+	}
+	if in.Action == "reset_password" && !validPassword(in.Password) {
+		return nil, errors.New("新密码至少 12 位，且必须包含大小写字母和数字")
+	}
+	if in.Action == "reinstall" && strings.TrimSpace(in.ImageID) == "" {
+		return nil, errors.New("请选择重装镜像")
+	}
+	if in.Action == "reinstall" {
+		imageID, parseErr := strconv.Atoi(strings.TrimSpace(in.ImageID))
+		if parseErr != nil || imageID <= 0 {
+			return nil, errors.New("镜像 ID 格式错误")
+		}
+		if strings.TrimSpace(in.Port) == "" {
+			in.Port = "22"
+		}
+		port, portErr := strconv.Atoi(strings.TrimSpace(in.Port))
+		if portErr != nil || port < 1 || port > 65535 {
+			return nil, errors.New("端口必须是 1 到 65535 之间的整数")
+		}
+		images, imageErr := s.Images(ctx, customerID, instanceID)
+		if imageErr != nil {
+			return nil, imageErr
+		}
+		allowed := false
+		for _, group := range images.Groups {
+			for _, image := range group.Child {
+				if image.ID == strconv.Itoa(imageID) {
+					allowed = true
+					break
+				}
+			}
+		}
+		if !allowed {
+			return nil, errors.New("image_not_found: 所选镜像不属于该商品或已停用")
+		}
+		in.ImageID = strconv.Itoa(imageID)
+		in.Port = strconv.Itoa(port)
+	}
+	upstream, warning := s.provider(host)
+	if warning != "" {
+		return nil, fmt.Errorf("%w: %s", ErrUnsupported, warning)
+	}
+	request, _ := json.Marshal(map[string]any{
+		"action": in.Action, "imageId": in.ImageID, "port": in.Port, "formatDataDisk": in.FormatDataDisk,
+	})
+	operatorID := customerID
+	event := &dom.Event{InstanceID: host.ID, EventType: in.Action, FromStatus: &host.Status, OperatorType: 1, OperatorID: &operatorID, Status: 1, UpstreamRequest: string(request), UpstreamResponse: "{}"}
+	if err := s.repo.CreateEvent(ctx, event); err != nil {
+		return nil, err
+	}
+	result, err := upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{
+		Action: in.Action, Password: in.Password, ImageID: in.ImageID, Port: in.Port, FormatDataDisk: in.FormatDataDisk,
+	})
+	if err != nil {
+		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", err.Error())
+		return nil, err
+	}
+	toStatus := statusAfterAction(in.Action, host.Status, result.Status)
+	response, _ := json.Marshal(result)
+	_ = s.repo.FinishEvent(ctx, event.ID, 2, &toStatus, string(response), "")
+	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{"status": toStatus, "power_status": normalizePower(result.Status)})
+	if in.Action != "remote" && in.Action != "reset_password" {
+		go s.pollStatus(host.ID, host.UpstreamProviderID, host.UpstreamInstanceID)
+	}
+	return &ActionView{Status: result.Status, Message: result.Message, RemoteURL: result.RemoteURL}, nil
+}
+
+func (s *Service) owned(ctx context.Context, customerID, instanceID int64) (*dom.Host, error) {
+	host, err := s.repo.FindByID(ctx, instanceID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if host.CustomerID != customerID {
+		return nil, ErrForbidden
+	}
+	return host, nil
+}
+
+func (s *Service) provider(host *dom.Host) (contracts.InstanceProvider, string) {
+	if s.providers == nil || host.UpstreamProviderID == nil || strings.TrimSpace(host.UpstreamInstanceID) == "" {
+		return nil, "该实例没有可用的上游操作通道"
+	}
+	resolved, err := s.providers.ProviderFor(strconv.FormatInt(*host.UpstreamProviderID, 10))
+	if err != nil {
+		return nil, "无法加载上游供应商：" + err.Error()
+	}
+	instanceProvider, ok := resolved.(contracts.InstanceProvider)
+	if !ok {
+		return nil, "当前供应商未提供已验证的实例操作协议"
+	}
+	return instanceProvider, ""
+}
+
+func (s *Service) pollStatus(instanceID int64, supplierID *int64, upstreamID string) {
+	if supplierID == nil || s.providers == nil {
+		return
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		timer := time.NewTimer(5 * time.Second)
+		<-timer.C
+		resolved, err := s.providers.ProviderFor(strconv.FormatInt(*supplierID, 10))
+		if err != nil {
+			return
+		}
+		instanceProvider, ok := resolved.(contracts.InstanceProvider)
+		if !ok {
+			return
+		}
+		status, err := instanceProvider.GetInstanceStatus(parseHostID(upstreamID))
+		if err != nil {
+			continue
+		}
+		code := statusCode(status, 2)
+		_ = s.repo.UpdateFields(context.Background(), instanceID, map[string]any{"status": code, "power_status": normalizePower(status), "last_synced_at": time.Now()})
+		if code == 3 || code == 4 {
+			return
+		}
+	}
+}
+
+func listItem(host *dom.Host) ListItem {
+	_, snapshot := parseSnapshot(host.ConfigSnapshot)
+	result := ListItem{ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	if host.ExpiresAt != nil {
+		result.ExpiresAt = formatTime(*host.ExpiresAt)
+	}
+	return result
+}
+
+func parseSnapshot(raw string) ([]ConfigItem, rawSnapshot) {
+	var snapshot rawSnapshot
+	if json.Unmarshal([]byte(raw), &snapshot) != nil {
+		return []ConfigItem{}, rawSnapshot{}
+	}
+	items := make([]ConfigItem, 0, len(snapshot.ConfigOptions))
+	for id, option := range snapshot.ConfigOptions {
+		items = append(items, ConfigItem{ID: id, Field: option.Field, DisplayName: option.DisplayName, DisplayValue: option.DisplayValue, Position: option.Position})
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Position == items[j].Position {
+			return items[i].ID < items[j].ID
+		}
+		return items[i].Position < items[j].Position
+	})
+	return items, snapshot
+}
+
+func snapshotImage(snapshot rawSnapshot) (string, string) {
+	for _, option := range snapshot.ConfigOptions {
+		if option.Field == "image" || strings.Contains(option.DisplayName, "操作系统") {
+			return strings.TrimSpace(option.Value), cleanImageName(option.DisplayValue)
+		}
+	}
+	return "", ""
+}
+
+func cleanImageName(value string) string {
+	value = strings.TrimSpace(value)
+	if index := strings.Index(value, " ¥"); index >= 0 {
+		value = value[:index]
+	}
+	return strings.TrimSpace(value)
+}
+
+func imageGroupName(value string) string {
+	value = cleanImageName(value)
+	if value == "" {
+		return ""
+	}
+	for _, separator := range []string{"-", " ", "_"} {
+		if index := strings.Index(value, separator); index > 0 {
+			return value[:index]
+		}
+	}
+	return value
+}
+
+func eventViews(events []*dom.Event) []EventView {
+	out := make([]EventView, 0, len(events))
+	for _, event := range events {
+		message := event.ErrorMessage
+		if message == "" && event.Status == 2 {
+			message = "操作已提交至上游"
+		}
+		view := EventView{ID: strconv.FormatInt(event.ID, 10), Type: event.EventType, Status: event.Status, Message: message, CreatedAt: formatTime(event.CreatedAt)}
+		if event.ProcessedAt != nil {
+			view.ProcessedAt = formatTime(*event.ProcessedAt)
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+func parseHostID(value string) int64 {
+	id, _ := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
+	return id
+}
+func formatTime(value time.Time) string {
+	if value.IsZero() {
+		return ""
+	}
+	return value.Format("2006-01-02 15:04:05")
+}
+
+func statusCode(value string, fallback uint8) uint8 {
+	switch normalizePower(value) {
+	case "running":
+		return 3
+	case "stopped":
+		return 4
+	case "provisioning":
+		return 2
+	}
+	return fallback
+}
+
+func normalizePower(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "on", "running", "active", "1":
+		return "running"
+	case "off", "stopped", "suspended", "0":
+		return "stopped"
+	case "pending", "creating", "provisioning", "reinstalling":
+		return "provisioning"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
+func statusAfterAction(action string, current uint8, upstream string) uint8 {
+	if upstream != "" {
+		if status := statusCode(upstream, 0); status != 0 {
+			return status
+		}
+	}
+	switch action {
+	case "start", "reboot":
+		return 3
+	case "stop":
+		return 4
+	case "reinstall":
+		return 2
+	default:
+		return current
+	}
+}
+
+func validPassword(value string) bool {
+	if len(value) < 12 {
+		return false
+	}
+	var upper, lower, digit bool
+	for _, r := range value {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			upper = true
+		case r >= 'a' && r <= 'z':
+			lower = true
+		case r >= '0' && r <= '9':
+			digit = true
+		}
+	}
+	return upper && lower && digit
+}

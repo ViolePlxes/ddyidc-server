@@ -1,0 +1,288 @@
+package payment
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	dom "ddyidc/internal/payment/domain"
+	"ddyidc/internal/shared/snowflake"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	ErrBizNotFound   = errors.New("payment business object not found")
+	ErrForbidden     = errors.New("payment business object forbidden")
+	ErrNotPayable    = errors.New("payment business object is not payable")
+	ErrPaymentExists = errors.New("payment already exists")
+	ErrInvalidState  = errors.New("invalid payment state transition")
+)
+
+type Prepared struct {
+	Payment *dom.Payment
+	Subject string
+}
+
+type Repository interface {
+	PrepareOrder(context.Context, int64, int64, string, time.Time) (*Prepared, error)
+	PrepareRecharge(context.Context, int64, int64, string, time.Time) (*Prepared, error)
+	FindByOutTradeNo(context.Context, string) (*dom.Payment, error)
+	FindByBiz(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
+	Complete(context.Context, dom.VerifiedNotification) (*dom.Payment, bool, error)
+	Close(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
+}
+
+type GormRepository struct{ db *gorm.DB }
+
+func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: database} }
+
+func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID int64, channel string, expireAt time.Time) (*Prepared, error) {
+	var prepared *Prepared
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row struct {
+			ID         int64
+			OrderNo    string
+			CustomerID int64
+			PayAmount  int64
+			Status     uint8
+			Subject    string
+		}
+		err := tx.Table("order.orders AS o").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("o.id,o.order_no,o.customer_id,o.pay_amount,o.status,(SELECT oi.product_name FROM `order`.order_items oi WHERE oi.order_id=o.id ORDER BY oi.id LIMIT 1) AS subject").
+			Where("o.id = ?", orderID).First(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrBizNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if row.CustomerID != customerID {
+			return ErrForbidden
+		}
+		if row.Status != 1 || row.PayAmount <= 0 {
+			return ErrNotPayable
+		}
+		orderIDCopy := row.ID
+		payment := &dom.Payment{
+			PaymentNo:  generatePaymentNo(),
+			BizType:    dom.BizOrder,
+			BizID:      row.ID,
+			OrderID:    &orderIDCopy,
+			CustomerID: customerID,
+			Channel:    channel,
+			OutTradeNo: row.OrderNo,
+			Amount:     centsToYuan(row.PayAmount),
+			AmountFen:  row.PayAmount,
+			Currency:   "CNY",
+			Status:     dom.StatusPending,
+			ExpireAt:   expireAt,
+		}
+		if err := r.insertOrReuse(tx, payment); err != nil {
+			return err
+		}
+		prepared = &Prepared{Payment: payment, Subject: row.Subject}
+		if prepared.Subject == "" {
+			prepared.Subject = "DDYIDC 云服务订单"
+		}
+		return nil
+	})
+	return prepared, err
+}
+
+func (r *GormRepository) PrepareRecharge(ctx context.Context, customerID, rechargeID int64, channel string, expireAt time.Time) (*Prepared, error) {
+	var prepared *Prepared
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row struct {
+			ID         int64
+			RechargeNo string
+			CustomerID int64
+			Amount     int64
+			Status     uint8
+		}
+		err := tx.Table("payment.recharge_orders").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", rechargeID).First(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrBizNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if row.CustomerID != customerID {
+			return ErrForbidden
+		}
+		if row.Status != 1 || row.Amount <= 0 {
+			return ErrNotPayable
+		}
+		payment := &dom.Payment{
+			PaymentNo:  generatePaymentNo(),
+			BizType:    dom.BizRecharge,
+			BizID:      row.ID,
+			CustomerID: customerID,
+			Channel:    channel,
+			OutTradeNo: row.RechargeNo,
+			Amount:     centsToYuan(row.Amount),
+			AmountFen:  row.Amount,
+			Currency:   "CNY",
+			Status:     dom.StatusPending,
+			ExpireAt:   expireAt,
+		}
+		if err := r.insertOrReuse(tx, payment); err != nil {
+			return err
+		}
+		prepared = &Prepared{Payment: payment, Subject: "DDYIDC 账户充值"}
+		return nil
+	})
+	return prepared, err
+}
+
+func (r *GormRepository) insertOrReuse(tx *gorm.DB, payment *dom.Payment) error {
+	var existing dom.Payment
+	err := tx.Table(existing.TableName()).Where("biz_type = ? AND biz_id = ?", payment.BizType, payment.BizID).First(&existing).Error
+	if err == nil {
+		if existing.Status == dom.StatusPending {
+			return ErrPaymentExists
+		}
+		return ErrNotPayable
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return tx.Table(payment.TableName()).Create(payment).Error
+}
+
+func (r *GormRepository) FindByOutTradeNo(ctx context.Context, outTradeNo string) (*dom.Payment, error) {
+	var payment dom.Payment
+	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("out_trade_no = ?", outTradeNo).First(&payment).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &payment, err
+}
+
+func (r *GormRepository) FindByBiz(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
+	var payment dom.Payment
+	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).First(&payment).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	return &payment, err
+}
+
+func (r *GormRepository) Complete(ctx context.Context, notification dom.VerifiedNotification) (*dom.Payment, bool, error) {
+	var completed dom.Payment
+	transitioned := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table(completed.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("out_trade_no = ?", notification.OutTradeNo).First(&completed).Error; err != nil {
+			return err
+		}
+		if completed.Status == dom.StatusPaid {
+			return nil
+		}
+		if completed.Status != dom.StatusPending {
+			return ErrInvalidState
+		}
+		if completed.Channel != notification.Channel || completed.AmountFen != notification.AmountFen || completed.Currency != notification.Currency {
+			return ErrInvalidState
+		}
+		paidAt := notification.PaidAt
+		if paidAt.IsZero() {
+			paidAt = time.Now()
+		}
+		switch completed.BizType {
+		case dom.BizOrder:
+			result := tx.Table("order.orders").Where("id = ? AND customer_id = ? AND status = 1", completed.BizID, completed.CustomerID).
+				Updates(map[string]any{"status": 2, "pay_type": channelPayType(completed.Channel), "paid_at": paidAt, "updated_at": paidAt})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrInvalidState
+			}
+		case dom.BizRecharge:
+			result := tx.Table("payment.recharge_orders").Where("id = ? AND customer_id = ? AND status = 1", completed.BizID, completed.CustomerID).
+				Updates(map[string]any{"status": 2, "channel": completed.Channel, "paid_at": paidAt, "updated_at": paidAt})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrInvalidState
+			}
+			if err := creditRecharge(tx, &completed, paidAt); err != nil {
+				return err
+			}
+		default:
+			return ErrInvalidState
+		}
+		result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, dom.StatusPending).Updates(map[string]any{
+			"status": dom.StatusPaid, "transaction_id": notification.TransactionID,
+			"notify_raw": notification.SafeRaw, "paid_at": paidAt, "updated_at": paidAt,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return ErrInvalidState
+		}
+		completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusPaid, notification.TransactionID, notification.SafeRaw, &paidAt
+		transitioned = true
+		return nil
+	})
+	return &completed, transitioned, err
+}
+
+func creditRecharge(tx *gorm.DB, payment *dom.Payment, now time.Time) error {
+	accountID := snowflake.GenID()
+	if err := tx.Exec("INSERT IGNORE INTO billing.accounts (id, customer_id, balance, frozen_amount, credit_limit, total_recharge, total_consume, created_at, updated_at) VALUES (?, ?, 0, 0, 0, 0, 0, ?, ?)", accountID, payment.CustomerID, now, now).Error; err != nil {
+		return err
+	}
+	var account struct {
+		ID            int64
+		Balance       int64
+		TotalRecharge int64
+	}
+	if err := tx.Table("billing.accounts").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,balance,total_recharge").Where("customer_id = ?", payment.CustomerID).First(&account).Error; err != nil {
+		return err
+	}
+	after := account.Balance + payment.AmountFen
+	if err := tx.Table("billing.accounts").Where("id = ?", account.ID).Updates(map[string]any{"balance": after, "total_recharge": account.TotalRecharge + payment.AmountFen, "updated_at": now}).Error; err != nil {
+		return err
+	}
+	return tx.Exec("INSERT INTO billing.transactions (id, tx_no, customer_id, type, direction, amount, balance_before, balance_after, related_type, related_id, remark, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?, ?, 'recharge', ?, '在线充值到账', ?, ?)",
+		snowflake.GenID(), "RCT"+fmt.Sprintf("%d", payment.ID), payment.CustomerID, payment.AmountFen, account.Balance, after, payment.BizID, now, now).Error
+}
+
+func (r *GormRepository) Close(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
+	var payment dom.Payment
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table(payment.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).First(&payment).Error; err != nil {
+			return err
+		}
+		if payment.Status == dom.StatusClosed {
+			return nil
+		}
+		if payment.Status != dom.StatusPending {
+			return ErrInvalidState
+		}
+		now := time.Now()
+		if err := tx.Table(payment.TableName()).Where("id = ? AND status = ?", payment.ID, dom.StatusPending).Updates(map[string]any{"status": dom.StatusClosed, "closed_at": now, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		payment.Status, payment.ClosedAt = dom.StatusClosed, &now
+		return nil
+	})
+	return &payment, err
+}
+
+func centsToYuan(cents int64) string { return fmt.Sprintf("%d.%02d", cents/100, cents%100) }
+
+func channelPayType(channel string) uint8 {
+	if channel == "alipay" {
+		return 1
+	}
+	return 2
+}
+
+func generatePaymentNo() string {
+	return "PAY" + time.Now().Format("20060102") + fmt.Sprintf("%010d", snowflake.GenID()%10000000000)
+}

@@ -1,0 +1,227 @@
+package instance
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	svc "ddyidc/internal/instance/service"
+	"ddyidc/pkg/auth"
+	"github.com/zeromicro/go-zero/rest"
+	"github.com/zeromicro/go-zero/rest/pathvar"
+)
+
+type handler struct {
+	service *svc.Service
+	jwt     *auth.Manager
+}
+
+func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
+	h := &handler{service: service, jwt: jwt}
+	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/api/v1/instances", Handler: h.legacyList},
+		{Method: http.MethodGet, Path: "/api/v1/user/instances", Handler: h.list},
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId", Handler: h.detail},
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/images", Handler: h.images},
+		{Method: http.MethodPost, Path: "/api/v1/instance/:instanceId/action", Handler: h.action},
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/monitor", Handler: h.monitor},
+	})
+}
+
+func (h *handler) images(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	instanceID := pathID(w, r)
+	if instanceID == 0 {
+		return
+	}
+	result, err := h.service.Images(r.Context(), customerID, instanceID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) legacyList(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	result, err := h.service.LegacyList(r.Context(), customerID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) list(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	page, pageSize := pageParams(r)
+	input := svc.ListInput{Page: page, PageSize: pageSize, Search: strings.TrimSpace(r.URL.Query().Get("search"))}
+	if raw := strings.TrimSpace(r.URL.Query().Get("status")); raw != "" {
+		value, err := strconv.ParseUint(raw, 10, 8)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "状态筛选参数错误")
+			return
+		}
+		status := uint8(value)
+		input.Status = &status
+	}
+	result, err := h.service.List(r.Context(), customerID, input)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	instanceID := pathID(w, r)
+	if instanceID == 0 {
+		return
+	}
+	result, err := h.service.Detail(r.Context(), customerID, instanceID)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) action(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	instanceID := pathID(w, r)
+	if instanceID == 0 {
+		return
+	}
+	var input svc.ActionInput
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "请求参数格式错误")
+		return
+	}
+	result, err := h.service.Action(r.Context(), customerID, instanceID, input)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) monitor(w http.ResponseWriter, r *http.Request) {
+	customerID, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	instanceID := pathID(w, r)
+	if instanceID == 0 {
+		return
+	}
+	end := time.Now()
+	start := end.Add(-24 * time.Hour)
+	if raw := strings.TrimSpace(r.URL.Query().Get("start")); raw != "" {
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "监控开始时间格式错误")
+			return
+		}
+		start = value
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("end")); raw != "" {
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "监控结束时间格式错误")
+			return
+		}
+		end = value
+	}
+	if !start.Before(end) {
+		writeError(w, http.StatusBadRequest, "监控时间范围错误")
+		return
+	}
+	result, err := h.service.Monitor(r.Context(), customerID, instanceID, start, end)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (h *handler) claims(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, "Bearer ") {
+		writeError(w, http.StatusUnauthorized, "登录已失效，请重新登录")
+		return 0, false
+	}
+	claims, err := h.jwt.ParseAccessToken(strings.TrimPrefix(header, "Bearer "))
+	if err != nil || claims == nil {
+		writeError(w, http.StatusUnauthorized, "登录已失效，请重新登录")
+		return 0, false
+	}
+	if claims.Role != "customer" {
+		writeError(w, http.StatusForbidden, "没有访问权限")
+		return 0, false
+	}
+	return claims.UserID, true
+}
+
+func pathID(w http.ResponseWriter, r *http.Request) int64 {
+	raw := pathvar.Vars(r)["instanceId"]
+	id, err := strconv.ParseInt(strings.Trim(raw, "/"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "实例 ID 格式错误")
+		return 0
+	}
+	return id
+}
+
+func pageParams(r *http.Request) (int, int) {
+	page, pageSize := 1, 20
+	if value, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && value > 0 {
+		page = value
+	}
+	if value, err := strconv.Atoi(r.URL.Query().Get("pageSize")); err == nil && value > 0 && value <= 100 {
+		pageSize = value
+	}
+	return page, pageSize
+}
+
+func writeServiceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, svc.ErrForbidden):
+		writeError(w, http.StatusForbidden, "没有权限访问该实例")
+	case errors.Is(err, svc.ErrNotFound):
+		writeError(w, http.StatusNotFound, "实例不存在")
+	case errors.Is(err, svc.ErrUnsupported):
+		writeError(w, http.StatusNotImplemented, err.Error())
+	default:
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
+	}
+}
+
+func writeJSON(w http.ResponseWriter, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
+}
