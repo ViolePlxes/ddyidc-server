@@ -184,6 +184,15 @@ func (s *Service) QueryAlipay(ctx context.Context, payNo string) (*types.QueryRe
 	}
 	platform, err := channel.Query(ctx, outTradeNo)
 	if err != nil {
+		var queryErr *PlatformQueryError
+		if errors.As(err, &queryErr) {
+			message := "支付宝查询失败（" + queryErr.Code
+			if queryErr.SubCode != "" {
+				message += "/" + queryErr.SubCode
+			}
+			message += "）"
+			return nil, &BusinessError{Code: 40006, Message: message}
+		}
 		return nil, err
 	}
 	response := &types.QueryResponse{PayNo: payNo, Connected: true, Found: platform.Found, Status: platform.Status, TradeNo: platform.TransactionID}

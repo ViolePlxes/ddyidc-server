@@ -1,6 +1,7 @@
 package payment
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -127,6 +128,7 @@ func loadAlipaySecrets(path string) (alipaySecretFile, bool, error) {
 		return alipaySecretFile{}, false, errors.New("读取支付宝本地凭据失败")
 	}
 	var secret alipaySecretFile
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
 	if err := json.Unmarshal(raw, &secret); err != nil {
 		return alipaySecretFile{}, false, errors.New("支付宝本地凭据格式无效")
 	}

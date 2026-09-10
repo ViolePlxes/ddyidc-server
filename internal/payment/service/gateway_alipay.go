@@ -2,7 +2,11 @@ package payment
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"net/url"
@@ -34,6 +38,10 @@ func newAlipayChannel(cfg AlipayConfig) (Channel, error) {
 }
 
 func buildAlipayClient(cfg AlipayConfig, returnURL string) (*alipay.Client, error) {
+	publicKeyPEM, err := normalizeAlipayPublicKey(cfg.AlipayPublicKey)
+	if err != nil {
+		return nil, err
+	}
 	isProd := strings.EqualFold(strings.TrimSpace(cfg.Gateway), "https://openapi.alipay.com/gateway.do")
 	client, err := alipay.NewClient(cfg.AppID, cfg.AppPrivateKey, isProd)
 	if err != nil {
@@ -43,8 +51,45 @@ func buildAlipayClient(cfg AlipayConfig, returnURL string) (*alipay.Client, erro
 	if returnURL != "" {
 		client.SetReturnUrl(returnURL)
 	}
-	client.AutoVerifySign([]byte(cfg.AlipayPublicKey))
+	// AutoVerifySign logs its input when PEM decoding fails. Validate and
+	// normalize first so a malformed real key can never be echoed by the SDK.
+	client.AutoVerifySign(publicKeyPEM)
 	return client, nil
+}
+
+func normalizeAlipayPublicKey(value string) ([]byte, error) {
+	raw := []byte(strings.TrimSpace(value))
+	var der []byte
+	if block, _ := pem.Decode(raw); block != nil {
+		der = block.Bytes
+	} else {
+		compact := strings.NewReplacer("\r", "", "\n", "", "\t", "", " ", "").Replace(string(raw))
+		decoded, err := base64.StdEncoding.DecodeString(compact)
+		if err != nil {
+			return nil, errors.New("支付宝公钥格式无效")
+		}
+		der = decoded
+	}
+	parsed, err := x509.ParsePKIXPublicKey(der)
+	var publicKey *rsa.PublicKey
+	if err != nil {
+		if pkcs1Key, pkcs1Err := x509.ParsePKCS1PublicKey(der); pkcs1Err == nil {
+			publicKey = pkcs1Key
+		} else {
+			return nil, errors.New("支付宝公钥格式无效")
+		}
+	} else {
+		var ok bool
+		publicKey, ok = parsed.(*rsa.PublicKey)
+		if !ok {
+			return nil, errors.New("支付宝公钥类型无效")
+		}
+	}
+	publicKeyDER, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		return nil, errors.New("支付宝公钥格式无效")
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicKeyDER}), nil
 }
 
 func (c *alipayChannel) Create(ctx context.Context, payment *dom.Payment, subject, mode string) (*Checkout, error) {
@@ -116,10 +161,22 @@ func (c *alipayChannel) Close(ctx context.Context, payment *dom.Payment) error {
 func (c *alipayChannel) Query(ctx context.Context, outTradeNo string) (PlatformQuery, error) {
 	response, err := c.client.TradeQuery(ctx, gopay.BodyMap{"out_trade_no": outTradeNo})
 	if err != nil {
-		if bizErr, ok := alipay.IsBizError(err); ok && bizErr.SubCode == "ACQ.TRADE_NOT_EXIST" {
-			return PlatformQuery{Found: false, OutTradeNo: outTradeNo, Status: "not_found", Currency: "CNY"}, nil
+		if bizErr, ok := alipay.IsBizError(err); ok {
+			if bizErr.SubCode == "ACQ.TRADE_NOT_EXIST" {
+				return PlatformQuery{Found: false, OutTradeNo: outTradeNo, Status: "not_found", Currency: "CNY"}, nil
+			}
+			return PlatformQuery{}, &PlatformQueryError{Code: safePlatformCode(bizErr.Code), SubCode: safePlatformCode(bizErr.SubCode)}
 		}
-		return PlatformQuery{}, errors.New("支付宝交易查询失败")
+		switch {
+		case errors.Is(err, gopay.VerifySignatureErr):
+			return PlatformQuery{}, &PlatformQueryError{Code: "RESPONSE_SIGNATURE"}
+		case errors.Is(err, gopay.UnmarshalErr):
+			return PlatformQuery{}, &PlatformQueryError{Code: "RESPONSE_FORMAT"}
+		case errors.Is(err, context.DeadlineExceeded):
+			return PlatformQuery{}, &PlatformQueryError{Code: "TIMEOUT"}
+		default:
+			return PlatformQuery{}, &PlatformQueryError{Code: "TRANSPORT"}
+		}
 	}
 	if response == nil || response.Response == nil {
 		return PlatformQuery{}, errors.New("支付宝交易查询响应无效")
@@ -140,6 +197,19 @@ func (c *alipayChannel) Query(ctx context.Context, outTradeNo string) (PlatformQ
 		Found: true, OutTradeNo: response.Response.OutTradeNo, TransactionID: response.Response.TradeNo,
 		Status: response.Response.TradeStatus, AmountFen: amountFen, Currency: currency, PaidAt: paidAt,
 	}, nil
+}
+
+func safePlatformCode(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > 64 {
+		return "UNKNOWN"
+	}
+	for _, char := range value {
+		if (char < 'A' || char > 'Z') && (char < '0' || char > '9') && char != '.' && char != '_' && char != '-' {
+			return "UNKNOWN"
+		}
+	}
+	return value
 }
 
 func (c *alipayChannel) ParseNotification(request *http.Request) (dom.VerifiedNotification, error) {

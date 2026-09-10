@@ -34,3 +34,10 @@ type PlatformQuery struct {
 type QueryableChannel interface {
 	Query(context.Context, string) (PlatformQuery, error)
 }
+
+type PlatformQueryError struct {
+	Code    string
+	SubCode string
+}
+
+func (e *PlatformQueryError) Error() string { return "支付平台查询失败" }

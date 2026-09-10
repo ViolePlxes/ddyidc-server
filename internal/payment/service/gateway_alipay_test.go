@@ -116,3 +116,14 @@ func TestAlipayCreatesPageAndWapCheckoutWithSDK(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeAlipayPublicKeyRejectsMalformedValueWithoutEcho(t *testing.T) {
+	sensitiveMarker := "must-not-appear-in-error"
+	_, err := normalizeAlipayPublicKey(sensitiveMarker)
+	if err == nil {
+		t.Fatal("expected malformed public key to be rejected")
+	}
+	if strings.Contains(err.Error(), sensitiveMarker) {
+		t.Fatal("public key value leaked through validation error")
+	}
+}
