@@ -68,7 +68,7 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		return output, nil
 	})
 	toolLabel, toolPath := "Node/npm", m.config.NPMPath
-	toolArgs := []string{"--version"}
+	toolArgs := toolVersionArgs(name)
 	if name == TargetBackend {
 		toolLabel, toolPath = "Go 工具链", m.config.GoPath
 	}
@@ -113,6 +113,13 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		return "连接正常", nil
 	})
 	return checks, firstFailed(checks)
+}
+
+func toolVersionArgs(target string) []string {
+	if target == TargetBackend {
+		return []string{"version"}
+	}
+	return []string{"--version"}
 }
 
 func (m *Manager) httpGet(ctx context.Context, url string) (int, []byte, error) {
