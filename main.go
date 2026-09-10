@@ -26,15 +26,18 @@ import (
 	tickethandler "ddyidc/internal/ticket/handler"
 	ticketrepo "ddyidc/internal/ticket/repository"
 	ticketservice "ddyidc/internal/ticket/service"
+	"ddyidc/internal/update"
 	upstreamapi "ddyidc/internal/upstream/api"
 	upstreamservice "ddyidc/internal/upstream/service"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/cache"
 	cryptoutil "ddyidc/pkg/crypto"
 	"ddyidc/pkg/db"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/rest"
@@ -42,6 +45,13 @@ import (
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
 var migrate = flag.Bool("migrate", false, "执行 sql/01_create_tables.sql（开发环境，会重建表）")
+
+var (
+	version   = "dev"
+	commit    = "unknown"
+	branch    = "unknown"
+	buildTime = "unknown"
+)
 
 var repositories struct {
 	Customer  customerrrepo.Repository
@@ -61,6 +71,7 @@ func main() {
 		MySQL  db.Config
 		Redis  cache.Config
 		Notify notify.Config
+		Update update.Config
 		Crypto struct{ AESKey string }
 		JWT    struct {
 			AccessSecret  string
@@ -112,6 +123,10 @@ func main() {
 	if err != nil {
 		panic("notify initialization failed: " + err.Error())
 	}
+	updateManager, err := update.NewManager(db.G, cache.RDB, c.Update)
+	if err != nil {
+		panic("update initialization failed: " + err.Error())
+	}
 
 	// 创建服务
 	server := rest.MustNewServer(c.RestConf)
@@ -124,8 +139,9 @@ func main() {
 	server.Use(middleware.Logger())
 
 	// 注册路由（各域 handler 在此注册）
-	registerRoutes(server, notifyManager, authManager, []byte(c.Crypto.AESKey))
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey))
 	notifyManager.StartExpiryScanner(context.Background())
+	updateManager.StartResultWatcher(context.Background())
 
 	fmt.Printf("DDYIDC 服务启动，监听 %s:%d\n", c.Host, c.Port)
 	server.Start()
@@ -141,15 +157,17 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, jwt *auth.Manager, snapshotKey []byte) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte) {
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
 		Path:    "/health",
 		Handler: healthHandler,
 	})
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/api/v1/system/version", Handler: versionHandler})
 	notify.RegisterHandlers(server, notifyManager)
 	notify.RegisterAdminHandlers(server, notifyManager, jwt)
+	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
 
 	// 营销套件（M1-M6）
@@ -194,6 +212,27 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, jwt *aut
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	var one int
+	databaseOK := db.G != nil && db.G.WithContext(ctx).Raw("SELECT 1").Scan(&one).Error == nil && one == 1
+	redisOK := cache.RDB != nil && cache.RDB.Ping(ctx).Err() == nil
+	status := http.StatusOK
+	if !databaseOK || !redisOK {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":  map[bool]string{true: "ok", false: "degraded"}[databaseOK && redisOK],
+		"version": version, "commit": commit, "branch": branch, "buildTime": buildTime,
+		"database": databaseOK, "redis": redisOK,
+	})
+}
+
+func versionHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]string{
+		"version": version, "commit": commit, "branch": branch, "buildTime": buildTime,
+	}})
 }

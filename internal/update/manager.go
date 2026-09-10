@@ -1,0 +1,205 @@
+package update
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"ddyidc/internal/shared/snowflake"
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+)
+
+var ErrUpdateRunning = errors.New("已有更新任务正在执行")
+
+type Manager struct {
+	config     Config
+	database   *gorm.DB
+	redis      *redis.Client
+	repo       *Repository
+	runner     CommandRunner
+	files      FileOps
+	locker     Locker
+	httpClient *http.Client
+	freeSpace  func(string) (uint64, error)
+	exit       func(int)
+	start      func(string, []string, string) error
+	pid        int
+	mu         sync.Mutex
+}
+
+func NewManager(database *gorm.DB, redisClient *redis.Client, config Config) (*Manager, error) {
+	config = config.normalized()
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
+	manager := &Manager{config: config, database: database, redis: redisClient, repo: NewRepository(database), runner: OSRunner{}, files: OSFileOps{}, locker: NewRedisLocker(redisClient), httpClient: defaultHTTPClient(), freeSpace: diskFree, exit: os.Exit, start: startDetached, pid: os.Getpid()}
+	if err := manager.repo.VerifySchema(context.Background()); err != nil {
+		return nil, fmt.Errorf("更新任务表未就绪，请先人工执行 migrations/001_create_update_tasks.sql: %w", err)
+	}
+	if err := manager.files.MkdirAll(config.ResultDir); err != nil {
+		return nil, fmt.Errorf("创建更新结果目录: %w", err)
+	}
+	return manager, nil
+}
+
+func (m *Manager) Status(ctx context.Context, fetchRemote bool) (StatusView, error) {
+	backend, err := m.versionInfo(ctx, TargetBackend, fetchRemote)
+	if err != nil {
+		return StatusView{}, err
+	}
+	frontend, err := m.versionInfo(ctx, TargetFrontend, fetchRemote)
+	if err != nil {
+		return StatusView{}, err
+	}
+	status := StatusView{Backend: backend, Frontend: frontend}
+	if running, runningErr := m.repo.Running(ctx); runningErr != nil {
+		return StatusView{}, runningErr
+	} else if running != nil {
+		view := viewTask(running)
+		status.Running = &view
+	}
+	return status, nil
+}
+
+func (m *Manager) Task(ctx context.Context, id int64) (*TaskView, error) {
+	task, err := m.repo.Get(ctx, id)
+	if err != nil || task == nil {
+		return nil, err
+	}
+	view := viewTask(task)
+	return &view, nil
+}
+
+func (m *Manager) Tasks(ctx context.Context, page, pageSize int) ([]TaskView, int64, error) {
+	tasks, total, err := m.repo.List(ctx, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+	views := make([]TaskView, 0, len(tasks))
+	for index := range tasks {
+		views = append(views, viewTask(&tasks[index]))
+	}
+	return views, total, nil
+}
+
+func (m *Manager) Trigger(ctx context.Context, targetName string, adminID int64) (string, error) {
+	if _, err := m.config.target(targetName); err != nil {
+		return "", err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	taskID := snowflake.GenID()
+	token := formatID(taskID)
+	acquired, err := m.locker.Acquire(ctx, token, m.config.timeout()+2*time.Minute)
+	if err != nil {
+		return "", fmt.Errorf("获取更新锁: %w", err)
+	}
+	if !acquired {
+		return "", ErrUpdateRunning
+	}
+	if running, runningErr := m.repo.Running(ctx); runningErr != nil {
+		_ = m.locker.Release(ctx, token)
+		return "", runningErr
+	} else if running != nil {
+		if time.Since(running.StartedAt) <= m.config.timeout()+2*time.Minute {
+			_ = m.locker.Release(ctx, token)
+			return "", ErrUpdateRunning
+		}
+		_ = m.repo.Finish(ctx, running.ID, StatusFailed, "任务超时后服务恢复，已清理遗留状态", "unknown", running.Log+"\n遗留任务已标记失败")
+	}
+	info, err := m.versionInfo(ctx, targetName, false)
+	if err != nil {
+		_ = m.locker.Release(ctx, token)
+		return "", err
+	}
+	task := &Task{ID: taskID, Target: targetName, Status: StatusRunning, Progress: 1, TriggerBy: adminID, Branch: info.Branch, BeforeCommit: info.CurrentCommit, TargetCommit: info.RemoteCommit, BeforeVersion: info.Current, TargetVersion: info.Remote, Feature: firstFeature(info.Changes), Log: "任务已创建", CreatedAt: time.Now(), StartedAt: time.Now()}
+	if err = m.repo.Create(ctx, task); err != nil {
+		_ = m.locker.Release(ctx, token)
+		return "", err
+	}
+	go m.runTask(task)
+	return token, nil
+}
+
+func firstFeature(changes []Change) string {
+	if len(changes) == 0 {
+		return ""
+	}
+	return changes[0].Feature
+}
+
+func (m *Manager) runTask(task *Task) {
+	ctx, cancel := context.WithTimeout(context.Background(), m.config.timeout())
+	defer cancel()
+	if task.Target == TargetBackend {
+		m.runBackend(ctx, task)
+		return
+	}
+	m.runFrontend(ctx, task)
+}
+
+func (m *Manager) progress(ctx context.Context, task *Task, progress int, logValue *taskLog, message string) {
+	logValue.add(message)
+	_ = m.repo.Update(ctx, task.ID, map[string]any{"progress": progress, "log": logValue.String()})
+}
+
+func (m *Manager) fail(ctx context.Context, task *Task, logValue *taskLog, err error, rollback string) {
+	logValue.add("失败: " + err.Error())
+	_ = m.repo.Finish(ctx, task.ID, StatusFailed, sanitizeOutput(err.Error()), rollback, logValue.String())
+	_ = m.locker.Release(context.Background(), formatID(task.ID))
+}
+
+func (m *Manager) succeed(ctx context.Context, task *Task, logValue *taskLog) {
+	logValue.add("更新完成")
+	_ = m.repo.Finish(ctx, task.ID, StatusSuccess, "", "", logValue.String())
+	_ = m.locker.Release(context.Background(), formatID(task.ID))
+}
+
+func (m *Manager) StartResultWatcher(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			m.processHelperResults(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+}
+
+func (m *Manager) processHelperResults(ctx context.Context) {
+	paths, err := filepath.Glob(filepath.Join(m.config.ResultDir, "*.result.json"))
+	if err != nil {
+		return
+	}
+	for _, path := range paths {
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var result HelperResult
+		if json.Unmarshal(data, &result) != nil {
+			continue
+		}
+		id, parseErr := strconv.ParseInt(result.TaskID, 10, 64)
+		if parseErr != nil {
+			continue
+		}
+		_ = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, sanitizeOutput(result.Log))
+		_ = m.locker.Release(context.Background(), result.TaskID)
+		_ = os.Remove(path)
+		_ = os.Remove(strings.TrimSuffix(path, ".result.json") + ".plan.json")
+	}
+}
