@@ -1,0 +1,21 @@
+# 将以下 Update 段合并到部署环境的 config.yaml；不要把真实凭据提交到 Git。
+Update:
+  GitPath: "C:\\Program Files\\Git\\cmd\\git.exe"
+  GoPath: "D:\\ddy\\.tools\\go\\bin\\go.exe"
+  NPMPath: "C:\\Program Files\\nodejs\\npm.cmd"
+  MinFreeMB: 500
+  TimeoutSeconds: 600
+  HealthURL: "http://127.0.0.1:8080/health"
+  VersionURL: "http://127.0.0.1:8080/api/v1/system/version"
+  SmokeURL: "http://127.0.0.1:8080/api/v1/products"
+  ResultDir: "D:\\ddy\\.tools\\update-results"
+  Backend:
+    Workspace: "D:\\ddy\\ddyidc-project\\server"
+    Branch: "main"
+    Executable: "D:\\ddy\\.tools\\ddyidc-server-current.exe"
+    ConfigFile: "D:\\ddy\\ddyidc-project\\server\\etc\\config.yaml"
+    HelperPath: "D:\\ddy\\.tools\\ddyidc-update-helper.exe"
+  Frontend:
+    Workspace: "D:\\ddoidc\\web-react"
+    Branch: "main"
+    StaticURL: "http://127.0.0.1:3100/"
