@@ -24,6 +24,7 @@ func (e *BusinessError) Error() string { return e.Message }
 type PostPaymentCoordinator interface {
 	ProvisionAfterPayment(context.Context, int64, int64, string) error
 	AfterRechargePayment(context.Context, int64, int64, int64) error
+	AfterMarketplacePayment(context.Context, int64, int64) error
 }
 
 type Dispatcher interface {
@@ -47,13 +48,31 @@ func (d *AsyncDispatcher) Dispatch(payment *dom.Payment) {
 		var err error
 		if copyPayment.BizType == dom.BizOrder {
 			err = d.coordinator.ProvisionAfterPayment(ctx, copyPayment.CustomerID, copyPayment.BizID, copyPayment.Channel)
-		} else {
+		} else if copyPayment.BizType == dom.BizRecharge {
 			err = d.coordinator.AfterRechargePayment(ctx, copyPayment.BizID, copyPayment.CustomerID, copyPayment.AmountFen)
+		} else if copyPayment.BizType == dom.BizMarketplace {
+			err = d.coordinator.AfterMarketplacePayment(ctx, copyPayment.BizID, copyPayment.CustomerID)
 		}
 		if err != nil {
 			logx.Errorf("post-payment action failed payment_id=%d biz_type=%s biz_id=%d", copyPayment.ID, copyPayment.BizType, copyPayment.BizID)
 		}
 	}()
+}
+
+func (s *Service) CreateMarketplace(ctx context.Context, customerID, orderID int64, channelName, mode string) (*types.CheckoutResponse, error) {
+	channelName, channel, err := s.channel(channelName)
+	if err != nil {
+		return nil, err
+	}
+	prepared, err := s.repo.PrepareMarketplace(ctx, customerID, orderID, channelName, s.now().Add(time.Duration(s.config.ExpireMinutes)*time.Minute))
+	if err != nil {
+		return nil, mapRepositoryError(err)
+	}
+	checkout, err := channel.Create(ctx, prepared.Payment, prepared.Subject, mode)
+	if err != nil {
+		return nil, fmt.Errorf("创建渠道支付单失败: %w", err)
+	}
+	return checkoutResponse(prepared.Payment, checkout), nil
 }
 
 type Service struct {

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	productdomain "ddyidc/internal/product/domain"
 	"ddyidc/internal/upstream/model"
@@ -19,6 +20,7 @@ type ProductInput struct {
 	Name               string  `json:"name"`
 	Description        string  `json:"description"`
 	ProductGroupID     string  `json:"productGroupId"`
+	GroupID            string  `json:"groupId"`
 	ProfitType         int     `json:"profitType"`
 	ProfitValue        float64 `json:"profitValue"`
 	RenewProfitType    int     `json:"renewProfitType"`
@@ -84,7 +86,13 @@ func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
 	// upstream catalogue does not require a local group, so use its explicit
 	// sentinel value instead of passing an empty string to MySQL.
 	if in.ProductGroupID == "" {
+		in.ProductGroupID = in.GroupID
+	}
+	if in.ProductGroupID == "" {
 		in.ProductGroupID = "0"
+	}
+	if err := s.validateLocalProductGroup(in.ProductGroupID); err != nil {
+		return model.UpstreamProduct{}, err
 	}
 	supplier, e := s.GetSupplier(in.SupplierID)
 	if e != nil {
@@ -153,7 +161,13 @@ func (s *Store) UpdateProduct(key string, in ProductInput) (model.UpstreamProduc
 		return v, err
 	}
 	if in.ProductGroupID == "" {
+		in.ProductGroupID = in.GroupID
+	}
+	if in.ProductGroupID == "" {
 		in.ProductGroupID = "0"
+	}
+	if err = s.validateLocalProductGroup(in.ProductGroupID); err != nil {
+		return v, err
 	}
 	if in.PriceBasis == "" {
 		in.PriceBasis = v.PriceBasis
@@ -183,10 +197,84 @@ func (s *Store) UpdateProduct(key string, in ProductInput) (model.UpstreamProduc
 		s.mu.Unlock()
 		return v, nil
 	}
-	if err = s.db.Table(v.TableName()).Where("id = ?", key).Save(&v).Error; err != nil {
+	if err = s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table(v.TableName()).Where("id = ?", key).Save(&v).Error; err != nil {
+			return err
+		}
+		if v.ProductID != "" && v.ProductID != "0" {
+			return tx.Table((productdomain.Product{}).TableName()).Where("id = ?", v.ProductID).Update("group_id", v.ProductGroupID).Error
+		}
+		return nil
+	}); err != nil {
 		return v, err
 	}
 	return v, nil
+}
+
+func (s *Store) ConnectProducts(supplierID, groupID string, items []ProductInput) ([]model.UpstreamProduct, error) {
+	if strings.TrimSpace(supplierID) == "" {
+		return nil, fmt.Errorf("请选择供应商")
+	}
+	if len(items) == 0 {
+		return nil, fmt.Errorf("请选择要对接的上游商品")
+	}
+	if len(items) > 20 {
+		return nil, fmt.Errorf("单次最多对接 20 个商品")
+	}
+	if groupID == "" {
+		groupID = "0"
+	}
+	if err := s.validateLocalProductGroup(groupID); err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if s.connectors[supplierID] {
+		s.mu.Unlock()
+		return nil, fmt.Errorf("该供应商正在执行商品对接，请稍候")
+	}
+	s.connectors[supplierID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.connectors, supplierID)
+		s.mu.Unlock()
+	}()
+
+	results := make([]model.UpstreamProduct, 0, len(items))
+	for index, input := range items {
+		if index > 0 {
+			time.Sleep(2 * time.Second)
+		}
+		input.SupplierID = supplierID
+		input.ProductGroupID = groupID
+		input.Mode = "sync"
+		product, err := s.AddProduct(input)
+		if err != nil {
+			return results, fmt.Errorf("对接上游商品 %d 失败：%w", input.UpstreamProductID, err)
+		}
+		results = append(results, product)
+	}
+	return results, nil
+}
+
+func (s *Store) validateLocalProductGroup(groupID string) error {
+	if groupID == "" || groupID == "0" || s.isMemory() {
+		return nil
+	}
+	id, err := strconv.ParseInt(groupID, 10, 64)
+	if err != nil || id <= 0 {
+		return fmt.Errorf("本地商品分组无效")
+	}
+	var group productdomain.ProductGroup
+	if err := s.db.Table(group.TableName()).Where("id = ?", id).First(&group).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return fmt.Errorf("本地商品分组不存在")
+	} else if err != nil {
+		return err
+	}
+	if group.ParentID == 0 {
+		return fmt.Errorf("请选择二级商品分组")
+	}
+	return nil
 }
 func (s *Store) ListProducts() (out []model.UpstreamProduct) {
 	if s.isMemory() {
@@ -295,6 +383,13 @@ func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, de
 		GroupID: groupID, Name: name, ModuleType: detail.Type, PayType: 1,
 		Stock: stock, Status: 1, Hidden: mapping.Hidden,
 		Summary: string(summaryRunes), Description: description,
+	}
+	var maxSort *int
+	if e := tx.Table(local.TableName()).Where("group_id = ?", groupID).Select("MAX(sort)").Scan(&maxSort).Error; e != nil {
+		return e
+	}
+	if maxSort != nil {
+		local.Sort = *maxSort + 1
 	}
 	if e := tx.Table(local.TableName()).Create(&local).Error; e != nil {
 		return e

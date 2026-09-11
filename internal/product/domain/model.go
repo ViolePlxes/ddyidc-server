@@ -10,12 +10,12 @@ type ProductGroup struct {
 	ID        int64     `gorm:"column:id;primaryKey" json:"id,string"`
 	TenantID  int64     `gorm:"column:tenant_id" json:"tenantId,string"`
 	ParentID  int64     `gorm:"column:parent_id" json:"parentId,string"`
-	Name      string    `gorm:"column:name"`
-	Icon      string    `gorm:"column:icon"`
-	Sort      int       `gorm:"column:sort"`
-	Status    uint8     `gorm:"column:status"`
-	CreatedAt time.Time `gorm:"column:created_at"`
-	UpdatedAt time.Time `gorm:"column:updated_at"`
+	Name      string    `gorm:"column:name" json:"name"`
+	Icon      string    `gorm:"column:icon" json:"icon"`
+	Sort      int       `gorm:"column:sort" json:"sort"`
+	Status    uint8     `gorm:"column:status" json:"status"`
+	CreatedAt time.Time `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt time.Time `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 func (ProductGroup) TableName() string { return "product.product_groups" }

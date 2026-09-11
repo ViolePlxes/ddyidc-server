@@ -29,6 +29,11 @@ type AuthHooks interface {
 	AfterRegister(ctx context.Context, customerID int64, inviteCode, salesCode string) error
 }
 
+// AuthEventHooks is an optional, failure-isolated observer for plugin events.
+type AuthEventHooks interface {
+	AfterAuthEvent(ctx context.Context, event string, customerID int64)
+}
+
 type authHandler struct {
 	customers repository.Repository
 	jwt       *auth.Manager
@@ -246,6 +251,9 @@ func (h *authHandler) rejectLogin(w http.ResponseWriter, r *http.Request, rateKe
 }
 
 func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request, customer *domain.Customer) {
+	if events, ok := h.hooks.(AuthEventHooks); ok {
+		events.AfterAuthEvent(r.Context(), "login", customer.ID)
+	}
 	user := map[string]any{"id": strconv.FormatInt(customer.ID, 10), "account": customer.Username, "name": customer.Username, "role": "customer"}
 	if customer.Nickname != nil && *customer.Nickname != "" {
 		user["name"] = *customer.Nickname
@@ -397,6 +405,9 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "创建账号失败")
 		return
+	}
+	if events, ok := h.hooks.(AuthEventHooks); ok {
+		events.AfterAuthEvent(r.Context(), "register", customer.ID)
 	}
 	if h.hooks != nil && (inviteCode != "" || salesCode != "") {
 		if err := h.hooks.AfterRegister(r.Context(), customer.ID, inviteCode, salesCode); err != nil {

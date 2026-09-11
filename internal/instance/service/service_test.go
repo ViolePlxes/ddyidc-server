@@ -59,6 +59,7 @@ func (r *ownershipRepo) FinishEvent(_ context.Context, _ int64, _ uint8, _ *uint
 func (r *ownershipRepo) ListEvents(context.Context, int64, int) ([]*dom.Event, error) {
 	return nil, nil
 }
+func (r *ownershipRepo) IsMarketplaceLocked(context.Context, int64) (bool, error) { return false, nil }
 
 func TestDetailRejectsAnotherCustomersInstance(t *testing.T) {
 	service := NewService(&ownershipRepo{host: &dom.Host{ID: 100, CustomerID: 200}}, nil)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"ddyidc/internal/marketplace"
 	dom "ddyidc/internal/payment/domain"
 	"ddyidc/internal/shared/snowflake"
 	"gorm.io/gorm"
@@ -28,11 +29,57 @@ type Prepared struct {
 type Repository interface {
 	PrepareOrder(context.Context, int64, int64, string, time.Time) (*Prepared, error)
 	PrepareRecharge(context.Context, int64, int64, string, time.Time) (*Prepared, error)
+	PrepareMarketplace(context.Context, int64, int64, string, time.Time) (*Prepared, error)
 	FindByOutTradeNo(context.Context, string) (*dom.Payment, error)
 	FindByPaymentNo(context.Context, string) (*dom.Payment, error)
 	FindByBiz(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
 	Complete(context.Context, dom.VerifiedNotification) (*dom.Payment, bool, error)
 	Close(context.Context, int64, dom.BizType, int64) (*dom.Payment, error)
+}
+
+func (r *GormRepository) PrepareMarketplace(ctx context.Context, customerID, orderID int64, channel string, expireAt time.Time) (*Prepared, error) {
+	var prepared *Prepared
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row struct {
+			ID          int64
+			OrderNo     string
+			BuyerID     int64
+			PayAmount   string
+			Status      string
+			ProductName string
+		}
+		err := tx.Table("system.marketplace_orders AS o").Clauses(clause.Locking{Strength: "UPDATE"}).
+			Select("o.id,o.order_no,o.buyer_id,o.pay_amount,o.status,l.product_name").
+			Joins("JOIN system.marketplace_listings l ON l.id=o.listing_id").Where("o.id=?", orderID).First(&row).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrBizNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if row.BuyerID != customerID {
+			return ErrForbidden
+		}
+		if row.Status != "pending_pay" {
+			return ErrNotPayable
+		}
+		amount, err := marketplace.MoneyToCents(row.PayAmount)
+		if err != nil {
+			return ErrNotPayable
+		}
+		paymentNo := generatePaymentNo()
+		payment := &dom.Payment{PaymentNo: paymentNo, BizType: dom.BizMarketplace, BizID: row.ID, CustomerID: customerID, Channel: channel, OutTradeNo: paymentNo, Amount: row.PayAmount, AmountFen: amount, Currency: "CNY", Status: dom.StatusPending, ExpireAt: expireAt}
+		if err := r.insertOrReuse(tx, payment); err != nil {
+			return err
+		}
+		subject := row.ProductName
+		if subject == "" {
+			subject = "DDYIDC 交易市场订单"
+		}
+		prepared = &Prepared{Payment: payment, Subject: subject}
+		return nil
+	})
+	return prepared, err
 }
 
 type GormRepository struct{ db *gorm.DB }
@@ -235,6 +282,30 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 			}
 			if err := creditRecharge(tx, &completed, paidAt); err != nil {
 				return err
+			}
+		case dom.BizMarketplace:
+			if err := tx.SavePoint("before_marketplace_transfer").Error; err != nil {
+				return err
+			}
+			if err := marketplace.CompletePaidOrderTx(tx, completed.BizID, completed.CustomerID, paidAt, completed.Channel); err != nil {
+				if rollbackErr := tx.RollbackTo("before_marketplace_transfer").Error; rollbackErr != nil {
+					return errors.Join(err, rollbackErr)
+				}
+				if compensateErr := marketplace.CompensateFailedExternalPaymentTx(tx, completed.BizID, completed.CustomerID, paidAt, err.Error()); compensateErr != nil {
+					return errors.Join(err, compensateErr)
+				}
+				result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, dom.StatusPending).Updates(map[string]any{
+					"status": dom.StatusRefunded, "transaction_id": notification.TransactionID,
+					"notify_raw": notification.SafeRaw, "paid_at": paidAt, "updated_at": paidAt,
+				})
+				if result.Error != nil || result.RowsAffected != 1 {
+					if result.Error != nil {
+						return result.Error
+					}
+					return ErrInvalidState
+				}
+				completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusRefunded, notification.TransactionID, notification.SafeRaw, &paidAt
+				return nil
 			}
 		default:
 			return ErrInvalidState

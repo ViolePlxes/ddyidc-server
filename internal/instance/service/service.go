@@ -21,9 +21,10 @@ import (
 )
 
 var (
-	ErrNotFound    = errors.New("instance not found")
-	ErrForbidden   = errors.New("instance access forbidden")
-	ErrUnsupported = errors.New("instance action unsupported")
+	ErrNotFound      = errors.New("instance not found")
+	ErrForbidden     = errors.New("instance access forbidden")
+	ErrUnsupported   = errors.New("instance action unsupported")
+	ErrTradingLocked = errors.New("实例正在交易市场挂牌或锁定，暂不能执行操作")
 )
 
 type ProviderResolver interface {
@@ -325,6 +326,13 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
+	}
+	locked, err := s.repo.IsMarketplaceLocked(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if locked {
+		return nil, ErrTradingLocked
 	}
 	in.Action = strings.TrimSpace(strings.ToLower(in.Action))
 	if in.Action == "destroy" {

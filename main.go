@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"ddyidc/internal/cdnsell"
 	customerhandler "ddyidc/internal/customer/handler"
 	customerrrepo "ddyidc/internal/customer/repository"
+	"ddyidc/internal/groupbuy"
 	instancehandler "ddyidc/internal/instance/handler"
 	instancerepo "ddyidc/internal/instance/repository"
 	instanceservice "ddyidc/internal/instance/service"
@@ -11,6 +13,7 @@ import (
 	marketinghandler "ddyidc/internal/marketing/handler"
 	marketingrepo "ddyidc/internal/marketing/repository"
 	marketingservice "ddyidc/internal/marketing/service"
+	"ddyidc/internal/marketplace"
 	"ddyidc/internal/notify"
 	orderhandler "ddyidc/internal/order/handler"
 	orderrepo "ddyidc/internal/order/repository"
@@ -18,6 +21,7 @@ import (
 	paymenthandler "ddyidc/internal/payment/handler"
 	paymentrepo "ddyidc/internal/payment/repository"
 	paymentservice "ddyidc/internal/payment/service"
+	"ddyidc/internal/points"
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
 	"ddyidc/internal/remoteconsole"
@@ -42,6 +46,7 @@ import (
 
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/rest"
+	"gorm.io/gorm"
 )
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
@@ -62,6 +67,74 @@ var repositories struct {
 	System    systemrepo.Repository
 	Marketing marketingrepo.Repository
 	Payment   paymentrepo.Repository
+}
+
+type paymentCoordinator struct {
+	orders      *orderservice.Service
+	marketplace *marketplace.Service
+	cdnsell     *cdnsell.Service
+}
+
+type authEventHooks struct {
+	marketing *marketingapi.AuthHooks
+	points    *points.Service
+}
+
+func (h authEventHooks) VerifyInvite(ctx context.Context, code string) (string, error) {
+	return h.marketing.VerifyInvite(ctx, code)
+}
+func (h authEventHooks) VerifySales(ctx context.Context, code string) (string, error) {
+	return h.marketing.VerifySales(ctx, code)
+}
+func (h authEventHooks) AfterRegister(ctx context.Context, customerID int64, inviteCode, salesCode string) error {
+	return h.marketing.AfterRegister(ctx, customerID, inviteCode, salesCode)
+}
+func (h authEventHooks) AfterAuthEvent(ctx context.Context, event string, customerID int64) {
+	_, _ = h.points.GrantByEvent(ctx, event, customerID, points.EventMeta{RefID: fmt.Sprintf("auth:%s:%d", event, time.Now().UnixNano())})
+}
+
+type orderEventHooks struct {
+	marketing *marketingapi.OrderHooks
+	points    *points.Service
+}
+
+func (h orderEventHooks) ChargeCoupon(ctx context.Context, tx *gorm.DB, userID, userCouponID, orderID, amountCents int64) (int64, error) {
+	return h.marketing.ChargeCoupon(ctx, tx, userID, userCouponID, orderID, amountCents)
+}
+func (h orderEventHooks) ReleaseCoupon(ctx context.Context, orderID int64) error {
+	return h.marketing.ReleaseCoupon(ctx, orderID)
+}
+func (h orderEventHooks) OnOrderPaid(ctx context.Context, orderID int64, orderNo string, customerID, payCents int64) error {
+	if err := h.marketing.OnOrderPaid(ctx, orderID, orderNo, customerID, payCents); err != nil {
+		return err
+	}
+	meta := points.EventMeta{RefID: orderNo, AmountCents: payCents, Remark: "订单支付赠送积分"}
+	_, _ = h.points.GrantByEvent(ctx, points.EventOrder, customerID, meta)
+	_, _ = h.points.GrantByEvent(ctx, points.EventFirstPurchase, customerID, meta)
+	return nil
+}
+func (h orderEventHooks) OnRechargePaid(ctx context.Context, rechargeID int64, rechargeNo string, customerID, amountCents int64) error {
+	if err := h.marketing.OnRechargePaid(ctx, rechargeID, rechargeNo, customerID, amountCents); err != nil {
+		return err
+	}
+	_, _ = h.points.GrantByEvent(ctx, points.EventRecharge, customerID, points.EventMeta{RefID: rechargeNo, AmountCents: amountCents, Remark: "充值赠送积分"})
+	return nil
+}
+
+func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
+	if c.cdnsell != nil {
+		matched, err := c.cdnsell.ProvisionPlatformOrder(ctx, customerID, orderID, method)
+		if matched || err != nil {
+			return err
+		}
+	}
+	return c.orders.ProvisionAfterPayment(ctx, customerID, orderID, method)
+}
+func (c paymentCoordinator) AfterRechargePayment(ctx context.Context, rechargeID, customerID, amountCents int64) error {
+	return c.orders.AfterRechargePayment(ctx, rechargeID, customerID, amountCents)
+}
+func (c paymentCoordinator) AfterMarketplacePayment(ctx context.Context, orderID, customerID int64) error {
+	return c.marketplace.AfterExternalPayment(ctx, orderID, customerID)
 }
 
 func main() {
@@ -174,14 +247,50 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 
 	// 营销套件（M1-M6）
 	marketingSvc := marketingservice.NewService(db.G, repositories.Marketing)
-	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, marketingapi.NewAuthHooks(marketingSvc))
+	pointsSvc := points.NewService(db.G, cache.RDB)
+	if err := pointsSvc.EnsureSchema(context.Background()); err != nil {
+		panic("points schema initialization failed: " + err.Error())
+	}
+	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc})
 	marketinghandler.RegisterUserHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterAdminHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterSalesHandlers(server, marketingSvc, jwt)
 
 	// 订单/充值（M2/M4 挂钩分销与优惠券）
-	orderSvc := orderservice.NewService(repositories.Order, marketingapi.NewOrderHooks(marketingSvc), snapshotKey)
+	orderSvc := orderservice.NewService(repositories.Order, orderEventHooks{marketing: marketingapi.NewOrderHooks(marketingSvc), points: pointsSvc}, snapshotKey)
 	orderSvc.SetNotifier(notifyManager)
+	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)
+	if err := cdnsellSvc.EnsureSchema(context.Background()); err != nil {
+		panic("cdnsell schema initialization failed: " + err.Error())
+	}
+	cdnsellEnabled, err := cdnsellSvc.Enabled(context.Background())
+	if err != nil {
+		panic("cdnsell configuration failed: " + err.Error())
+	}
+	var cdnsellPaymentSvc *cdnsell.Service
+	if cdnsellEnabled {
+		cdnsellPaymentSvc = cdnsellSvc
+	}
+	groupbuySvc := groupbuy.NewService(db.G, orderSvc, notifyManager)
+	if err := groupbuySvc.EnsureSchema(context.Background()); err != nil {
+		panic("groupbuy schema initialization failed: " + err.Error())
+	}
+	groupbuyEnabled, err := groupbuySvc.Enabled(context.Background())
+	if err != nil {
+		panic("groupbuy configuration failed: " + err.Error())
+	}
+	if groupbuyEnabled {
+		groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
+		groupbuySvc.StartMaintenance(context.Background())
+	}
+	marketplaceSvc := marketplace.NewService(db.G, cache.RDB, notifyManager)
+	if err := marketplaceSvc.EnsureSchema(context.Background()); err != nil {
+		panic("marketplace schema initialization failed: " + err.Error())
+	}
+	marketplaceEnabled, err := marketplaceSvc.Enabled(context.Background())
+	if err != nil {
+		panic("marketplace configuration failed: " + err.Error())
+	}
 	if err := paymentrepo.EnsureSchemaAndDefaults(context.Background(), db.G); err != nil {
 		panic("payment schema initialization failed: " + err.Error())
 	}
@@ -193,9 +302,25 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err != nil {
 		panic("payment channel initialization failed: " + err.Error())
 	}
-	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(orderSvc))
+	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
+	if cdnsellEnabled {
+		cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
+		cdnsellSvc.Start(context.Background())
+	}
+	if marketplaceEnabled {
+		marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
+		marketplaceSvc.StartMaintenance(context.Background())
+	}
+	pointsEnabled, err := pointsSvc.Enabled(context.Background())
+	if err != nil {
+		panic("points configuration failed: " + err.Error())
+	}
+	if pointsEnabled {
+		points.RegisterHandlers(server, pointsSvc, jwt)
+		pointsSvc.StartExpiryScanner(context.Background())
+	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
 	remoteRegistry := remoteconsole.NewRegistry()
 	if err := remoteRegistry.Register(remoteconsole.NewNoVNCProvider(instanceSvc)); err != nil {

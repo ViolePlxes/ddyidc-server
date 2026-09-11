@@ -24,6 +24,7 @@ type Repository interface {
 	CreateEvent(context.Context, *dom.Event) error
 	FinishEvent(context.Context, int64, uint8, *uint8, string, string) error
 	ListEvents(context.Context, int64, int) ([]*dom.Event, error)
+	IsMarketplaceLocked(context.Context, int64) (bool, error)
 }
 type GormRepository struct{ db *gorm.DB }
 
@@ -145,4 +146,14 @@ func (r *GormRepository) ListEvents(c context.Context, instanceID int64, limit i
 	}
 	err = r.db.WithContext(c).Table((dom.Event{}).TableName()).Where("instance_id = ?", instanceID).Order("created_at DESC").Limit(limit).Find(&out).Error
 	return
+}
+
+func (r *GormRepository) IsMarketplaceLocked(c context.Context, instanceID int64) (bool, error) {
+	var tableCount int64
+	if err := r.db.WithContext(c).Raw("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='system' AND table_name='marketplace_listings'").Scan(&tableCount).Error; err != nil || tableCount == 0 {
+		return false, err
+	}
+	var count int64
+	err := r.db.WithContext(c).Table("system.marketplace_listings").Where("product_id=? AND status IN ('pending','on_sale','locked')", instanceID).Count(&count).Error
+	return count > 0, err
 }
