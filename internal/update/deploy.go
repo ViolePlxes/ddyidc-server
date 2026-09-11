@@ -62,7 +62,9 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "*.sql"); diffErr == nil && strings.TrimSpace(output) != "" {
 		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；更新不会自动执行迁移，请在更新完成后人工评审并迁移")
 	}
+	newExecutable := target.Executable + ".new"
 	rollbackBeforeSwitch := func(cause error) {
+		_ = m.files.RemoveAll(newExecutable)
 		rollback := "success"
 		if resetErr := m.resetWorktree(context.Background(), target, task.BeforeCommit); resetErr != nil {
 			rollback = "failed: " + sanitizeOutput(resetErr.Error())
@@ -70,30 +72,26 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		m.fail(context.Background(), task, logValue, cause, rollback)
 	}
 
-	newExecutable := target.Executable + ".new"
 	_ = m.files.RemoveAll(newExecutable)
 	buildTime := time.Now().UTC().Format(time.RFC3339)
 	ldflags := fmt.Sprintf("-X main.version=%s -X main.commit=%s -X main.branch=%s -X main.buildTime=%s", safeBuildValue(info.Remote), safeBuildValue(info.RemoteCommit), safeBuildValue(target.Branch), safeBuildValue(buildTime))
 	m.progress(ctx, task, 42, logValue, "构建后端新版本")
-	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-ldflags", ldflags, "-o", newExecutable, "."}, []string{"GOPROXY=https://goproxy.cn,direct"}); buildErr != nil {
+	buildEnv := []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "GOPROXY=https://goproxy.cn,direct"}
+	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-ldflags", ldflags, "-o", newExecutable, "."}, buildEnv); buildErr != nil {
 		rollbackBeforeSwitch(fmt.Errorf("后端构建失败: %w (%s)", buildErr, output))
 		return
 	}
 	m.progress(ctx, task, 58, logValue, "构建外部更新助手")
-	if output, helperErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-o", target.HelperPath, "./cmd/updatehelper"}, []string{"GOPROXY=https://goproxy.cn,direct"}); helperErr != nil {
+	if output, helperErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-o", target.HelperPath, "./cmd/updatehelper"}, buildEnv); helperErr != nil {
 		rollbackBeforeSwitch(fmt.Errorf("更新助手构建失败: %w (%s)", helperErr, output))
 		return
 	}
 	backup := target.Executable + "~"
-	m.progress(ctx, task, 70, logValue, "备份当前后端运行文件")
-	if err = m.files.CopyFile(target.Executable, backup); err != nil {
-		rollbackBeforeSwitch(fmt.Errorf("备份后端失败: %w", err))
-		return
-	}
+	m.progress(ctx, task, 70, logValue, "更新产物已验证，准备由 systemd 更新助手执行原子切换")
 
 	taskID := formatID(task.ID)
 	resultFile := filepath.Join(m.config.ResultDir, taskID+".result.json")
-	planFile := filepath.Join(m.config.ResultDir, taskID+".plan.json")
+	planFile := m.config.helperPlanPath()
 	helperTimeout := m.config.TimeoutSeconds
 	if deadline, ok := ctx.Deadline(); ok {
 		helperTimeout = max(1, int(time.Until(deadline).Seconds()))
@@ -105,13 +103,14 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		ServerDirectory: filepath.Dir(target.Executable), ConfigFile: target.ConfigFile,
 		HealthURL: m.config.HealthURL, VersionURL: m.config.VersionURL, SmokeURL: m.config.SmokeURL,
 		ExpectedCommit: info.RemoteCommit, ResultFile: resultFile, TimeoutSeconds: helperTimeout,
+		MinFreeMB: m.config.MinFreeMB, SystemctlPath: m.config.SystemctlPath, SudoPath: m.config.SudoPath, ServiceName: m.config.ServerService,
 	}
 	if err = m.files.WriteJSON(planFile, plan); err != nil {
 		rollbackBeforeSwitch(fmt.Errorf("写入更新计划失败: %w", err))
 		return
 	}
 	m.progress(ctx, task, 85, logValue, "更新助手已就绪，即将安全切换后端")
-	if err = m.start(target.HelperPath, []string{"-plan", planFile}, target.Workspace); err != nil {
+	if err = m.startUnit(m.config.SudoPath, m.config.SystemctlPath, m.config.UpdateHelperService); err != nil {
 		_ = m.files.RemoveAll(planFile)
 		rollbackBeforeSwitch(fmt.Errorf("启动更新助手失败: %w", err))
 		return

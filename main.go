@@ -147,6 +147,7 @@ func main() {
 		Notify        notify.Config
 		Update        update.Config
 		RemoteConsole remoteconsole.Config
+		Payment       struct{ AlipaySecretFile string }
 		Crypto        struct{ AESKey string }
 		JWT           struct {
 			AccessSecret  string
@@ -214,7 +215,7 @@ func main() {
 	server.Use(middleware.Logger())
 
 	// 注册路由（各域 handler 在此注册）
-	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole)
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile)
 	notifyManager.StartExpiryScanner(context.Background())
 	updateManager.StartResultWatcher(context.Background())
 
@@ -232,7 +233,7 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string) {
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
@@ -294,7 +295,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := paymentrepo.EnsureSchemaAndDefaults(context.Background(), db.G); err != nil {
 		panic("payment schema initialization failed: " + err.Error())
 	}
-	paymentConfig, err := paymentservice.LoadConfig(context.Background(), db.G)
+	paymentConfig, err := paymentservice.LoadConfig(context.Background(), db.G, alipaySecretFile)
 	if err != nil {
 		panic("payment config initialization failed: " + err.Error())
 	}

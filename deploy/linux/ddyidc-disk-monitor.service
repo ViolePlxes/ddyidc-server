@@ -1,0 +1,6 @@
+[Unit]
+Description=DDYIDC disk usage thresholds
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ddyidc/deploy/disk-guard.sh --check

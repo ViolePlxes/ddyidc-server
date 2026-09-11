@@ -1,21 +1,26 @@
-# 将以下 Update 段合并到部署环境的 config.yaml；不要把真实凭据提交到 Git。
+# Linux/amd64 production defaults. Merge this section into etc/config.yaml.
+# Runtime credentials belong in the mode-0600 config file, never in Git.
 Update:
-  GitPath: "C:\\Program Files\\Git\\cmd\\git.exe"
-  GoPath: "D:\\ddy\\.tools\\go\\bin\\go.exe"
-  NPMPath: "C:\\Program Files\\nodejs\\npm.cmd"
-  MinFreeMB: 500
+  GitPath: "/usr/bin/git"
+  GoPath: "/usr/local/go/bin/go"
+  NPMPath: "/usr/local/bin/npm"
+  SystemctlPath: "/usr/bin/systemctl"
+  SudoPath: "/usr/bin/sudo"
+  ServerService: "ddyidc.service"
+  UpdateHelperService: "ddyidc-update-helper.service"
+  MinFreeMB: 10240
   TimeoutSeconds: 600
   HealthURL: "http://127.0.0.1:8080/health"
   VersionURL: "http://127.0.0.1:8080/api/v1/system/version"
   SmokeURL: "http://127.0.0.1:8080/api/v1/products"
-  ResultDir: "D:\\ddy\\.tools\\update-results"
+  ResultDir: "/opt/ddyidc/update-results"
   Backend:
-    Workspace: "D:\\ddy\\ddyidc-project\\server"
+    Workspace: "/opt/ddyidc/server"
     Branch: "main"
-    Executable: "D:\\ddy\\.tools\\ddyidc-server-current.exe"
-    ConfigFile: "D:\\ddy\\ddyidc-project\\server\\etc\\config.yaml"
-    HelperPath: "D:\\ddy\\.tools\\ddyidc-update-helper.exe"
+    Executable: "/opt/ddyidc/bin/ddyidc-server"
+    ConfigFile: "/opt/ddyidc/server/etc/config.yaml"
+    HelperPath: "/opt/ddyidc/bin/ddyidc-update-helper"
   Frontend:
-    Workspace: "D:\\ddoidc\\web-react"
+    Workspace: "/opt/ddyidc/web-react"
     Branch: "main"
-    StaticURL: "http://127.0.0.1:3100/"
+    StaticURL: "http://127.0.0.1:8081/"

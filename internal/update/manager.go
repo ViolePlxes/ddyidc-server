@@ -31,7 +31,7 @@ type Manager struct {
 	httpClient *http.Client
 	freeSpace  func(string) (uint64, error)
 	exit       func(int)
-	start      func(string, []string, string) error
+	startUnit  func(string, string, string) error
 	pid        int
 	mu         sync.Mutex
 }
@@ -41,7 +41,7 @@ func NewManager(database *gorm.DB, redisClient *redis.Client, config Config) (*M
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	manager := &Manager{config: config, database: database, redis: redisClient, repo: NewRepository(database), runner: OSRunner{}, files: OSFileOps{}, locker: NewRedisLocker(redisClient), httpClient: defaultHTTPClient(), freeSpace: diskFree, exit: os.Exit, start: startDetached, pid: os.Getpid()}
+	manager := &Manager{config: config, database: database, redis: redisClient, repo: NewRepository(database), runner: OSRunner{}, files: OSFileOps{}, locker: NewRedisLocker(redisClient), httpClient: defaultHTTPClient(), freeSpace: diskFree, exit: os.Exit, startUnit: startSystemdUnit, pid: os.Getpid()}
 	if err := manager.repo.VerifySchema(context.Background()); err != nil {
 		return nil, fmt.Errorf("更新任务表未就绪，请先人工执行 migrations/001_create_update_tasks.sql: %w", err)
 	}
@@ -200,9 +200,24 @@ func (m *Manager) processHelperResults(ctx context.Context) {
 		existing, _ := m.repo.Get(ctx, id)
 		_ = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, mergeTaskLogs(existing, result.Log))
 		_ = m.locker.Release(context.Background(), result.TaskID)
-		_ = os.Remove(path)
-		_ = os.Remove(strings.TrimSuffix(path, ".result.json") + ".plan.json")
+		_ = archiveHelperResult(path, result.FinishedAt)
+		_ = os.Remove(m.config.helperPlanPath())
 	}
+}
+
+func archiveHelperResult(path string, finishedAt time.Time) error {
+	if finishedAt.IsZero() {
+		finishedAt = time.Now()
+	}
+	directory := filepath.Join(filepath.Dir(path), "archive", finishedAt.UTC().Format("2006-01"))
+	if err := os.MkdirAll(directory, 0o750); err != nil {
+		return err
+	}
+	destination := filepath.Join(directory, filepath.Base(path))
+	if err := os.Rename(path, destination); err != nil {
+		return err
+	}
+	return os.Chmod(destination, 0o600)
 }
 
 func mergeTaskLogs(existing *Task, helperLog string) string {

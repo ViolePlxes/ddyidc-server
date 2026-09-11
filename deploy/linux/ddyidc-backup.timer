@@ -1,0 +1,11 @@
+[Unit]
+Description=Run DDYIDC backup every day at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=5m
+Unit=ddyidc-backup.service
+
+[Install]
+WantedBy=timers.target

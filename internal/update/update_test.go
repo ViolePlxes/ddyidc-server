@@ -20,6 +20,29 @@ func TestFirstFailed(t *testing.T) {
 	}
 }
 
+func TestLinuxProductionDefaults(t *testing.T) {
+	config := (Config{}).normalized()
+	if config.MinFreeMB != 10*1024 || config.Backend.Executable != "/opt/ddyidc/bin/ddyidc-server" {
+		t.Fatalf("unexpected Linux defaults: %#v", config)
+	}
+	if config.UpdateHelperService != "ddyidc-update-helper.service" || config.SystemctlPath != "/usr/bin/systemctl" {
+		t.Fatalf("unexpected systemd defaults: %#v", config)
+	}
+}
+
+func TestServiceNameValidation(t *testing.T) {
+	for _, valid := range []string{"ddyidc.service", "ddyidc-update-helper.service", "ddyidc@blue.service"} {
+		if !validServiceName(valid) {
+			t.Fatalf("expected valid service name: %s", valid)
+		}
+	}
+	for _, invalid := range []string{"", "--now", "ddyidc", "../ddyidc.service", "ddyidc service"} {
+		if validServiceName(invalid) {
+			t.Fatalf("expected invalid service name: %s", invalid)
+		}
+	}
+}
+
 func TestVerifyFrontendVersion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "version.json")
 	if err := os.WriteFile(path, []byte(`{"commit":"abc123"}`), 0o600); err != nil {
@@ -52,6 +75,22 @@ func TestMergeTaskLogsPreservesPreflightAndHelperOutput(t *testing.T) {
 	}
 }
 
+func TestArchiveHelperResult(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "42.result.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Date(2026, time.September, 11, 0, 0, 0, 0, time.UTC)
+	if err := archiveHelperResult(path, finished); err != nil {
+		t.Fatal(err)
+	}
+	archived := filepath.Join(root, "archive", "2026-09", "42.result.json")
+	if _, err := os.Stat(archived); err != nil {
+		t.Fatalf("result was not archived: %v", err)
+	}
+}
+
 func TestDirectoryRollbackRestoresBackup(t *testing.T) {
 	root := t.TempDir()
 	dist := filepath.Join(root, "dist")
@@ -81,7 +120,7 @@ func TestDirectoryRollbackRestoresBackup(t *testing.T) {
 func TestRunnerHonorsTimeoutAndSanitizesCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	_, err := (OSRunner{}).Run(ctx, t.TempDir(), "C:\\Windows\\System32\\ping.exe", []string{"127.0.0.1", "-n", "6"}, nil)
+	_, err := (OSRunner{}).Run(ctx, t.TempDir(), "/bin/sh", []string{"-c", "sleep 5"}, nil)
 	if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("expected context timeout, got %v", err)
 	}

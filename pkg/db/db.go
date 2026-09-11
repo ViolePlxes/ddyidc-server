@@ -51,8 +51,14 @@ func Init(c Config) error {
 	if err := bootstrap.Ping(); err != nil {
 		return fmt.Errorf("ping mysql %s:%d: %w", c.Host, c.Port, err)
 	}
-	if _, err := bootstrap.Exec("CREATE DATABASE IF NOT EXISTS `" + strings.ReplaceAll(c.Database, "`", "``") + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
-		return fmt.Errorf("create primary schema %q: %w", c.Database, err)
+	var existing string
+	lookupErr := bootstrap.QueryRow("SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?", c.Database).Scan(&existing)
+	if errors.Is(lookupErr, sql.ErrNoRows) {
+		if _, err := bootstrap.Exec("CREATE DATABASE `" + strings.ReplaceAll(c.Database, "`", "``") + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
+			return fmt.Errorf("primary schema %q is missing and could not be created: %w", c.Database, err)
+		}
+	} else if lookupErr != nil {
+		return fmt.Errorf("check primary schema %q: %w", c.Database, lookupErr)
 	}
 	g, err := gorm.Open(mysql.Open(dsn(c, c.Database)), &gorm.Config{
 		Logger:         logger.Default.LogMode(logger.Info),

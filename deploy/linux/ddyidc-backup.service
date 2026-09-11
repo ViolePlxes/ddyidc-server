@@ -1,0 +1,12 @@
+[Unit]
+Description=DDYIDC consistent database backup
+After=mysql.service redis-server.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/ddyidc/deploy/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

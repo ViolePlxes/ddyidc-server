@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultAlipaySecretPath = `D:\ddy\.tools\secrets\alipay.json`
+const defaultAlipaySecretPath = "/etc/ddyidc/secrets/alipay.json"
 
 type WechatConfig struct {
 	Enabled    bool
@@ -58,7 +58,7 @@ type configRow struct {
 	Value string `gorm:"column:value"`
 }
 
-func LoadConfig(ctx context.Context, database *gorm.DB) (Config, error) {
+func LoadConfig(ctx context.Context, database *gorm.DB, secretPaths ...string) (Config, error) {
 	var rows []configRow
 	if err := database.WithContext(ctx).Table("system.system_configs").Where("`key` LIKE ?", "payment.%").Find(&rows).Error; err != nil {
 		return Config{}, err
@@ -71,7 +71,11 @@ func LoadConfig(ctx context.Context, database *gorm.DB) (Config, error) {
 	if err != nil || expireMinutes <= 0 || expireMinutes > 1440 {
 		expireMinutes = 15
 	}
-	secret, secretFound, err := loadAlipaySecrets(defaultAlipaySecretPath)
+	secretPath := defaultAlipaySecretPath
+	if len(secretPaths) > 0 && strings.TrimSpace(secretPaths[0]) != "" {
+		secretPath = strings.TrimSpace(secretPaths[0])
+	}
+	secret, secretFound, err := loadAlipaySecrets(secretPath)
 	if err != nil {
 		return Config{}, err
 	}

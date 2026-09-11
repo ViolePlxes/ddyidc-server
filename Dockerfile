@@ -4,13 +4,18 @@ WORKDIR /app
 COPY go.mod ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o ddyidc-server .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ddyidc-server . \
+    && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o ddyidc-update-helper ./cmd/updatehelper
 
 # 运行阶段
 FROM alpine:3.19
 WORKDIR /app
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata \
+    && addgroup -S ddyidc \
+    && adduser -S -G ddyidc ddyidc
 COPY --from=builder /app/ddyidc-server .
-COPY --from=builder /app/etc ./etc
+COPY --from=builder /app/ddyidc-update-helper .
+USER ddyidc
 EXPOSE 8080
-CMD ["./ddyidc-server", "-f", "etc/config.yaml"]
+ENTRYPOINT ["./ddyidc-server"]
+CMD ["-f", "/etc/ddyidc/config.yaml"]

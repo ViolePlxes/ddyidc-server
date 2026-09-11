@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 	"time"
 
 	"ddyidc/internal/update"
-	"golang.org/x/sys/windows"
+	"golang.org/x/sys/unix"
 )
+
+const defaultMinFreeMB = 10 * 1024
 
 func main() {
 	planPath := flag.String("plan", "", "更新计划文件")
@@ -32,22 +35,38 @@ func main() {
 		return
 	}
 	result := execute(plan)
-	_ = writeResult(plan.ResultFile, result)
+	if writeResult(plan.ResultFile, result) == nil {
+		_ = os.Remove(*planPath)
+	}
 }
 
 func validPlan(plan update.HelperPlan) bool {
-	paths := []string{plan.NewExecutable, plan.CurrentExecutable, plan.BackupExecutable, plan.Workspace, plan.GitPath, plan.ServerDirectory, plan.ConfigFile, plan.ResultFile}
+	paths := []string{plan.NewExecutable, plan.CurrentExecutable, plan.BackupExecutable, plan.Workspace, plan.GitPath, plan.ServerDirectory, plan.ConfigFile, plan.ResultFile, plan.SystemctlPath, plan.SudoPath}
 	for _, path := range paths {
 		if strings.TrimSpace(path) == "" || !filepath.IsAbs(path) {
 			return false
 		}
 	}
-	return plan.ParentPID > 0 && plan.TaskID != "" && plan.ExpectedCommit != ""
+	return plan.ParentPID > 0 && plan.TaskID != "" && plan.ExpectedCommit != "" && validServiceName(plan.ServiceName)
+}
+
+func validServiceName(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.HasPrefix(value, "-") || !strings.HasSuffix(value, ".service") {
+		return false
+	}
+	for _, character := range value {
+		if (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9') || strings.ContainsRune("_.@-", character) {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func execute(plan update.HelperPlan) update.HelperResult {
 	result := update.HelperResult{TaskID: plan.TaskID, Status: update.StatusFailed, FinishedAt: time.Now()}
-	logLines := []string{"更新助手已接管后端切换"}
+	logLines := []string{"更新助手已由 systemd 接管后端切换"}
 	timeout := time.Duration(plan.TimeoutSeconds) * time.Second
 	if timeout <= 0 || timeout > 10*time.Minute {
 		timeout = 10 * time.Minute
@@ -55,27 +74,34 @@ func execute(plan update.HelperPlan) update.HelperResult {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	if err := stopProcess(plan.ParentPID); err != nil {
-		result.Error = safeError(fmt.Errorf("停止旧后端失败: %w", err))
-		result.RollbackStatus = "not_required"
-		result.Log = strings.Join(append(logLines, result.Error), "\n")
-		return result
+	minimumMB := plan.MinFreeMB
+	if minimumMB == 0 {
+		minimumMB = defaultMinFreeMB
 	}
-	logLines = append(logLines, "旧后端进程已停止")
-	if err := replaceExecutable(ctx, plan.NewExecutable, plan.CurrentExecutable); err != nil {
-		return rollback(ctx, plan, nil, append(logLines, "替换运行文件失败"), err)
-	}
-	logLines = append(logLines, "新后端运行文件已就位")
-	command, err := startServer(plan.CurrentExecutable, plan.ConfigFile, plan.ServerDirectory)
+	free, err := diskFree(filepath.Dir(plan.CurrentExecutable))
 	if err != nil {
-		return rollback(ctx, plan, nil, logLines, fmt.Errorf("启动新后端失败: %w", err))
+		return failedResult(plan, logLines, "not_required", fmt.Errorf("检查目标卷空间失败: %w", err))
 	}
-	logLines = append(logLines, "新后端进程已启动")
+	freeMB := free / 1024 / 1024
+	if freeMB < minimumMB {
+		return failedResult(plan, logLines, "not_required", fmt.Errorf("目标卷可用空间 %d MiB，至少需要 %d MiB", freeMB, minimumMB))
+	}
+	logLines = append(logLines, fmt.Sprintf("目标卷空间检查通过：%d MiB 可用", freeMB))
+
+	if err = systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "stop", plan.ServiceName); err != nil {
+		return failedResult(plan, logLines, "not_required", fmt.Errorf("停止旧后端服务失败: %w", err))
+	}
+	logLines = append(logLines, "旧后端服务已停止")
+	if err = atomicReplace(plan.NewExecutable, plan.CurrentExecutable, plan.BackupExecutable); err != nil {
+		return rollback(plan, append(logLines, "原子替换运行文件失败"), err)
+	}
+	logLines = append(logLines, "新后端已原子切换，旧版本保留为 ddyidc-server~")
+	if err = systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "start", plan.ServiceName); err != nil {
+		return rollback(plan, logLines, fmt.Errorf("启动新后端服务失败: %w", err))
+	}
+	logLines = append(logLines, "新后端服务已启动")
 	if err = waitHealthAndVersion(ctx, plan.HealthURL, plan.VersionURL, plan.SmokeURL, plan.ExpectedCommit); err != nil {
-		return rollback(ctx, plan, command, logLines, err)
-	}
-	if command.Process != nil {
-		_ = command.Process.Release()
+		return rollback(plan, logLines, err)
 	}
 	logLines = append(logLines, "健康、版本与关键接口后置检查通过")
 	result.Status = update.StatusSuccess
@@ -84,30 +110,31 @@ func execute(plan update.HelperPlan) update.HelperResult {
 	return result
 }
 
-func rollback(ctx context.Context, plan update.HelperPlan, running *exec.Cmd, logLines []string, cause error) update.HelperResult {
-	rollbackCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+func failedResult(plan update.HelperPlan, logLines []string, rollbackStatus string, cause error) update.HelperResult {
+	message := safeError(cause)
+	logLines = append(logLines, "更新失败: "+message)
+	return update.HelperResult{TaskID: plan.TaskID, Status: update.StatusFailed, Error: message, RollbackStatus: rollbackStatus, Log: strings.Join(logLines, "\n"), FinishedAt: time.Now()}
+}
+
+func rollback(plan update.HelperPlan, logLines []string, cause error) update.HelperResult {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	if running != nil && running.Process != nil {
-		_ = running.Process.Kill()
-		_, _ = running.Process.Wait()
+	rollbackErrors := make([]string, 0, 4)
+	if err := systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "stop", plan.ServiceName); err != nil {
+		rollbackErrors = append(rollbackErrors, "停止失败版本: "+safeError(err))
 	}
-	rollbackErrors := []string{}
-	if err := copyFile(plan.BackupExecutable, plan.CurrentExecutable); err != nil {
-		rollbackErrors = append(rollbackErrors, "恢复 exe: "+safeError(err))
+	if err := restoreBackup(plan.CurrentExecutable, plan.BackupExecutable); err != nil {
+		rollbackErrors = append(rollbackErrors, "恢复后端二进制: "+safeError(err))
 	}
-	command := exec.CommandContext(rollbackCtx, plan.GitPath, "reset", "--hard", plan.BeforeCommit)
+	command := exec.CommandContext(ctx, plan.GitPath, "reset", "--hard", plan.BeforeCommit)
 	command.Dir = plan.Workspace
 	if output, err := command.CombinedOutput(); err != nil {
 		rollbackErrors = append(rollbackErrors, "恢复 Git: "+safeError(fmt.Errorf("%w (%s)", err, output)))
 	}
 	if len(rollbackErrors) == 0 {
-		oldServer, err := startServer(plan.CurrentExecutable, plan.ConfigFile, plan.ServerDirectory)
-		if err != nil {
+		if err := systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "start", plan.ServiceName); err != nil {
 			rollbackErrors = append(rollbackErrors, "重启旧后端: "+safeError(err))
-		} else if err = waitHealth(rollbackCtx, plan.HealthURL); err != nil {
-			if oldServer.Process != nil {
-				_ = oldServer.Process.Kill()
-			}
+		} else if err = waitHealth(ctx, plan.HealthURL); err != nil {
 			rollbackErrors = append(rollbackErrors, "旧后端健康检查: "+safeError(err))
 		}
 	}
@@ -119,44 +146,72 @@ func rollback(ctx context.Context, plan update.HelperPlan, running *exec.Cmd, lo
 	return update.HelperResult{TaskID: plan.TaskID, Status: update.StatusFailed, Error: safeError(cause), RollbackStatus: status, Log: strings.Join(logLines, "\n"), FinishedAt: time.Now()}
 }
 
-func stopProcess(pid int) error {
-	process, err := os.FindProcess(pid)
+func diskFree(path string) (uint64, error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return stat.Bavail * uint64(stat.Bsize), nil
+}
+
+func systemctl(ctx context.Context, sudoPath, executable, action, service string) error {
+	if !validServiceName(service) || (action != "start" && action != "stop" && action != "restart") {
+		return errors.New("无效的 systemd 操作")
+	}
+	command := exec.CommandContext(ctx, sudoPath, "-n", executable, action, service)
+	output, err := command.CombinedOutput()
 	if err != nil {
-		return err
+		return fmt.Errorf("systemctl %s %s: %w (%s)", action, service, err, strings.TrimSpace(string(output)))
 	}
-	if err = process.Kill(); err != nil {
-		return err
-	}
-	_, _ = process.Wait()
 	return nil
 }
 
-func replaceExecutable(ctx context.Context, source, destination string) error {
-	var lastErr error
-	for ctx.Err() == nil {
-		if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
-			lastErr = err
-			time.Sleep(150 * time.Millisecond)
-			continue
-		}
-		if err := os.Rename(source, destination); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(150 * time.Millisecond)
+func atomicReplace(source, destination, backup string) error {
+	if filepath.Dir(source) != filepath.Dir(destination) || filepath.Dir(backup) != filepath.Dir(destination) {
+		return errors.New("新文件、运行文件与备份必须位于同一目录")
 	}
-	return fmt.Errorf("替换超时: %w", lastErr)
+	if _, err := os.Stat(source); err != nil {
+		return fmt.Errorf("新后端文件不可用: %w", err)
+	}
+	if _, err := os.Stat(destination); err != nil {
+		return fmt.Errorf("当前后端文件不可用: %w", err)
+	}
+	if err := os.Remove(backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("清理旧备份: %w", err)
+	}
+	if err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE); err != nil {
+		return fmt.Errorf("交换新旧后端文件: %w", err)
+	}
+	if err := os.Rename(source, backup); err != nil {
+		_ = unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE)
+		return fmt.Errorf("发布后端备份: %w", err)
+	}
+	return syncDirectory(filepath.Dir(destination))
 }
 
-func startServer(executable, configFile, directory string) (*exec.Cmd, error) {
-	command := exec.Command(executable, "-f", configFile)
-	command.Dir = directory
-	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS, HideWindow: true}
-	if err := command.Start(); err != nil {
-		return nil, err
+func restoreBackup(destination, backup string) error {
+	if _, err := os.Stat(backup); err != nil {
+		return fmt.Errorf("备份文件不可用: %w", err)
 	}
-	return command, nil
+	if _, err := os.Stat(destination); err != nil {
+		return fmt.Errorf("失败版本不可用: %w", err)
+	}
+	if err := unix.Renameat2(unix.AT_FDCWD, destination, unix.AT_FDCWD, backup, unix.RENAME_EXCHANGE); err != nil {
+		return fmt.Errorf("原子恢复后端: %w", err)
+	}
+	if err := os.Remove(backup); err != nil {
+		return fmt.Errorf("清理失败版本: %w", err)
+	}
+	return syncDirectory(filepath.Dir(destination))
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func waitHealthAndVersion(ctx context.Context, healthURL, versionURL, smokeURL, expected string) error {
@@ -172,9 +227,7 @@ func waitHealthAndVersion(ctx context.Context, healthURL, versionURL, smokeURL, 
 	return nil
 }
 
-func waitHealth(ctx context.Context, url string) error {
-	return waitStatus(ctx, url)
-}
+func waitHealth(ctx context.Context, url string) error { return waitStatus(ctx, url) }
 
 func waitStatus(ctx context.Context, url string) error {
 	client := &http.Client{Timeout: 3 * time.Second}
@@ -227,19 +280,6 @@ func waitCommit(ctx context.Context, url, expected string) error {
 	return fmt.Errorf("版本检查超时: %w", lastErr)
 }
 
-func copyFile(source, destination string) error {
-	data, err := os.ReadFile(source)
-	if err != nil {
-		return err
-	}
-	temporary := destination + ".restoring"
-	if err = os.WriteFile(temporary, data, 0o755); err != nil {
-		return err
-	}
-	_ = os.Remove(destination)
-	return os.Rename(temporary, destination)
-}
-
 func writeResult(path string, result update.HelperResult) error {
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -252,7 +292,6 @@ func writeResult(path string, result update.HelperResult) error {
 	if err = os.WriteFile(temporary, data, 0o600); err != nil {
 		return err
 	}
-	_ = os.Remove(path)
 	return os.Rename(temporary, path)
 }
 
