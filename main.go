@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"ddyidc/internal/adminread"
 	"ddyidc/internal/cdnsell"
 	customerhandler "ddyidc/internal/customer/handler"
 	customerrrepo "ddyidc/internal/customer/repository"
@@ -212,6 +213,7 @@ func main() {
 	server.Use(middleware.CORS())
 	server.Use(middleware.CookieSession(authManager))
 	server.Use(middleware.RequestID())
+	server.Use(middleware.RedactSensitiveHeaders())
 	server.Use(middleware.Logger())
 
 	// 注册路由（各域 handler 在此注册）
@@ -245,6 +247,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	notify.RegisterAdminHandlers(server, notifyManager, jwt)
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
+	adminread.RegisterHandlers(server, db.G, jwt)
 
 	// 营销套件（M1-M6）
 	marketingSvc := marketingservice.NewService(db.G, repositories.Marketing)
