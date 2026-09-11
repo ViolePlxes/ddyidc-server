@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -49,9 +50,10 @@ type MailConfig struct {
 }
 
 type SendRequest struct {
-	Mobile string `json:"mobile"`
-	Email  string `json:"email"`
-	Scene  string `json:"scene"`
+	CountryCode string `json:"countryCode"`
+	Mobile      string `json:"mobile"`
+	Email       string `json:"email"`
+	Scene       string `json:"scene"`
 }
 type VerifyRequest struct {
 	Mobile string `json:"mobile"`
@@ -74,26 +76,40 @@ type memoryEntry struct {
 	Expires time.Time
 }
 
-type verificationService struct {
-	manager *Manager
-	mu      sync.Mutex
-	memory  map[string]memoryEntry
+type VerificationService struct {
+	manager   *Manager
+	mu        sync.Mutex
+	consumeMu sync.Mutex
+	memory    map[string]memoryEntry
 }
 
-func RegisterHandlers(server *rest.Server, manager *Manager) {
-	s := &verificationService{manager: manager, memory: make(map[string]memoryEntry)}
+// Backward-compatible alias for package-local tests and helpers.
+type verificationService = VerificationService
+
+func RegisterHandlers(server *rest.Server, manager *Manager) *VerificationService {
+	s := &VerificationService{manager: manager, memory: make(map[string]memoryEntry)}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodPost, Path: "/api/v1/auth/sms/send", Handler: s.sendSMS},
 		{Method: http.MethodPost, Path: "/api/v1/notify/sms/send", Handler: s.sendSMS},
 		{Method: http.MethodPost, Path: "/api/v1/notify/sms/verify", Handler: s.verifySMS},
 		{Method: http.MethodPost, Path: "/api/v1/notify/email/send", Handler: s.sendEmail},
 		{Method: http.MethodPost, Path: "/api/v1/notify/email/verify", Handler: s.verifyEmail},
 	})
+	return s
 }
 
-func (s *verificationService) sendSMS(w http.ResponseWriter, r *http.Request) {
+func (s *VerificationService) sendSMS(w http.ResponseWriter, r *http.Request) {
 	var req SendRequest
 	if err := decode(r, &req); err != nil {
 		respond(w, http.StatusBadRequest, 400, nil, "请求参数错误")
+		return
+	}
+	countryCode := strings.TrimSpace(req.CountryCode)
+	if countryCode == "" {
+		countryCode = "+86"
+	}
+	if countryCode != "+86" {
+		respond(w, http.StatusBadRequest, 400, nil, "该地区暂不支持验证码，敬请期待")
 		return
 	}
 	if !validMobile(req.Mobile) {
@@ -102,7 +118,7 @@ func (s *verificationService) sendSMS(w http.ResponseWriter, r *http.Request) {
 	}
 	s.send(w, r, ChannelSMS, req.Mobile, req.Scene)
 }
-func (s *verificationService) sendEmail(w http.ResponseWriter, r *http.Request) {
+func (s *VerificationService) sendEmail(w http.ResponseWriter, r *http.Request) {
 	var req SendRequest
 	if err := decode(r, &req); err != nil {
 		respond(w, http.StatusBadRequest, 400, nil, "请求参数错误")
@@ -114,14 +130,14 @@ func (s *verificationService) sendEmail(w http.ResponseWriter, r *http.Request) 
 	}
 	s.send(w, r, ChannelEmail, strings.ToLower(req.Email), req.Scene)
 }
-func (s *verificationService) verifySMS(w http.ResponseWriter, r *http.Request) {
+func (s *VerificationService) verifySMS(w http.ResponseWriter, r *http.Request) {
 	s.verify(w, r, ChannelSMS)
 }
-func (s *verificationService) verifyEmail(w http.ResponseWriter, r *http.Request) {
+func (s *VerificationService) verifyEmail(w http.ResponseWriter, r *http.Request) {
 	s.verify(w, r, ChannelEmail)
 }
 
-func (s *verificationService) send(w http.ResponseWriter, r *http.Request, channel, target, scene string) {
+func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, channel, target, scene string) {
 	if !validVerificationScene(scene) {
 		respond(w, http.StatusBadRequest, 400, nil, "不支持的验证码场景")
 		return
@@ -157,6 +173,7 @@ func (s *verificationService) send(w http.ResponseWriter, r *http.Request, chann
 	encoded, _ := json.Marshal(record{Code: code, Expires: time.Now().Add(ttl)})
 	s.set(base+":code", string(encoded), ttl)
 	s.set(base+":cooldown", "1", time.Minute)
+	s.del(base + ":consumed")
 	if !mock {
 		template, templateErr := s.manager.repo.TemplateByScene(r.Context(), scene)
 		if templateErr != nil || template == nil || !template.Enabled {
@@ -171,10 +188,11 @@ func (s *verificationService) send(w http.ResponseWriter, r *http.Request, chann
 			return
 		}
 	}
+	s.set(base+":sent", "1", 10*time.Minute)
 	respond(w, http.StatusOK, 0, map[string]interface{}{"expiresIn": int(ttl.Seconds()), "mock": mock}, "验证码已发送")
 }
 
-func (s *verificationService) verify(w http.ResponseWriter, r *http.Request, channel string) {
+func (s *VerificationService) verify(w http.ResponseWriter, r *http.Request, channel string) {
 	var req VerifyRequest
 	if err := decode(r, &req); err != nil {
 		respond(w, http.StatusBadRequest, 400, nil, "请求参数错误")
@@ -222,7 +240,51 @@ func (s *verificationService) verify(w http.ResponseWriter, r *http.Request, cha
 	respond(w, http.StatusOK, 0, map[string]interface{}{"verificationToken": token, "expiresIn": 600}, "验证成功")
 }
 
-func (s *verificationService) key(channel, target, scene string) string {
+// ConsumeSMSCode validates and consumes a code exactly once. Sending and
+// registration share this service instance, so concurrent replays serialize.
+func (s *VerificationService) ConsumeSMSCode(_ context.Context, mobile, scene, code string) error {
+	if !validMobile(mobile) || !validVerificationScene(scene) || strings.TrimSpace(code) == "" {
+		return errors.New("验证码参数错误")
+	}
+	s.consumeMu.Lock()
+	defer s.consumeMu.Unlock()
+
+	base := s.key(ChannelSMS, mobile, scene)
+	if _, locked := s.get(base + ":locked"); locked {
+		return errors.New("验证失败次数过多，请 15 分钟后重试")
+	}
+	raw, ok := s.get(base + ":code")
+	if !ok {
+		if _, consumed := s.get(base + ":consumed"); consumed {
+			return errors.New("验证码已使用，请重新获取")
+		}
+		if _, sent := s.get(base + ":sent"); sent {
+			return errors.New("验证码已过期，请重新获取")
+		}
+		return errors.New("请先获取验证码")
+	}
+	var saved record
+	if json.Unmarshal([]byte(raw), &saved) != nil || time.Now().After(saved.Expires) {
+		s.del(base + ":code")
+		return errors.New("验证码已过期，请重新获取")
+	}
+	if !constantTimeEqual(strings.TrimSpace(code), saved.Code) {
+		saved.Attempts++
+		if saved.Attempts >= maxAttempts {
+			s.del(base + ":code")
+			s.set(base+":locked", "1", 15*time.Minute)
+		} else {
+			value, _ := json.Marshal(saved)
+			s.set(base+":code", string(value), time.Until(saved.Expires))
+		}
+		return errors.New("验证码错误")
+	}
+	s.del(base+":code", base+":sent")
+	s.set(base+":consumed", "1", 10*time.Minute)
+	return nil
+}
+
+func (s *VerificationService) key(channel, target, scene string) string {
 	return "notify:" + channel + ":" + scene + ":" + target
 }
 func validScene(v string) bool {
@@ -239,7 +301,9 @@ func validVerificationScene(v string) bool {
 	}
 	return false
 }
-func validMobile(v string) bool { return len(v) == 11 && v[0] == '1' && allDigits(v) }
+func validMobile(v string) bool {
+	return len(v) == 11 && v[0] == '1' && v[1] >= '3' && v[1] <= '9' && allDigits(v)
+}
 func validEmail(v string) bool {
 	a := strings.LastIndex(v, "@")
 	return a > 0 && a < len(v)-3 && strings.Contains(v[a+1:], ".")
@@ -284,7 +348,7 @@ func safeProviderError(err error) string {
 	return truncate(err.Error(), 180)
 }
 
-func (s *verificationService) get(key string) (string, bool) {
+func (s *VerificationService) get(key string) (string, bool) {
 	if cache.RDB != nil {
 		v, err := cache.RDB.Get(context.Background(), key).Result()
 		return v, err == nil
@@ -298,7 +362,7 @@ func (s *verificationService) get(key string) (string, bool) {
 	}
 	return entry.Value, true
 }
-func (s *verificationService) set(key, value string, ttl time.Duration) {
+func (s *VerificationService) set(key, value string, ttl time.Duration) {
 	if ttl <= 0 {
 		return
 	}
@@ -310,7 +374,7 @@ func (s *verificationService) set(key, value string, ttl time.Duration) {
 	defer s.mu.Unlock()
 	s.memory[key] = memoryEntry{Value: value, Expires: time.Now().Add(ttl)}
 }
-func (s *verificationService) del(keys ...string) {
+func (s *VerificationService) del(keys ...string) {
 	if cache.RDB != nil {
 		_ = cache.RDB.Del(context.Background(), keys...).Err()
 		return
@@ -321,7 +385,7 @@ func (s *verificationService) del(keys ...string) {
 		delete(s.memory, key)
 	}
 }
-func (s *verificationService) increment(key string, ttl time.Duration) int {
+func (s *VerificationService) increment(key string, ttl time.Duration) int {
 	if cache.RDB != nil {
 		n, err := cache.RDB.Incr(context.Background(), key).Result()
 		if err == nil && n == 1 {

@@ -1,4 +1,4 @@
-﻿// Admin marketing endpoints under /admin/v1/marketing (JWT admin role).
+// Admin marketing endpoints under /admin/v1/marketing (JWT admin role).
 package marketing
 
 import (
@@ -20,7 +20,7 @@ func RegisterAdminHandlers(server *rest.Server, service *svc.Service, jwt *auth.
 		// M6 配置中心
 		{Method: http.MethodGet, Path: "/admin/v1/marketing/config", Handler: h.getConfig},
 		{Method: http.MethodPut, Path: "/admin/v1/marketing/config", Handler: h.saveConfig},
-		// M1 邀请码
+		// M1 优惠码
 		{Method: http.MethodGet, Path: "/admin/v1/marketing/invites", Handler: h.listInvites},
 		{Method: http.MethodPost, Path: "/admin/v1/marketing/invites/:id/review", Handler: h.reviewInvite},
 		{Method: http.MethodPost, Path: "/admin/v1/marketing/invites/:id/status", Handler: h.setInviteStatus},
@@ -109,7 +109,7 @@ func (h *adminHandler) listInvites(w http.ResponseWriter, r *http.Request) {
 		status = &sv
 	}
 	keyword := r.URL.Query().Get("keyword")
-	// 复用 rewards 列表的行结构：邀请码列表单独封装在 service
+	// 复用 rewards 列表的行结构：优惠码列表单独封装在 service
 	list, total, err := h.service.AdminInviteList(r.Context(), page, pageSize, status, keyword)
 	if err != nil {
 		writeFail(w, err)

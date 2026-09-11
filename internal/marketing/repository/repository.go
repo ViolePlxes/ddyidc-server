@@ -18,7 +18,7 @@ type Repository interface {
 	ListConfigsByPrefix(ctx context.Context, prefix string) (map[string]string, error)
 	SaveConfig(ctx context.Context, key, value, description string) error
 
-	// 邀请码（M1）
+	// 优惠码（M1）
 	FindInviteByUser(ctx context.Context, userID int64) (*dom.Invite, error)
 	FindInviteByCode(ctx context.Context, code string) (*dom.Invite, error)
 	FindInviteByID(ctx context.Context, id int64) (*dom.Invite, error)
@@ -26,7 +26,7 @@ type Repository interface {
 	UpdateInvite(ctx context.Context, v *dom.Invite) error
 	ListInvites(ctx context.Context, page, pageSize int, status *uint8, keyword string) ([]*InviteRow, int64, error)
 
-	// 邀请关系树（M1）
+	// 推广关系树（M1）
 	CreateRelation(ctx context.Context, tx *gorm.DB, v *dom.InviteRelation) error
 	FindActiveRelation(ctx context.Context, inviteeID int64, level uint8) (*dom.InviteRelation, error)
 	ListRelationsByInviter(ctx context.Context, inviterID int64, level uint8) ([]*dom.InviteRelation, error)
@@ -90,18 +90,18 @@ func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: da
 
 // CustomerBasic is the minimal cross-domain customer projection.
 type CustomerBasic struct {
-	ID        int64      `gorm:"column:id"`
-	Username  string     `gorm:"column:username"`
-	Email     *string    `gorm:"column:email"`
-	Phone     *string    `gorm:"column:phone"`
-	RealName  *string    `gorm:"column:real_name"`
-	Status    uint8      `gorm:"column:status"`
-	CreatedAt time.Time  `gorm:"column:created_at"`
+	ID        int64     `gorm:"column:id"`
+	Username  string    `gorm:"column:username"`
+	Email     *string   `gorm:"column:email"`
+	Phone     *string   `gorm:"column:phone"`
+	RealName  *string   `gorm:"column:real_name"`
+	Status    uint8     `gorm:"column:status"`
+	CreatedAt time.Time `gorm:"column:created_at"`
 }
 
 func (r *GormRepository) ListConfigsByPrefix(c context.Context, prefix string) (map[string]string, error) {
 	var rows []struct {
-		Key   string `gorm:"column:key"`
+		Key   string  `gorm:"column:key"`
 		Value *string `gorm:"column:value"`
 	}
 	e := r.db.WithContext(c).Table("system.system_configs").Where("`key` LIKE ?", prefix+"%").Find(&rows).Error
@@ -133,8 +133,8 @@ func (r *GormRepository) SaveConfig(c context.Context, key, value, description s
 // InviteRow is the admin list projection joined with the owner's username.
 type InviteRow struct {
 	dom.Invite
-	Username  string  `json:"username"`
-	Email     *string `json:"email"`
+	Username string  `json:"username"`
+	Email    *string `json:"email"`
 }
 
 func (r *GormRepository) FindInviteByUser(c context.Context, userID int64) (*dom.Invite, error) {
@@ -179,7 +179,7 @@ func (r *GormRepository) ListInvites(c context.Context, page, pageSize int, stat
 	if pageSize < 1 {
 		pageSize = 20
 	}
-	q := r.db.WithContext(c).Table(dom.Invite{}.TableName()+" AS i").
+	q := r.db.WithContext(c).Table(dom.Invite{}.TableName() + " AS i").
 		Joins("LEFT JOIN customer.customers cu ON cu.id = i.user_id").
 		Select("i.*, cu.username AS username, cu.email AS email")
 	if status != nil {
@@ -237,8 +237,8 @@ func (r *GormRepository) IncreaseInviteCount(c context.Context, userID int64, de
 // RewardRow is the admin/user list projection with both parties' usernames.
 type RewardRow struct {
 	dom.Reward
-	Username        string `json:"username"`
-	RewardUserName  string `json:"rewardUserName"`
+	Username       string `json:"username"`
+	RewardUserName string `json:"rewardUserName"`
 }
 
 func (r *GormRepository) CreateRewards(c context.Context, tx *gorm.DB, list []*dom.Reward) error {
@@ -259,7 +259,7 @@ func (r *GormRepository) ListRewards(c context.Context, page, pageSize int, stat
 	if pageSize < 1 {
 		pageSize = 20
 	}
-	q := r.db.WithContext(c).Table(dom.Reward{}.TableName()+" AS rw").
+	q := r.db.WithContext(c).Table(dom.Reward{}.TableName() + " AS rw").
 		Joins("LEFT JOIN customer.customers bu ON bu.id = rw.user_id").
 		Joins("LEFT JOIN customer.customers ru ON ru.id = rw.reward_user_id").
 		Select("rw.*, COALESCE(bu.username, '') AS username, COALESCE(ru.username, '') AS reward_user_name")
@@ -428,12 +428,12 @@ func (r *GormRepository) ClaimCouponTx(c context.Context, tx *gorm.DB, userID in
 // UserCouponRow joins the template for display.
 type UserCouponRow struct {
 	dom.UserCoupon
-	Name         string `json:"name"`
-	Type         uint8  `json:"type"`
-	FaceValue    int64  `json:"faceValue"`
+	Name         string  `json:"name"`
+	Type         uint8   `json:"type"`
+	FaceValue    int64   `json:"faceValue"`
 	DiscountRate float64 `json:"discountRate"`
-	MaxDiscount  int64  `json:"maxDiscount"`
-	MinAmount    int64  `json:"minAmount"`
+	MaxDiscount  int64   `json:"maxDiscount"`
+	MinAmount    int64   `json:"minAmount"`
 }
 
 func (r *GormRepository) ListUserCoupons(c context.Context, userID int64, status *uint8, page, pageSize int) ([]*UserCouponRow, int64, error) {

@@ -37,24 +37,24 @@ const (
 
 // Reward config mode values.
 const (
-	ModePercent      = "percent"
-	ModeFixed        = "fixed"
-	SettleInstant    = "instant"
-	SettleManual     = "manual"
+	ModePercent   = "percent"
+	ModeFixed     = "fixed"
+	SettleInstant = "instant"
+	SettleManual  = "manual"
 )
 
-func levelPercentKey(level int) string  { return fmt.Sprintf("marketing.reward.level%d_percent", level) }
-func levelFixedKey(level int) string    { return fmt.Sprintf("marketing.reward.level%d_fixed", level) }
+func levelPercentKey(level int) string { return fmt.Sprintf("marketing.reward.level%d_percent", level) }
+func levelFixedKey(level int) string   { return fmt.Sprintf("marketing.reward.level%d_fixed", level) }
 
 var configDefaults = []struct {
 	Key   string
 	Value string
 	Desc  string
 }{
-	{CfgInviteEnabled, "1", "邀请注册总开关"},
-	{CfgInviteReview, "0", "自定义邀请码人工审核开关"},
-	{CfgInviteCodeLength, "6", "邀请码长度"},
-	{CfgInviteCodeCharset, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", "邀请码字符集"},
+	{CfgInviteEnabled, "1", "优惠码注册总开关"},
+	{CfgInviteReview, "0", "自定义优惠码人工审核开关"},
+	{CfgInviteCodeLength, "6", "优惠码长度"},
+	{CfgInviteCodeCharset, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", "优惠码字符集"},
 	{CfgRewardEnabled, "1", "多级分销奖励开关"},
 	{CfgRewardLevels, "1", "分销层级（1-3）"},
 	{CfgRewardMode, ModePercent, "奖励方式：percent 百分比 / fixed 固定金额"},
