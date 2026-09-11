@@ -85,6 +85,38 @@ func sessionKindForRequest(path string) (auth.SessionKind, bool) {
 	}
 }
 
+// RedactSensitiveHeaders removes credential values after request processing so
+// framework-level error logging cannot dump secrets from the shared request.
+func RedactSensitiveHeaders() func(http.HandlerFunc) http.HandlerFunc {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			defer redactSensitiveHeaders(r.Header)
+			next(w, r)
+		}
+	}
+}
+
+func redactSensitiveHeaders(headers http.Header) {
+	for name := range headers {
+		if isSensitiveHeader(name) {
+			headers[name] = []string{"[REDACTED]"}
+		}
+	}
+}
+
+func isSensitiveHeader(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	switch normalized {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-token":
+		return true
+	}
+	return strings.Contains(normalized, "token") ||
+		strings.Contains(normalized, "secret") ||
+		strings.Contains(normalized, "api-key") ||
+		strings.Contains(normalized, "apikey") ||
+		strings.Contains(normalized, "credential")
+}
+
 // RequestID 请求ID中间件
 func RequestID() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
