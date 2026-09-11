@@ -34,13 +34,24 @@ type ProductListResult struct {
 	LossGuard bool                         `json:"lossGuard"`
 }
 type UpstreamOrderRow struct {
-	ID, OrderNo, User, Email, Mobile, ProductName, PayType, Status string
-	Amount, Cost, Profit                                           float64
-	CreatedAt                                                      string `json:"createdAt"`
+	ID          string  `json:"id"`
+	OrderNo     string  `json:"orderNo"`
+	User        string  `json:"user"`
+	Email       string  `json:"email"`
+	Mobile      string  `json:"mobile"`
+	ProductName string  `json:"productName"`
+	PayType     string  `json:"payType"`
+	Status      string  `json:"status"`
+	Amount      float64 `json:"amount"`
+	Cost        float64 `json:"cost"`
+	Profit      float64 `json:"profit"`
+	CreatedAt   string  `json:"createdAt"`
 }
 type UpstreamOrderMetrics struct {
-	Sales, Profit           float64
-	ProductCount, HostCount int64
+	Sales        float64 `json:"sales"`
+	Profit       float64 `json:"profit"`
+	ProductCount int64   `json:"productCount"`
+	HostCount    int64   `json:"hostCount"`
 }
 type UpstreamOrderResult struct {
 	Metrics UpstreamOrderMetrics `json:"metrics"`
