@@ -37,3 +37,15 @@ func TestRedactSensitiveHeaders(t *testing.T) {
 		t.Fatalf("X-Trace = %q, want trace-value", got)
 	}
 }
+
+func TestSalesBusinessRoutesUseSalesSession(t *testing.T) {
+	kind, protected := sessionKindForRequest("/admin/v1/sales/customers")
+	if kind != "sales" || !protected {
+		t.Fatalf("sales route kind = %q, protected = %v", kind, protected)
+	}
+
+	kind, protected = sessionKindForRequest("/admin/v1/sales/auth/login")
+	if kind != "sales" || protected {
+		t.Fatalf("sales login kind = %q, protected = %v", kind, protected)
+	}
+}

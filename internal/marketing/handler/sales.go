@@ -1,4 +1,4 @@
-﻿// Sales-portal endpoints under /api/v1/sales (JWT sales role) plus the
+// Sales-portal endpoints under /api/v1/sales (JWT sales role) plus the
 // public sales login.
 package marketing
 
@@ -16,6 +16,16 @@ import (
 func RegisterSalesHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
 	h := &salesHandler{service: service, jwt: jwt}
 	server.AddRoutes([]rest.Route{
+		// The sales application owns an independent httpOnly cookie.  Keep all
+		// browser-facing sales APIs under the matching /admin/v1/sales prefix so
+		// CookieSession selects that cookie instead of the customer session.
+		{Method: http.MethodGet, Path: "/admin/v1/sales/profile", Handler: h.profile},
+		{Method: http.MethodGet, Path: "/admin/v1/sales/customers", Handler: h.customers},
+		{Method: http.MethodGet, Path: "/admin/v1/sales/customers/:id", Handler: h.customerDetail},
+		{Method: http.MethodPost, Path: "/admin/v1/sales/customers/:id/followups", Handler: h.createFollowup},
+		{Method: http.MethodGet, Path: "/admin/v1/sales/followups", Handler: h.followups},
+		// Legacy routes remain registered so older clients receive the existing
+		// migration response instead of an unexplained 404.
 		{Method: http.MethodPost, Path: "/api/v1/sales/auth/login", Handler: h.login},
 		{Method: http.MethodGet, Path: "/api/v1/sales/profile", Handler: h.profile},
 		{Method: http.MethodGet, Path: "/api/v1/sales/customers", Handler: h.customers},
