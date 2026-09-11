@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ddyidc/internal/cdnsell/provider"
 	"ddyidc/pkg/auth"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
@@ -47,6 +48,7 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/customers/:id/suspend", Handler: h.suspendCustomer},
 		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/customers/:id/resume", Handler: h.resumeCustomer},
 	})
+	server.AddRoutes(p2Routes(h))
 }
 func (h *Handler) claims(w http.ResponseWriter, r *http.Request, role string) (int64, bool) {
 	head := r.Header.Get("Authorization")
@@ -80,13 +82,15 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.user(w, r); !ok {
 		return
 	}
-	ok(w, map[string]any{"enabled": true, "phase": "P1"})
+	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
+	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes})
 }
 func (h *Handler) adminStatus(w http.ResponseWriter, r *http.Request) {
 	if !h.admin(w, r) {
 		return
 	}
-	ok(w, map[string]any{"enabled": true, "phase": "P1"})
+	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
+	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes})
 }
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	id, yes := h.user(w, r)
@@ -331,6 +335,12 @@ func result(w http.ResponseWriter, data any, e error) {
 	status := 400
 	if errors.Is(e, ErrNotFound) {
 		status = 404
+	}
+	if errors.Is(e, ErrForbidden) {
+		status = 403
+	}
+	if errors.Is(e, provider.ErrCapabilityNotOpen) {
+		status = http.StatusNotImplemented
 	}
 	message(w, status, e.Error())
 }

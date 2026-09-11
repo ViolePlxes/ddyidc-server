@@ -30,6 +30,7 @@ type Provider interface {
 	GetUsage(context.Context, Account, Domain, time.Time, time.Time) ([]UsagePoint, error)
 	AddDomain(context.Context, Account, DomainInput) (string, error)
 	RemoveDomain(context.Context, Account, string) error
+	SetDomainEnabled(context.Context, Account, string, bool) error
 	GetDomain(context.Context, Account, string) (map[string]any, error)
 	SetDomainConfig(context.Context, Account, string, string, map[string]any) error
 	GetDomainConfig(context.Context, Account, string, string) (map[string]any, error)

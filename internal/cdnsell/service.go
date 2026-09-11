@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ddyidc/internal/cdnsell/provider"
@@ -23,17 +24,22 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed p2_schema.sql
+var p2SchemaSQL string
+
 var ErrNotFound = errors.New("记录不存在")
 
 type Notifier interface {
 	NotifyCustomer(context.Context, string, int64, string, map[string]string) error
 }
 type Service struct {
-	db       *gorm.DB
-	key      []byte
-	notifier Notifier
-	cloud    provider.Provider
-	now      func() time.Time
+	db            *gorm.DB
+	key           []byte
+	notifier      Notifier
+	cloud         provider.Provider
+	now           func() time.Time
+	cloudMu       sync.Mutex
+	lastCloudCall time.Time
 }
 
 func NewService(db *gorm.DB, key []byte, notifier Notifier) *Service {
@@ -44,6 +50,9 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
 		return err
 	}
+	if err := s.db.WithContext(ctx).Exec(p2SchemaSQL).Error; err != nil {
+		return err
+	}
 	items := []struct {
 		api, cap, note string
 		available      *bool
@@ -51,18 +60,34 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 		{"TestConnection", "连通性", "已由官方 CDN V3 SDK 支持", boolPtr(true)},
 		{"GetUsage", "用量查询", "5 分钟粒度流量查询已由官方 CDN V3 SDK 支持", boolPtr(true)},
 		{"GetResourcePackages", "资源包库存", "公开 CDN SDK 未提供资源包库存查询", boolPtr(false)},
-		{"AddDomain", "域名接入", "P2 待授权与实测", nil}, {"SetDomainConfig", "配置下发", "P2 待授权与实测", nil},
-		{"DeployCertificate", "证书部署", "P2 待授权与实测", nil}, {"SubmitRefresh", "缓存刷新", "P3 待授权与实测", nil},
-		{"GetLogs", "日志下载", "P3 待授权与实测", nil}, {"CheckIP", "节点 IP 检测", "P3 待授权与实测", nil},
+		{"AddDomain", "域名接入", "P2 已接入官方 SDK，待授权实测", nil}, {"SetDomainConfig", "配置下发", "P2 已接入官方 SDK，待授权实测", nil},
+		{"DeployCertificate", "证书部署", "P2 已接入官方 SDK，待授权实测", nil}, {"SubmitRefresh", "缓存刷新与预热", "P2 已接入官方 SDK，待授权实测", nil},
+		{"GetLogs", "日志下载", "P2 已接入官方 SDK，待有域名后实测", boolPtr(true)}, {"CheckIP", "节点 IP 检测", "P2 已接入官方 SDK，待实测", boolPtr(true)},
 	}
 	for _, v := range items {
 		id := snowflake.GenID()
-		_ = s.db.WithContext(ctx).Exec("INSERT IGNORE INTO system.cdnsell_api_capabilities(id,api_name,capability,available,note) VALUES(?,?,?,?,?)", id, v.api, v.cap, v.available, v.note).Error
+		_ = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_api_capabilities(id,api_name,capability,available,note) VALUES(?,?,?,?,?) ON DUPLICATE KEY UPDATE capability=VALUES(capability),available=COALESCE(available,VALUES(available)),note=IF(checked_at IS NULL,VALUES(note),note)", id, v.api, v.cap, v.available, v.note).Error
 	}
 	_ = s.db.WithContext(ctx).Exec("INSERT IGNORE INTO system.notification_templates(id,scene,channel,title,content,enabled) VALUES(?,'cdnsell_usage','both','CDN 流量预警','您的 CDN 可用流量剩余 {{remaining}}，当前余量 {{percent}}%，请及时购买流量包。',1)", snowflake.GenID()).Error
+	_ = s.db.WithContext(ctx).Exec("INSERT IGNORE INTO system.notification_templates(id,scene,channel,title,content,enabled) VALUES(?,'cdnsell_cert_expiry','both','CDN 证书即将到期','您的 CDN 证书 {{name}} 将于 {{expireAt}} 到期，请及时更新。',1)", snowflake.GenID()).Error
 	return nil
 }
 func boolPtr(v bool) *bool { return &v }
+func (s *Service) waitCloudGap(ctx context.Context) error {
+	s.cloudMu.Lock()
+	defer s.cloudMu.Unlock()
+	if wait := 2*time.Second - time.Since(s.lastCloudCall); wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	s.lastCloudCall = time.Now()
+	return nil
+}
 func (s *Service) Enabled(ctx context.Context) (bool, error) {
 	var v bool
 	e := s.db.WithContext(ctx).Table(settingsTable).Select("enabled").Where("id=1").Scan(&v).Error
@@ -137,6 +162,9 @@ func (s *Service) TestAccount(ctx context.Context, id int64) error {
 		return e
 	}
 	start := s.now()
+	if e = s.waitCloudGap(ctx); e != nil {
+		return e
+	}
 	e = s.cloud.TestConnection(ctx, account)
 	success := e == nil
 	result, _ := json.Marshal(map[string]any{"success": success, "message": map[bool]string{true: "连接成功", false: "连接失败"}[success]})
@@ -521,6 +549,9 @@ func (s *Service) RunUsageSync(ctx context.Context) error {
 			continue
 		}
 		calledAt := time.Now()
+		if e = s.waitCloudGap(ctx); e != nil {
+			return e
+		}
 		points, e := s.cloud.GetUsage(ctx, account, provider.Domain{ServiceNo: d.ServiceNo, BusinessType: d.BusinessType}, start, end)
 		errText := ""
 		if e != nil {
@@ -537,6 +568,7 @@ func (s *Service) RunUsageSync(ctx context.Context) error {
 	return nil
 }
 func (s *Service) Start(ctx context.Context) {
+	s.startP2(ctx)
 	go func() {
 		usage := time.NewTicker(time.Minute)
 		expiry := time.NewTicker(5 * time.Minute)
