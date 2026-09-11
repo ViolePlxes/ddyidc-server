@@ -100,4 +100,8 @@ type HelperPlan struct {
 	ExpectedCommit    string `json:"expectedCommit"`
 	ResultFile        string `json:"resultFile"`
 	TimeoutSeconds    int    `json:"timeoutSeconds"`
+	MinFreeMB         uint64 `json:"minFreeMB"`
+	SystemctlPath     string `json:"systemctlPath"`
+	SudoPath          string `json:"sudoPath"`
+	ServiceName       string `json:"serviceName"`
 }

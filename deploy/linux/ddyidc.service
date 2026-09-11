@@ -1,0 +1,36 @@
+[Unit]
+Description=DDYIDC API service
+Wants=network-online.target
+After=network-online.target mysql.service redis-server.service
+RequiresMountsFor=/opt/ddyidc /var/log/ddyidc
+
+[Service]
+Type=simple
+User=ddyidc
+Group=ddyidc
+WorkingDirectory=/opt/ddyidc/server
+UMask=0027
+ExecStartPre=/opt/ddyidc/deploy/wait-dependencies.sh
+ExecStartPre=/opt/ddyidc/deploy/disk-guard.sh --admit
+ExecStart=/opt/ddyidc/bin/ddyidc-server -f /opt/ddyidc/server/etc/config.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+LimitNOFILE=65535
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/opt/ddyidc /var/log/ddyidc
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ddyidc
+
+[Install]
+WantedBy=multi-user.target

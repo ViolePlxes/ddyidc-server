@@ -1,8 +1,5 @@
 # Binaries
 bin/
-*.exe
-*.exe~
-*.dll
 
 # Runtime configuration and credentials
 etc/config.yaml
@@ -18,6 +15,8 @@ server_out.log
 
 # Test
 coverage.out
+dist/
+deploy/linux/package/
 
 # IDE
 .idea/

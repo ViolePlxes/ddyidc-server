@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -76,7 +77,11 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		return m.runner.Run(ctx, target.Workspace, toolPath, toolArgs, nil)
 	})
 	run("磁盘空间", func() (string, error) {
-		free, e := m.freeSpace(target.Workspace)
+		diskTarget := target.Workspace
+		if name == TargetBackend {
+			diskTarget = filepath.Dir(target.Executable)
+		}
+		free, e := m.freeSpace(diskTarget)
 		if e != nil {
 			return "", e
 		}

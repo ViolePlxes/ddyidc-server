@@ -1,8 +1,9 @@
-.PHONY: build run test lint clean
+.PHONY: build run test vet lint clean
 
 # 编译
 build:
-	go build -o bin/ddyidc-server .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/ddyidc-server .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o bin/ddyidc-update-helper ./cmd/updatehelper
 
 # 运行
 run:
@@ -10,7 +11,10 @@ run:
 
 # 测试
 test:
-	go test -race -coverprofile=coverage.out ./...
+	go test ./...
+
+vet:
+	go vet ./...
 
 # 代码检查
 lint:

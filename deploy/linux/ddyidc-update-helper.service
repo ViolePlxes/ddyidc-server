@@ -1,0 +1,27 @@
+[Unit]
+Description=DDYIDC atomic update helper
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/opt/ddyidc/update-results/pending.plan.json
+
+[Service]
+Type=oneshot
+User=ddyidc
+Group=ddyidc
+UMask=0027
+WorkingDirectory=/opt/ddyidc/server
+ExecStartPre=/opt/ddyidc/deploy/disk-guard.sh --admit
+ExecStart=/opt/ddyidc/bin/ddyidc-update-helper -plan /opt/ddyidc/update-results/pending.plan.json
+TimeoutStartSec=15min
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=/opt/ddyidc /var/log/ddyidc
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ddyidc-update-helper

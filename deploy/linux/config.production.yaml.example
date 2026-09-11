@@ -1,0 +1,81 @@
+Name: ddyidc-server
+Host: 127.0.0.1
+Port: 8080
+Mode: pro
+Timeout: 120000
+
+MySQL:
+  Host: 127.0.0.1
+  Port: 3306
+  User: ddyidc_app
+  Password: "__MYSQL_PASSWORD__"
+  Database: ddyidc
+  MaxOpenConns: 100
+  MaxIdleConns: 20
+  ConnMaxLifetime: 3600
+
+Redis:
+  Host: 127.0.0.1
+  Port: 6379
+  Password: "__REDIS_PASSWORD__"
+  DB: 0
+  PoolSize: 100
+
+Crypto:
+  AESKey: "__AES_KEY__"
+
+JWT:
+  AccessSecret: "__JWT_ACCESS_SECRET__"
+  AccessExpire: 7200
+  RefreshSecret: "__JWT_REFRESH_SECRET__"
+  RefreshExpire: 604800
+
+Log:
+  Level: info
+  Mode: file
+  Path: /var/log/ddyidc
+  KeepDays: 30
+
+Notify:
+  Mock: false
+  SMS:
+    AccessKey: ""
+    AccessSecret: ""
+    SignName: ""
+  Mail:
+    Host: ""
+    Port: 465
+    Username: ""
+    Password: ""
+    FromName: "DDYIDC"
+
+RemoteConsole:
+  Engine: novnc
+
+Payment:
+  AlipaySecretFile: /etc/ddyidc/secrets/alipay.json
+
+Update:
+  GitPath: /usr/bin/git
+  GoPath: /usr/local/go/bin/go
+  NPMPath: /usr/local/bin/npm
+  SystemctlPath: /usr/bin/systemctl
+  SudoPath: /usr/bin/sudo
+  ServerService: ddyidc.service
+  UpdateHelperService: ddyidc-update-helper.service
+  MinFreeMB: 10240
+  TimeoutSeconds: 600
+  HealthURL: http://127.0.0.1:8080/health
+  VersionURL: http://127.0.0.1:8080/api/v1/system/version
+  SmokeURL: http://127.0.0.1:8080/api/v1/products
+  ResultDir: /opt/ddyidc/update-results
+  Backend:
+    Workspace: /opt/ddyidc/server
+    Branch: main
+    Executable: /opt/ddyidc/bin/ddyidc-server
+    ConfigFile: /opt/ddyidc/server/etc/config.yaml
+    HelperPath: /opt/ddyidc/bin/ddyidc-update-helper
+  Frontend:
+    Workspace: /opt/ddyidc/web-react
+    Branch: main
+    StaticURL: http://127.0.0.1:8081/
