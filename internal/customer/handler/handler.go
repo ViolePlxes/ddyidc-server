@@ -34,10 +34,15 @@ type AuthEventHooks interface {
 	AfterAuthEvent(ctx context.Context, event string, customerID int64)
 }
 
+type SMSCodeConsumer interface {
+	ConsumeSMSCode(ctx context.Context, mobile, scene, code string) error
+}
+
 type authHandler struct {
 	customers repository.Repository
 	jwt       *auth.Manager
 	hooks     AuthHooks
+	smsCodes  SMSCodeConsumer
 }
 
 // administrator is intentionally local to the authentication boundary: admin
@@ -66,8 +71,8 @@ type salesUser struct {
 
 // RegisterAuthHandlers registers the password-authentication endpoints backed
 // by persistent customer data, plus registration and referral verification.
-func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks) {
-	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks}
+func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer) {
+	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks, smsCodes: smsCodes}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/auth/check-account", Handler: h.checkAccount},
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: h.userLogin},
@@ -327,15 +332,18 @@ func (h *authHandler) findAccount(r *http.Request, account string) (*domain.Cust
 	return nil, gorm.ErrRecordNotFound
 }
 
-// register 创建客户账号（营销钩子：可选邀请码 + 专属客服工号）。
+// register 创建客户账号（营销钩子：可选优惠码 + 专属客服工号）。
 func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Account    string `json:"account"`
-		Password   string `json:"password"`
-		Email      string `json:"email"`
-		Mobile     string `json:"mobile"`
-		InviteCode string `json:"inviteCode"`
-		SalesCode  string `json:"salesCode"`
+		Account       string `json:"account"`
+		Password      string `json:"password"`
+		Email         string `json:"email"`
+		Mobile        string `json:"mobile"`
+		CountryCode   string `json:"countryCode"`
+		SMSCode       string `json:"smsCode"`
+		AgreedToTerms bool   `json:"agreedToTerms"`
+		InviteCode    string `json:"inviteCode"`
+		SalesCode     string `json:"salesCode"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "注册参数格式错误")
@@ -348,6 +356,27 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(input.Password) < 6 || len(input.Password) > 20 {
 		writeError(w, http.StatusBadRequest, "请输入6-20位密码")
+		return
+	}
+	if !input.AgreedToTerms {
+		writeError(w, http.StatusBadRequest, "请阅读并同意《服务协议》和《隐私协议》")
+		return
+	}
+	countryCode := strings.TrimSpace(input.CountryCode)
+	if countryCode == "" {
+		countryCode = "+86"
+	}
+	if countryCode != "+86" {
+		writeError(w, http.StatusBadRequest, "该地区暂不支持验证码，敬请期待")
+		return
+	}
+	mobile := strings.TrimSpace(input.Mobile)
+	if !validMainlandMobile(mobile) {
+		writeError(w, http.StatusBadRequest, "请输入正确的中国大陆手机号")
+		return
+	}
+	if strings.TrimSpace(input.SMSCode) == "" {
+		writeError(w, http.StatusBadRequest, "请输入手机验证码")
 		return
 	}
 	inviteCode := strings.TrimSpace(input.InviteCode)
@@ -376,6 +405,13 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "账号已存在")
 		return
 	}
+	if existing, err := h.customers.FindByPhone(r.Context(), mobile); err == nil && existing != nil {
+		writeError(w, http.StatusBadRequest, "手机号已注册")
+		return
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusInternalServerError, "查询手机号失败")
+		return
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "密码加密失败")
@@ -392,11 +428,23 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "请输入正确的邮箱")
 			return
 		}
+		if existing, findErr := h.customers.FindByEmail(r.Context(), email); findErr == nil && existing != nil {
+			writeError(w, http.StatusBadRequest, "邮箱已注册")
+			return
+		} else if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
+			writeError(w, http.StatusInternalServerError, "查询邮箱失败")
+			return
+		}
 		customer.Email = &email
 	}
-	mobile := strings.TrimSpace(input.Mobile)
-	if mobile != "" {
-		customer.Phone = &mobile
+	customer.Phone = &mobile
+	if h.smsCodes == nil {
+		writeError(w, http.StatusServiceUnavailable, "验证码服务暂不可用")
+		return
+	}
+	if err := h.smsCodes.ConsumeSMSCode(r.Context(), mobile, "register", input.SMSCode); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err := h.customers.Create(r.Context(), customer); err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(err.Error(), "Duplicate entry") {
@@ -417,6 +465,18 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.writeCustomerLogin(w, r, customer)
+}
+
+func validMainlandMobile(value string) bool {
+	if len(value) != 11 || value[0] != '1' || value[1] < '3' || value[1] > '9' {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *authHandler) verifyInvite(w http.ResponseWriter, r *http.Request) {

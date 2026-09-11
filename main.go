@@ -243,7 +243,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		Handler: healthHandler,
 	})
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/api/v1/system/version", Handler: versionHandler})
-	notify.RegisterHandlers(server, notifyManager)
+	verificationService := notify.RegisterHandlers(server, notifyManager)
 	notify.RegisterAdminHandlers(server, notifyManager, jwt)
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
@@ -255,7 +255,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := pointsSvc.EnsureSchema(context.Background()); err != nil {
 		panic("points schema initialization failed: " + err.Error())
 	}
-	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc})
+	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService)
 	marketinghandler.RegisterUserHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterAdminHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterSalesHandlers(server, marketingSvc, jwt)

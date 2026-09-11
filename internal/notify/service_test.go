@@ -200,6 +200,35 @@ func TestVerificationProviderFailureReturnsBadGateway(t *testing.T) {
 	}
 }
 
+func TestConsumeSMSCodeRejectsReplayAndReportsStates(t *testing.T) {
+	service := &VerificationService{memory: map[string]memoryEntry{}}
+	mobile := "13900001047"
+	base := service.key(ChannelSMS, mobile, "register")
+	encoded, _ := json.Marshal(record{Code: "654321", Expires: time.Now().Add(5 * time.Minute)})
+	service.set(base+":code", string(encoded), 5*time.Minute)
+	service.set(base+":sent", "1", 10*time.Minute)
+
+	if err := service.ConsumeSMSCode(context.Background(), mobile, "register", "000000"); err == nil || err.Error() != "验证码错误" {
+		t.Fatalf("wrong code error = %v", err)
+	}
+	if err := service.ConsumeSMSCode(context.Background(), mobile, "register", "654321"); err != nil {
+		t.Fatalf("valid code failed: %v", err)
+	}
+	if err := service.ConsumeSMSCode(context.Background(), mobile, "register", "654321"); err == nil || err.Error() != "验证码已使用，请重新获取" {
+		t.Fatalf("replay error = %v", err)
+	}
+
+	unsent := "13800000000"
+	if err := service.ConsumeSMSCode(context.Background(), unsent, "register", "654321"); err == nil || err.Error() != "请先获取验证码" {
+		t.Fatalf("unsent error = %v", err)
+	}
+	expiredBase := service.key(ChannelSMS, unsent, "register")
+	service.set(expiredBase+":sent", "1", 10*time.Minute)
+	if err := service.ConsumeSMSCode(context.Background(), unsent, "register", "654321"); err == nil || err.Error() != "验证码已过期，请重新获取" {
+		t.Fatalf("expired error = %v", err)
+	}
+}
+
 func TestExpiryScanSendsOnlyOnce(t *testing.T) {
 	expires := time.Now().Add(24 * time.Hour)
 	repo := &fakeNotifyRepository{

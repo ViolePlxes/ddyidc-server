@@ -30,17 +30,17 @@ func (s *Service) OnPaid(ctx context.Context, bizType uint8, orderID int64, orde
 			return nil
 		}
 	}
-	// 逐层上溯邀请链
+	// 逐层上溯推广链
 	type chainNode struct {
-		level    uint8
-		inviter  int64
+		level   uint8
+		inviter int64
 	}
 	chain := make([]chainNode, 0, plan.Levels)
 	current := buyerID
 	for level := 1; level <= plan.Levels; level++ {
 		rel, err := s.repo.FindActiveRelation(ctx, current, 1)
 		if err != nil {
-			return fmt.Errorf("查询邀请关系失败: %w", err)
+			return fmt.Errorf("查询推广关系失败: %w", err)
 		}
 		if rel == nil {
 			break

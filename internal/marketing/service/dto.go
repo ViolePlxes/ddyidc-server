@@ -2,7 +2,7 @@
 // to stay within JS safe integers.
 package marketing
 
-// InviteDTO 用户端/管理端邀请码视图
+// InviteDTO 用户端/管理端优惠码视图
 type InviteDTO struct {
 	ID           string  `json:"id"`
 	UserID       string  `json:"userId"`
@@ -14,7 +14,7 @@ type InviteDTO struct {
 	Username     string  `json:"username,omitempty"`
 }
 
-// InviteRelationDTO 邀请关系视图
+// InviteRelationDTO 推广关系视图
 type InviteRelationDTO struct {
 	ID        string `json:"id"`
 	InviterID string `json:"inviterId"`
@@ -25,7 +25,7 @@ type InviteRelationDTO struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-// MyInviteResponse 我的邀请码（含推广链接要素）
+// MyInviteResponse 我的优惠码（含推广链接要素）
 type MyInviteResponse struct {
 	Invite *InviteDTO  `json:"invite,omitempty"`
 	Stats  InviteStats `json:"stats"`

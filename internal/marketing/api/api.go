@@ -17,7 +17,7 @@ type AuthHooks struct {
 
 func NewAuthHooks(service *svc.Service) *AuthHooks { return &AuthHooks{service: service} }
 
-// VerifyInvite 校验邀请码，返回邀请人名称。
+// VerifyInvite 校验优惠码，返回推广人名称。
 func (h *AuthHooks) VerifyInvite(ctx context.Context, code string) (string, error) {
 	return h.service.VerifyInviteCode(ctx, code)
 }
@@ -27,7 +27,7 @@ func (h *AuthHooks) VerifySales(ctx context.Context, staffNo string) (string, er
 	return h.service.VerifySalesCode(ctx, staffNo)
 }
 
-// AfterRegister 注册成功后建立邀请关系树并绑定销售。
+// AfterRegister 注册成功后建立推广关系树并绑定销售。
 func (h *AuthHooks) AfterRegister(ctx context.Context, customerID int64, inviteCode, salesCode string) error {
 	return h.service.AfterRegister(ctx, customerID, inviteCode, salesCode)
 }
