@@ -1,0 +1,19 @@
+-- CanyKsCDN 可拆卸卸载脚本。执行前请先备份业务数据。
+DROP TABLE IF EXISTS `system`.`cdnsell_api_capabilities`;
+DROP TABLE IF EXISTS `system`.`cdnsell_refresh_tasks`;
+DROP TABLE IF EXISTS `system`.`cdnsell_reconcile_records`;
+DROP TABLE IF EXISTS `system`.`cdnsell_api_logs`;
+DROP TABLE IF EXISTS `system`.`cdnsell_notify_records`;
+DROP TABLE IF EXISTS `system`.`cdnsell_tasks`;
+DROP TABLE IF EXISTS `system`.`cdnsell_orders`;
+DROP TABLE IF EXISTS `system`.`cdnsell_overage_bills`;
+DROP TABLE IF EXISTS `system`.`cdnsell_meter_records`;
+DROP TABLE IF EXISTS `system`.`cdnsell_ssl_certs`;
+DROP TABLE IF EXISTS `system`.`cdnsell_config_tasks`;
+DROP TABLE IF EXISTS `system`.`cdnsell_domain_configs`;
+DROP TABLE IF EXISTS `system`.`cdnsell_domains`;
+DROP TABLE IF EXISTS `system`.`cdnsell_batches`;
+DROP TABLE IF EXISTS `system`.`cdnsell_products`;
+DROP TABLE IF EXISTS `system`.`cdnsell_upstream_packages`;
+DROP TABLE IF EXISTS `system`.`cdnsell_upstream_accounts`;
+DROP TABLE IF EXISTS `system`.`cdnsell_settings`;

@@ -22,9 +22,10 @@ type ProductListQuery struct {
 }
 type AdminProductRow struct {
 	model.UpstreamProduct
-	GroupName string  `json:"groupName"`
-	Cost      float64 `json:"cost"`
-	Deletable bool    `json:"deletable"`
+	GroupName     string  `json:"groupName"`
+	ParentGroupID string  `json:"parentGroupId"`
+	Cost          float64 `json:"cost"`
+	Deletable     bool    `json:"deletable"`
 }
 type ProductListResult struct {
 	Items     []AdminProductRow            `json:"items"`
@@ -57,7 +58,15 @@ func (s *Store) ListAdminProducts(q ProductListQuery) (ProductListResult, error)
 	if q.PageSize < 1 || q.PageSize > 100 {
 		q.PageSize = 10
 	}
-	dbq := s.db.Table("product.upstream_products AS up").Select("up.*, COALESCE(pg.name, '未分组') AS group_name, up.upstream_price * COALESCE(s.rate, 1) AS cost").Joins("LEFT JOIN product.product_groups AS pg ON pg.id = up.product_group_id").Joins("LEFT JOIN common.suppliers AS s ON s.id = up.supplier_id")
+	dbq := s.db.Table("product.upstream_products AS up").
+		Select(`up.*,
+			CASE WHEN parent.id IS NOT NULL THEN CONCAT(parent.name, ' / ', pg.name)
+				WHEN pg.id IS NOT NULL THEN pg.name ELSE '未分组' END AS group_name,
+			CASE WHEN pg.parent_id > 0 THEN pg.parent_id ELSE 0 END AS parent_group_id,
+			up.upstream_price * COALESCE(s.rate, 1) AS cost`).
+		Joins("LEFT JOIN product.product_groups AS pg ON pg.id = up.product_group_id").
+		Joins("LEFT JOIN product.product_groups AS parent ON parent.id = pg.parent_id").
+		Joins("LEFT JOIN common.suppliers AS s ON s.id = up.supplier_id")
 	if q.SupplierID != "" && q.SupplierID != "all" {
 		dbq = dbq.Where("up.supplier_id = ?", q.SupplierID)
 	}

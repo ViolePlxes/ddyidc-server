@@ -1,0 +1,16 @@
+DROP TABLE IF EXISTS `system`.`points_risk_logs`;
+DROP TABLE IF EXISTS `system`.`points_user_tags`;
+DROP TABLE IF EXISTS `system`.`points_risk_rules`;
+DROP TABLE IF EXISTS `system`.`points_risk_tags`;
+DROP TABLE IF EXISTS `system`.`points_orders`;
+DROP TABLE IF EXISTS `system`.`points_cards`;
+DROP TABLE IF EXISTS `system`.`points_card_batches`;
+DROP TABLE IF EXISTS `system`.`points_goods`;
+DROP TABLE IF EXISTS `system`.`points_goods_categories`;
+DROP TABLE IF EXISTS `system`.`points_signins`;
+DROP TABLE IF EXISTS `system`.`points_records`;
+DROP TABLE IF EXISTS `system`.`points_accounts`;
+DROP TABLE IF EXISTS `system`.`points_task_progress`;
+DROP TABLE IF EXISTS `system`.`points_tasks`;
+DROP TABLE IF EXISTS `system`.`points_rules`;
+DROP TABLE IF EXISTS `system`.`points_settings`;

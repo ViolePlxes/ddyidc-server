@@ -27,17 +27,18 @@ type Store struct {
 	hosts         map[string]model.UpstreamHost
 	taskCancels   map[string]context.CancelFunc
 	taskSuppliers map[string]string
+	connectors    map[string]bool
 	taskSem       chan struct{}
 }
 
 func NewStore(database *gorm.DB, aesKey []byte) *Store {
-	return &Store{db: database, aesKey: append([]byte(nil), aesKey...), taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, taskSem: make(chan struct{}, 2)}
+	return &Store{db: database, aesKey: append([]byte(nil), aesKey...), taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, taskSem: make(chan struct{}, 2)}
 }
 
 func NewDefaultStore(aesKey []byte) *Store { return NewStore(db.G, aesKey) }
 
 func NewMemoryStore(aesKey []byte) *Store {
-	return &Store{aesKey: append([]byte(nil), aesKey...), suppliers: map[string]model.Supplier{}, products: map[string]model.UpstreamProduct{}, orders: map[string]model.UpstreamOrder{}, hosts: map[string]model.UpstreamHost{}, taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, taskSem: make(chan struct{}, 2)}
+	return &Store{aesKey: append([]byte(nil), aesKey...), suppliers: map[string]model.Supplier{}, products: map[string]model.UpstreamProduct{}, orders: map[string]model.UpstreamOrder{}, hosts: map[string]model.UpstreamHost{}, taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, taskSem: make(chan struct{}, 2)}
 }
 
 func (s *Store) isMemory() bool { return s.db == nil }

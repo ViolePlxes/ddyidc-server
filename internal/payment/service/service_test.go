@@ -24,6 +24,9 @@ func (f *fakeRepository) PrepareOrder(context.Context, int64, int64, string, tim
 func (f *fakeRepository) PrepareRecharge(context.Context, int64, int64, string, time.Time) (*rep.Prepared, error) {
 	return f.prepared, nil
 }
+func (f *fakeRepository) PrepareMarketplace(context.Context, int64, int64, string, time.Time) (*rep.Prepared, error) {
+	return f.prepared, nil
+}
 func (f *fakeRepository) FindByOutTradeNo(context.Context, string) (*dom.Payment, error) {
 	return f.payment, nil
 }

@@ -50,6 +50,19 @@ func (h *Handler) addProduct(w http.ResponseWriter, r *http.Request) {
 	v, e := h.Store.AddProduct(in)
 	respond(w, v, e)
 }
+func (h *Handler) connectProducts(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		SupplierID string                 `json:"supplierId"`
+		GroupID    string                 `json:"groupId"`
+		Items      []service.ProductInput `json:"items"`
+	}
+	if e := decode(r, &in); e != nil {
+		respond(w, nil, e)
+		return
+	}
+	v, e := h.Store.ConnectProducts(in.SupplierID, in.GroupID, in.Items)
+	respond(w, map[string]interface{}{"items": v, "count": len(v)}, e)
+}
 func (h *Handler) updateProduct(w http.ResponseWriter, r *http.Request) {
 	var in service.ProductInput
 	if e := decode(r, &in); e != nil {

@@ -29,8 +29,16 @@ func RegisterPublicHandlers(server *rest.Server, products repository.Repository,
 		{Method: http.MethodGet, Path: "/api/v1/products", Handler: h.list},
 		{Method: http.MethodGet, Path: "/api/v1/products/:id", Handler: h.detail},
 		{Method: http.MethodGet, Path: "/admin/v1/products", Handler: h.adminList},
+		{Method: http.MethodPut, Path: "/admin/v1/products/sort", Handler: h.sortProducts},
+		{Method: http.MethodPut, Path: "/admin/v1/products/move-group", Handler: h.moveProducts},
 		{Method: http.MethodGet, Path: "/admin/v1/products/:id/specs", Handler: h.adminSpecs},
 		{Method: http.MethodPut, Path: "/admin/v1/products/:id/specs", Handler: h.replaceSpecs},
+		{Method: http.MethodGet, Path: "/admin/v1/product-groups", Handler: h.adminGroups},
+		{Method: http.MethodPost, Path: "/admin/v1/product-groups", Handler: h.createGroup},
+		{Method: http.MethodPut, Path: "/admin/v1/product-groups/sort", Handler: h.sortGroups},
+		{Method: http.MethodPut, Path: "/admin/v1/product-groups/:id/hidden", Handler: h.setGroupHidden},
+		{Method: http.MethodPut, Path: "/admin/v1/product-groups/:id", Handler: h.updateGroup},
+		{Method: http.MethodDelete, Path: "/admin/v1/product-groups/:id", Handler: h.deleteGroup},
 	})
 }
 
@@ -97,7 +105,9 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id": product.ID, "name": product.Name, "summary": product.Summary, "description": product.Description,
+		"id": product.ID, "groupId": product.GroupID, "parentGroupId": product.ParentGroupID,
+		"groupName": product.GroupName, "sort": product.Sort,
+		"name": product.Name, "summary": product.Summary, "description": product.Description,
 		"moduleType": product.ModuleType, "price": product.Price, "cycle": cycle, "stock": stock, "config": config,
 		"configMode": configMode, "configOptions": configOptions, "specs": specs,
 		// These identifiers are deliberately exposed to the catalogue client so
@@ -119,7 +129,16 @@ func parseProductPathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 func (h *publicHandler) adminList(w http.ResponseWriter, r *http.Request) {
 	page := positiveInt(r.URL.Query().Get("page"), 1)
 	limit := positiveInt(r.URL.Query().Get("pageSize"), 100)
-	items, total, err := h.products.ListAdminProducts(r.Context(), page, limit)
+	var groupID *int64
+	if raw := strings.TrimSpace(r.URL.Query().Get("groupId")); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "商品分组 ID 无效")
+			return
+		}
+		groupID = &parsed
+	}
+	items, total, err := h.products.ListAdminProducts(r.Context(), page, limit, groupID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "读取商品列表失败")
 		return
@@ -248,7 +267,12 @@ func (h *publicHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "读取产品列表失败")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "pageSize": limit})
+	groups, err := h.products.ListPublicGroups(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取商品分组失败")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "groups": groups, "total": total, "page": page, "pageSize": limit})
 }
 
 func positiveInt(raw string, fallback int) int {

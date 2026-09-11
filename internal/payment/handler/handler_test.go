@@ -22,6 +22,9 @@ func (r *notifyRepository) PrepareOrder(context.Context, int64, int64, string, t
 func (r *notifyRepository) PrepareRecharge(context.Context, int64, int64, string, time.Time) (*rep.Prepared, error) {
 	return nil, errors.New("unused")
 }
+func (r *notifyRepository) PrepareMarketplace(context.Context, int64, int64, string, time.Time) (*rep.Prepared, error) {
+	return nil, errors.New("unused")
+}
 func (r *notifyRepository) FindByOutTradeNo(context.Context, string) (*dom.Payment, error) {
 	return r.payment, nil
 }

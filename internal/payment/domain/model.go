@@ -10,8 +10,9 @@ import (
 type BizType string
 
 const (
-	BizOrder    BizType = "order"
-	BizRecharge BizType = "recharge"
+	BizOrder       BizType = "order"
+	BizRecharge    BizType = "recharge"
+	BizMarketplace BizType = "marketplace"
 )
 
 type Status string
