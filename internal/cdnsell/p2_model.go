@@ -19,7 +19,7 @@ type DomainRecord struct {
 	ID               int64      `json:"id,string"`
 	UserID           int64      `json:"userId,string"`
 	AccountID        int64      `json:"accountId,string"`
-	Username         string     `gorm:"-" json:"username,omitempty"`
+	Username         string     `gorm:"column:username;->" json:"username,omitempty"`
 	Domain           string     `json:"domain"`
 	BusinessType     string     `json:"businessType"`
 	AccelerateRegion string     `json:"accelerateRegion"`
