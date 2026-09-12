@@ -841,6 +841,9 @@ if ((build_required == 1)); then
 else
   info "构建产物已存在；按幂等策略跳过（需要重建请加 --rebuild）"
 fi
+chown -R "$APP_USER:$APP_GROUP" "$FRONTEND_DIR/dist"
+find "$FRONTEND_DIR/dist" -type d -exec chmod 0750 {} +
+find "$FRONTEND_DIR/dist" -type f -exec chmod 0640 {} +
 
 step "9/12" "安装 systemd、更新辅助、备份与磁盘守护"
 rsync -a --exclude package/ "$BACKEND_DIR/deploy/linux/" "$DEPLOY_DIR/"
