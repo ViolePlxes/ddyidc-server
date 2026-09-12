@@ -166,6 +166,10 @@ retry_network() {
   done
 }
 
+apt_get() {
+  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@"
+}
+
 github_api_get() {
   printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github+json"\n' "${DDYIDC_GITHUB_TOKEN:-}" |
     curl --config - -fsSL --retry 4 --retry-all-errors --connect-timeout 15 --max-time 240 "$@"
@@ -274,8 +278,8 @@ ok "Ubuntu ${VERSION_ID} x86_64；根分区可用 $(df -h / | awk 'NR==2 {print 
 
 step "2/12" "安装基础依赖并检查端口"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y ca-certificates curl wget git gpg lsb-release openssl openssh-client gzip xz-utils rsync jq sudo iproute2 procps util-linux logrotate ufw
+apt_get update
+apt_get install -y ca-certificates curl wget git gpg lsb-release openssl openssh-client gzip xz-utils rsync jq sudo iproute2 procps util-linux logrotate ufw
 
 if [[ -n "$RESTORE_FILE" ]]; then
   if [[ "$RESTORE_FILE" == *.gz ]]; then
@@ -379,7 +383,7 @@ info "Node $(node --version)，npm $(npm --version)"
 ok "工具链就绪"
 
 step "4/12" "安装/核验 MySQL 8、Redis 7、Nginx 与 certbot"
-apt-get install -y nginx mysql-server certbot
+apt_get install -y nginx mysql-server certbot
 mysql --version | grep -Eq 'Distrib 8\.0|Ver 8\.0' || die "MySQL 必须为 8.0"
 redis_major=0
 if command -v redis-server >/dev/null 2>&1; then
@@ -398,10 +402,10 @@ Package: redis-server redis-tools
 Pin: version 6:7.*
 Pin-Priority: 1001
 APT_PREF
-  apt-get update
+  apt_get update
   redis_version="$(apt-cache madison redis-server | awk '$3 ~ /^6:7\./ && !found {version=$3; found=1} END {print version}')"
   [[ -n "$redis_version" ]] || die "Redis 官方仓库没有可用的 7.x 版本"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "redis-server=$redis_version" "redis-tools=$redis_version"
+  apt_get install -y --allow-downgrades "redis-server=$redis_version" "redis-tools=$redis_version"
 fi
 redis-server --version | grep -Eq 'v=7\.' || die "Redis 必须为 7.x"
 nginx -v 2>&1 | grep -q 'nginx/' || die "Nginx 安装失败"
