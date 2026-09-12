@@ -117,6 +117,43 @@ func TestDirectoryRollbackRestoresBackup(t *testing.T) {
 	}
 }
 
+func TestNormalizeStaticTreeMakesArtifactsReadable(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "dist")
+	assets := filepath.Join(root, "assets")
+	if err := os.MkdirAll(assets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, "index.html")
+	asset := filepath.Join(assets, "app.js")
+	for _, path := range []string{index, asset} {
+		if err := os.WriteFile(path, []byte("asset"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := normalizeStaticTree(root); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{root, assets} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o755 {
+			t.Fatalf("directory mode for %s = %v, err=%v", path, info.Mode().Perm(), err)
+		}
+	}
+	for _, path := range []string{index, asset} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o644 {
+			t.Fatalf("file mode for %s = %v, err=%v", path, info.Mode().Perm(), err)
+		}
+	}
+}
+
+func TestFrontendInstallUsesCleanLockfile(t *testing.T) {
+	args := strings.Join(frontendInstallArgs(), " ")
+	if args != "ci --no-audit --no-fund" {
+		t.Fatalf("unexpected frontend install args: %s", args)
+	}
+}
+
 func TestRunnerHonorsTimeoutAndSanitizesCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()

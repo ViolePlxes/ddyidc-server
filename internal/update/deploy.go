@@ -149,6 +149,11 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		m.fail(context.Background(), task, logValue, fmt.Errorf("备份前端产物失败: %w", err), "not_required")
 		return
 	}
+	if err = normalizeStaticTree(stage); err != nil {
+		_ = m.files.RemoveAll(stage)
+		m.fail(context.Background(), task, logValue, fmt.Errorf("规范前端备份权限失败: %w", err), "not_required")
+		return
+	}
 	rolledBack := false
 	rollback := func(cause error) {
 		if rolledBack {
@@ -161,6 +166,8 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		}
 		if restoreErr := m.files.ReplaceDirectory(stage, dist); restoreErr != nil {
 			status = "failed: dist " + sanitizeOutput(restoreErr.Error())
+		} else if permissionErr := normalizeStaticTree(dist); permissionErr != nil {
+			status = "failed: dist permissions " + sanitizeOutput(permissionErr.Error())
 		}
 		m.fail(context.Background(), task, logValue, cause, status)
 	}
@@ -170,21 +177,19 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		rollback(fmt.Errorf("拉取前端失败: %w (%s)", pullErr, output))
 		return
 	}
-	dependencyChanged := false
-	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "package.json", "package-lock.json"); diffErr == nil {
-		dependencyChanged = strings.TrimSpace(output) != ""
-	}
-	if dependencyChanged {
-		m.progress(ctx, task, 40, logValue, "依赖清单有变化，执行 npm install")
-		if output, installErr := m.runner.Run(ctx, target.Workspace, m.config.NPMPath, []string{"install", "--no-audit", "--no-fund"}, nil); installErr != nil {
-			rollback(fmt.Errorf("前端依赖安装失败: %w (%s)", installErr, output))
-			return
-		}
+	m.progress(ctx, task, 40, logValue, "执行 npm ci 安装锁定依赖")
+	if output, installErr := m.runner.Run(ctx, target.Workspace, m.config.NPMPath, frontendInstallArgs(), nil); installErr != nil {
+		rollback(fmt.Errorf("前端依赖安装失败: %w (%s)", installErr, output))
+		return
 	}
 	m.progress(ctx, task, 58, logValue, "构建前端新版本")
 	env := []string{"DDYIDC_VERSION=" + info.Remote, "DDYIDC_COMMIT=" + info.RemoteCommit, "DDYIDC_BRANCH=" + target.Branch, "DDYIDC_BUILD_TIME=" + time.Now().UTC().Format(time.RFC3339)}
 	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.NPMPath, []string{"run", "build"}, env); buildErr != nil {
 		rollback(fmt.Errorf("前端构建失败: %w (%s)", buildErr, output))
+		return
+	}
+	if err = normalizeStaticTree(dist); err != nil {
+		rollback(fmt.Errorf("规范前端产物权限失败: %w", err))
 		return
 	}
 	m.progress(ctx, task, 78, logValue, "执行前端版本与页面后置检查")
@@ -211,6 +216,10 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 	}
 	m.progress(ctx, task, 95, logValue, "前端更新后检查通过，旧产物已保留为 dist.old")
 	m.succeed(context.Background(), task, logValue)
+}
+
+func frontendInstallArgs() []string {
+	return []string{"ci", "--no-audit", "--no-fund"}
 }
 
 func (m *Manager) verifyHTTP(ctx context.Context, url, name string) error {

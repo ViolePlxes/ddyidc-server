@@ -75,6 +75,22 @@ func (ops OSFileOps) ReplaceDirectory(source, destination string) error {
 	return os.RemoveAll(source)
 }
 
+func normalizeStaticTree(root string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		mode := os.FileMode(0o644)
+		if entry.IsDir() {
+			mode = 0o755
+		}
+		return os.Chmod(path, mode)
+	})
+}
+
 func (OSFileOps) WriteJSON(path string, value any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
