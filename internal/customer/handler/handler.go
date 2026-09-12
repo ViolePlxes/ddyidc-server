@@ -74,7 +74,6 @@ type salesUser struct {
 func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer) {
 	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks, smsCodes: smsCodes}
 	server.AddRoutes([]rest.Route{
-		{Method: http.MethodGet, Path: "/api/v1/auth/check-account", Handler: h.checkAccount},
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: h.userLogin},
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: h.userLogout},
 		{Method: http.MethodPost, Path: "/api/v1/auth/register", Handler: h.register},
@@ -88,24 +87,6 @@ func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, 
 		{Method: http.MethodPost, Path: "/admin/v1/sales/auth/logout", Handler: h.salesLogout},
 		{Method: http.MethodGet, Path: "/admin/v1/sales/auth/me", Handler: h.salesMe},
 	})
-}
-
-func (h *authHandler) checkAccount(w http.ResponseWriter, r *http.Request) {
-	account := strings.TrimSpace(r.URL.Query().Get("account"))
-	if account == "" {
-		writeError(w, http.StatusBadRequest, "账号不能为空")
-		return
-	}
-	customer, err := h.findAccount(r, account)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		writeError(w, http.StatusInternalServerError, "查询账号失败")
-		return
-	}
-	if customer != nil {
-		writeJSON(w, http.StatusOK, map[string]bool{"available": false})
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"available": true})
 }
 
 func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
