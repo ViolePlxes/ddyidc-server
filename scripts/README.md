@@ -81,6 +81,10 @@ curl -fsSL https://raw.githubusercontent.com/ViolePlxes/ddyidc-server/main/scrip
 
 脚本会在部署前检查 80、443、8080、3306、6379。已有 Nginx/MySQL/Redis/DDYIDC 监听会按幂等部署继续；其他进程会触发失败并打印 `ss` 诊断。先停止或迁移冲突服务，再原命令重跑。
 
+### 为什么显示 Waiting for cache lock？
+
+Ubuntu 云镜像首次开机通常会自动运行 `apt-daily-upgrade`。这是真实的软件包升级任务，不是僵尸锁；不要删除 `/var/lib/dpkg/lock*`，也不要强杀 `apt`、`dpkg` 或 `unattended-upgrade`。安装器会先等待 cloud-init 完成，临时暂停两个 apt 定时器，最多等待当前更新 15 分钟，退出时自动恢复定时器；每次 `apt-get` 也有 15 分钟的锁超时。若超时，安装日志会附带 apt 服务状态与 journal，请先运行 `systemctl status apt-daily-upgrade.service` 和 `journalctl -u apt-daily-upgrade.service -n 100` 排查网络或镜像源，再用原命令重跑。
+
 ### 构建失败怎么办？
 
 先查看 `/var/log/ddyidc-build-backend.log`、`/var/log/ddyidc-build-frontend.log` 和 `/var/log/ddyidc-install.log`。常见原因是 GitHub/npm/Go 模块网络不可达、token 权限不足或内存不足。修复后重跑；脚本只有在两个构建都成功后才切换正式产物。

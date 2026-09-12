@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION="1.0.0"
+readonly INSTALLER_VERSION="1.0.1"
 readonly DEFAULT_BACKEND_DIR="/home/ddyidc/ddyidc-project/server"
 readonly DEFAULT_FRONTEND_DIR="/home/ddyidc/web-react"
 readonly DEFAULT_LOG_FILE="/var/log/ddyidc-install.log"
@@ -20,6 +20,8 @@ readonly NODE_VERSION="20.19.5"
 readonly SERVER_REPOSITORY="https://github.com/ViolePlxes/ddyidc-server.git"
 readonly FRONTEND_REPOSITORY="https://github.com/ViolePlxes/ddyidc-web.git"
 readonly MIN_FREE_GIB=20
+readonly CLOUD_INIT_WAIT_SECONDS=600
+readonly APT_LOCK_WAIT_SECONDS=900
 
 DOMAIN=""
 EMAIL=""
@@ -43,6 +45,8 @@ FRONTEND_STAGE=""
 CLONE_STAGE=""
 SNAPSHOT_WORK=""
 TOOLCHAIN_WORK=""
+APT_DAILY_TIMER_WAS_ACTIVE=0
+APT_UPGRADE_TIMER_WAS_ACTIVE=0
 
 usage() {
   cat <<'USAGE'
@@ -167,7 +171,84 @@ retry_network() {
 }
 
 apt_get() {
-  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 "$@"
+  DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout="$APT_LOCK_WAIT_SECONDS" "$@"
+}
+
+cloud_init_is_running() {
+  command -v cloud-init >/dev/null 2>&1 || return 1
+  local status
+  status="$(cloud-init status 2>/dev/null || true)"
+  grep -Eq 'status:[[:space:]]*running' <<<"$status"
+}
+
+apt_unit_is_busy() {
+  local unit state
+  for unit in apt-daily.service apt-daily-upgrade.service; do
+    state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+    case "$state" in
+      active|activating|deactivating) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+apt_lock_is_held() {
+  local locks=(
+    /var/lib/dpkg/lock-frontend
+    /var/lib/dpkg/lock
+    /var/lib/apt/lists/lock
+    /var/cache/apt/archives/lock
+  )
+  if command -v fuser >/dev/null 2>&1; then
+    fuser "${locks[@]}" >/dev/null 2>&1
+    return
+  fi
+  if command -v lslocks >/dev/null 2>&1; then
+    lslocks --noheadings --output PATH 2>/dev/null |
+      grep -Fxf <(printf '%s\n' "${locks[@]}") >/dev/null
+    return
+  fi
+  return 1
+}
+
+restore_apt_timers() {
+  if ((APT_DAILY_TIMER_WAS_ACTIVE == 1)); then
+    systemctl start apt-daily.timer >/dev/null 2>&1 || true
+    APT_DAILY_TIMER_WAS_ACTIVE=0
+  fi
+  if ((APT_UPGRADE_TIMER_WAS_ACTIVE == 1)); then
+    systemctl start apt-daily-upgrade.timer >/dev/null 2>&1 || true
+    APT_UPGRADE_TIMER_WAS_ACTIVE=0
+  fi
+}
+
+prepare_package_manager() {
+  local started_at=$SECONDS last_notice=-30 elapsed
+
+  if cloud_init_is_running; then
+    info "cloud-init 仍在完成首次启动配置，最多等待 $((CLOUD_INIT_WAIT_SECONDS / 60)) 分钟"
+    while cloud_init_is_running; do
+      elapsed=$((SECONDS - started_at))
+      ((elapsed < CLOUD_INIT_WAIT_SECONDS)) || die "cloud-init 等待超时；请先检查 cloud-init status --long 与 /var/log/cloud-init-output.log"
+      sleep 5
+    done
+  fi
+
+  systemctl is-active --quiet apt-daily.timer 2>/dev/null && APT_DAILY_TIMER_WAS_ACTIVE=1 || true
+  systemctl is-active --quiet apt-daily-upgrade.timer 2>/dev/null && APT_UPGRADE_TIMER_WAS_ACTIVE=1 || true
+  systemctl stop apt-daily.timer apt-daily-upgrade.timer >/dev/null 2>&1 || true
+
+  started_at=$SECONDS
+  while apt_unit_is_busy || apt_lock_is_held; do
+    elapsed=$((SECONDS - started_at))
+    ((elapsed < APT_LOCK_WAIT_SECONDS)) || die "系统自动更新占用 apt/dpkg 超过 $((APT_LOCK_WAIT_SECONDS / 60)) 分钟；不要删除 lock 文件或强杀 dpkg，请根据下方 apt 诊断处理后重跑"
+    if ((elapsed - last_notice >= 30)); then
+      info "Ubuntu 首次启动更新正在占用 apt/dpkg，安全等待其完成（已等待 ${elapsed} 秒，最长 $((APT_LOCK_WAIT_SECONDS / 60)) 分钟）"
+      last_notice=$elapsed
+    fi
+    sleep 5
+  done
+  ok "系统包管理器空闲；安装期间已临时暂停 apt 定时器（退出时自动恢复）"
 }
 
 github_api_get() {
@@ -211,6 +292,7 @@ cleanup() {
   if [[ -n "$TOOLCHAIN_WORK" && "$TOOLCHAIN_WORK" == /var/tmp/ddyidc-toolchain.* && -d "$TOOLCHAIN_WORK" ]]; then
     rm -rf -- "$TOOLCHAIN_WORK"
   fi
+  restore_apt_timers
 }
 
 diagnostics() {
@@ -234,6 +316,13 @@ diagnostics() {
   for build_log in /var/log/ddyidc-build-backend.log /var/log/ddyidc-build-frontend.log; do
     [[ -f "$build_log" ]] && { printf '%s\n' "--- $build_log ---"; tail -n 80 "$build_log"; }
   done
+  printf '%s\n' '--- apt / dpkg ---'
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock 2>&1 || true
+  fi
+  systemctl --no-pager --full status apt-daily.service apt-daily-upgrade.service 2>/dev/null | tail -n 50 || true
+  journalctl --no-pager -u apt-daily-upgrade.service -n 40 2>/dev/null || true
+  dpkg --audit 2>/dev/null || true
   printf '%s\n' '修复建议：确认 DNS 已指向本机、GitHub token 具备两个仓库读取权限、80/443 未被其他 Web 服务占用，并检查网络源/内存；修复后原命令重跑即可。'
   printf '完整安装日志：%s\n' "$LOG_FILE"
 }
@@ -275,6 +364,7 @@ available_kib="$(df -Pk / | awk 'NR==2 {print $4}')"
 required_kib=$((MIN_FREE_GIB * 1024 * 1024))
 ((available_kib >= required_kib)) || die "根分区可用空间不足 ${MIN_FREE_GIB} GiB"
 ok "Ubuntu ${VERSION_ID} x86_64；根分区可用 $(df -h / | awk 'NR==2 {print $4}')"
+prepare_package_manager
 
 step "2/12" "安装基础依赖并检查端口"
 export DEBIAN_FRONTEND=noninteractive
