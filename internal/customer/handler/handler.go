@@ -16,7 +16,6 @@ import (
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/db"
 	"github.com/zeromicro/go-zero/rest"
-	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -114,7 +113,7 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	customer, err := h.findAccount(r, account)
-	if err == nil && customer != nil && customer.Status == 1 && bcrypt.CompareHashAndPassword([]byte(customer.PasswordHash), []byte(input.Password)) == nil {
+	if err == nil && customer != nil && customer.Status == 1 && auth.PasswordMatches(customer.PasswordHash, input.Password) {
 		_ = h.jwt.ClearLoginFailures(r.Context(), rateKey)
 		h.writeCustomerLogin(w, r, customer)
 		return
@@ -149,7 +148,7 @@ func (h *authHandler) adminLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "查询账号失败")
 		return
 	}
-	if admin == nil || admin.Status != 1 || bcrypt.CompareHashAndPassword([]byte(admin.PasswordHash), []byte(password)) != nil {
+	if admin == nil || admin.Status != 1 || !auth.PasswordMatches(admin.PasswordHash, password) {
 		h.rejectLogin(w, r, rateKey)
 		return
 	}
@@ -178,7 +177,7 @@ func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "查询账号失败")
 		return
 	}
-	if sales == nil || sales.Status != 1 || bcrypt.CompareHashAndPassword([]byte(sales.PasswordHash), []byte(password)) != nil {
+	if sales == nil || sales.Status != 1 || !auth.PasswordMatches(sales.PasswordHash, password) {
 		h.rejectLogin(w, r, rateKey)
 		return
 	}
@@ -396,13 +395,13 @@ func (h *authHandler) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "查询手机号失败")
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	hash, err := auth.HashPassword(input.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "密码加密失败")
 		return
 	}
 	customer := &domain.Customer{
-		TenantID: 0, Username: account, PasswordHash: string(hash), Status: 1, Level: 1,
+		TenantID: 0, Username: account, PasswordHash: hash, Status: 1, Level: 1,
 	}
 	if strings.Contains(account, "@") {
 		email := account

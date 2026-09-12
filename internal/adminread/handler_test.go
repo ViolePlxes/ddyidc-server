@@ -50,3 +50,50 @@ func TestMaskPII(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeCustomerInput(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     createCustomerInput
+		wantPhone string
+		wantEmail string
+		wantError string
+	}{
+		{
+			name:      "mainland mobile",
+			input:     createCustomerInput{Name: "测试用户", CountryCode: "+86", Mobile: "13800138000", Password: "fixture-secret-9"},
+			wantPhone: "13800138000",
+		},
+		{
+			name:      "international mobile",
+			input:     createCustomerInput{Name: "Example Inc", CountryCode: "+1", Mobile: "2025550198", Password: "fixture-secret-9"},
+			wantPhone: "+12025550198",
+		},
+		{
+			name:      "email normalized",
+			input:     createCustomerInput{Name: "邮箱用户", Email: "USER@Example.com", Password: "fixture-secret-9"},
+			wantEmail: "user@example.com",
+		},
+		{
+			name:      "contact required",
+			input:     createCustomerInput{Name: "无联系方式", Password: "fixture-secret-9"},
+			wantError: "手机号与邮箱至少填写一项",
+		},
+		{
+			name:      "mainland mobile format",
+			input:     createCustomerInput{Name: "错误手机号", CountryCode: "+86", Mobile: "123", Password: "fixture-secret-9"},
+			wantError: "请输入正确的 11 位中国大陆手机号",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, message := normalizeCustomerInput(test.input)
+			if message != test.wantError {
+				t.Fatalf("message=%q want=%q", message, test.wantError)
+			}
+			if got.Phone != test.wantPhone || got.Email != test.wantEmail {
+				t.Fatalf("phone=%q email=%q", got.Phone, got.Email)
+			}
+		})
+	}
+}
