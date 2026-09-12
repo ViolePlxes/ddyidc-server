@@ -164,10 +164,8 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		if resetErr := m.resetWorktree(context.Background(), target, task.BeforeCommit); resetErr != nil {
 			status = "failed: git " + sanitizeOutput(resetErr.Error())
 		}
-		if restoreErr := m.files.ReplaceDirectory(stage, dist); restoreErr != nil {
+		if restoreErr := replaceStaticDirectory(m.files, stage, dist); restoreErr != nil {
 			status = "failed: dist " + sanitizeOutput(restoreErr.Error())
-		} else if permissionErr := normalizeStaticTree(dist); permissionErr != nil {
-			status = "failed: dist permissions " + sanitizeOutput(permissionErr.Error())
 		}
 		m.fail(context.Background(), task, logValue, cause, status)
 	}
@@ -210,7 +208,7 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		return
 	}
 	_ = m.files.RemoveAll(backup)
-	if err = m.files.ReplaceDirectory(stage, backup); err != nil {
+	if err = replaceStaticDirectory(m.files, stage, backup); err != nil {
 		rollback(fmt.Errorf("保留 dist.old 失败: %w", err))
 		return
 	}
@@ -220,6 +218,13 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 
 func frontendInstallArgs() []string {
 	return []string{"ci", "--no-audit", "--no-fund"}
+}
+
+func replaceStaticDirectory(files FileOps, source, destination string) error {
+	if err := files.ReplaceDirectory(source, destination); err != nil {
+		return err
+	}
+	return normalizeStaticTree(destination)
 }
 
 func (m *Manager) verifyHTTP(ctx context.Context, url, name string) error {

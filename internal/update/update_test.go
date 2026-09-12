@@ -147,6 +147,33 @@ func TestNormalizeStaticTreeMakesArtifactsReadable(t *testing.T) {
 	}
 }
 
+func TestReplaceStaticDirectoryNormalizesPublishedTree(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "stage")
+	destination := filepath.Join(root, "dist.old")
+	assets := filepath.Join(stage, "assets")
+	if err := os.MkdirAll(assets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	asset := filepath.Join(assets, "app.js")
+	if err := os.WriteFile(asset, []byte("asset"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceStaticDirectory(OSFileOps{}, stage, destination); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{destination, filepath.Join(destination, "assets")} {
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o755 {
+			t.Fatalf("directory mode for %s = %v, err=%v", path, info.Mode().Perm(), err)
+		}
+	}
+	info, err := os.Stat(filepath.Join(destination, "assets", "app.js"))
+	if err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatalf("file mode = %v, err=%v", info.Mode().Perm(), err)
+	}
+}
+
 func TestFrontendInstallUsesCleanLockfile(t *testing.T) {
 	args := strings.Join(frontendInstallArgs(), " ")
 	if args != "ci --no-audit --no-fund" {
