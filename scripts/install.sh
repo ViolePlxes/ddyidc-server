@@ -40,6 +40,7 @@ GIT_ASKPASS_FILE=""
 BACKEND_STAGE=""
 HELPER_STAGE=""
 FRONTEND_STAGE=""
+CLONE_STAGE=""
 
 usage() {
   cat <<'USAGE'
@@ -150,6 +151,19 @@ info() { printf '%s[信息]%s %s\n' "$COLOR_BLUE" "$COLOR_RESET" "$*"; }
 ok() { printf '%s[成功]%s %s\n' "$COLOR_GREEN" "$COLOR_RESET" "$*"; }
 warn() { printf '%s[警告]%s %s\n' "$COLOR_YELLOW" "$COLOR_RESET" "$*"; }
 
+retry_network() {
+  local attempt=1 max_attempts=4 delay=2
+  while ! "$@"; do
+    if ((attempt >= max_attempts)); then
+      return 1
+    fi
+    warn "网络操作失败；${delay} 秒后重试（$attempt/$max_attempts）" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 step() {
   CURRENT_STEP="$1"
   printf '\n%s[%s]%s %s\n' "$COLOR_BLUE" "$CURRENT_STEP" "$COLOR_RESET" "$2"
@@ -169,6 +183,9 @@ cleanup() {
   fi
   if [[ -n "$FRONTEND_STAGE" && "$FRONTEND_STAGE" == "$(dirname "$FRONTEND_DIR")/.ddyidc-dist-new."* && -d "$FRONTEND_STAGE" ]]; then
     rm -rf -- "$FRONTEND_STAGE"
+  fi
+  if [[ -n "$CLONE_STAGE" && ("$CLONE_STAGE" == "$BACKEND_DIR.clone."* || "$CLONE_STAGE" == "$FRONTEND_DIR.clone."*) && -d "$CLONE_STAGE" ]]; then
+    rm -rf -- "$CLONE_STAGE"
   fi
 }
 
@@ -280,7 +297,7 @@ chmod 0755 "$GIT_ASKPASS_FILE"
 export GIT_ASKPASS="$GIT_ASKPASS_FILE" GIT_TERMINAL_PROMPT=0 DDYIDC_GITHUB_TOKEN="$GIT_TOKEN"
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
 for repository in "$SERVER_REPOSITORY" "$FRONTEND_REPOSITORY"; do
-  git ls-remote --exit-code "$repository" "refs/heads/$BRANCH" >/dev/null || die "无法读取 $repository 的 $BRANCH 分支；请检查 token 权限或网络"
+  retry_network git -c http.version=HTTP/1.1 ls-remote --exit-code "$repository" "refs/heads/$BRANCH" >/dev/null || die "无法读取 $repository 的 $BRANCH 分支；请检查 token 权限或网络"
 done
 unset DDYIDC_GITHUB_TOKEN GIT_ASKPASS GIT_TERMINAL_PROMPT GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 rm -f -- "$GIT_ASKPASS_FILE"
@@ -411,7 +428,7 @@ clone_or_keep() {
     info "保留已有 Git 工作区：$directory"
     if ((UPDATE_CODE == 1)); then
       [[ -z "$(runuser -u "$APP_USER" -- git -C "$directory" status --porcelain)" ]] || die "$directory 有未提交修改，拒绝自动更新"
-      runuser -u "$APP_USER" -- git -C "$directory" fetch origin "$BRANCH"
+      retry_network runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 -C "$directory" fetch origin "$BRANCH" || die "$directory 更新拉取失败"
       runuser -u "$APP_USER" -- git -C "$directory" merge --ff-only FETCH_HEAD
     fi
     return
@@ -419,7 +436,22 @@ clone_or_keep() {
   if [[ -e "$directory" ]] && [[ -n "$(find "$directory" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
     die "目标目录非空且不是预期 Git 仓库：$directory"
   fi
-  runuser -u "$APP_USER" -- git clone --branch "$BRANCH" --single-branch "$repository" "$directory"
+  local attempt=1 delay=2
+  CLONE_STAGE="${directory}.clone.$$"
+  rm -rf -- "$CLONE_STAGE"
+  rmdir -- "$directory" 2>/dev/null || true
+  while ! runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 clone --branch "$BRANCH" --single-branch "$repository" "$CLONE_STAGE"; do
+    rm -rf -- "$CLONE_STAGE"
+    if ((attempt >= 4)); then
+      die "$repository 克隆失败"
+    fi
+    warn "仓库克隆失败；${delay} 秒后重试（$attempt/4）"
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+  mv -- "$CLONE_STAGE" "$directory"
+  CLONE_STAGE=""
 }
 
 setup_git_auth
