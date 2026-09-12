@@ -326,6 +326,9 @@ func (h *authHandler) findAccount(r *http.Request, account string) (*domain.Cust
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
+	if validMainlandMobile(account) {
+		return h.customers.FindByPhone(r.Context(), account)
+	}
 	if strings.Contains(account, "@") {
 		return h.customers.FindByEmail(r.Context(), account)
 	}
