@@ -42,6 +42,7 @@ HELPER_STAGE=""
 FRONTEND_STAGE=""
 CLONE_STAGE=""
 SNAPSHOT_WORK=""
+TOOLCHAIN_WORK=""
 
 usage() {
   cat <<'USAGE'
@@ -203,6 +204,9 @@ cleanup() {
   if [[ -n "$SNAPSHOT_WORK" && "$SNAPSHOT_WORK" == /var/tmp/ddyidc-snapshot.* && -d "$SNAPSHOT_WORK" ]]; then
     rm -rf -- "$SNAPSHOT_WORK"
   fi
+  if [[ -n "$TOOLCHAIN_WORK" && "$TOOLCHAIN_WORK" == /var/tmp/ddyidc-toolchain.* && -d "$TOOLCHAIN_WORK" ]]; then
+    rm -rf -- "$TOOLCHAIN_WORK"
+  fi
 }
 
 diagnostics() {
@@ -316,11 +320,13 @@ ensure_go() {
     installed="$(go version | awk '{print $3}' | sed 's/^go//')"
   fi
   if [[ "$installed" != 1.22.* ]]; then
-    local work_dir archive old_dir
-    work_dir="$(mktemp -d)"
+    local work_dir archive old_dir base_url
+    TOOLCHAIN_WORK="$(mktemp -d /var/tmp/ddyidc-toolchain.XXXXXX)"
+    work_dir="$TOOLCHAIN_WORK"
     archive="go${GO_VERSION}.linux-amd64.tar.gz"
-    curl -fsSLo "$work_dir/$archive" "https://go.dev/dl/$archive"
-    curl -fsSLo "$work_dir/$archive.sha256" "https://go.dev/dl/$archive.sha256"
+    base_url="https://dl.google.com/go"
+    retry_network curl -fsSL --connect-timeout 15 --max-time 900 -o "$work_dir/$archive" "$base_url/$archive"
+    retry_network curl -fsSL --connect-timeout 15 --max-time 60 -o "$work_dir/$archive.sha256" "$base_url/$archive.sha256"
     printf '%s  %s\n' "$(<"$work_dir/$archive.sha256")" "$work_dir/$archive" | sha256sum -c -
     if [[ -d /usr/local/go ]]; then
       old_dir="/usr/local/go.previous.$(date +%Y%m%d%H%M%S)"
@@ -329,6 +335,7 @@ ensure_go() {
     fi
     tar -C /usr/local -xzf "$work_dir/$archive"
     rm -rf -- "$work_dir"
+    TOOLCHAIN_WORK=""
   elif [[ "$(command -v go)" != "/usr/local/go/bin/go" && ! -x /usr/local/go/bin/go ]]; then
     ln -sfn "$(command -v go)" /usr/local/bin/go
   fi
@@ -344,14 +351,16 @@ ensure_node() {
   if [[ "$node_major" != "20" ]] || ! command -v npm >/dev/null 2>&1; then
     node_root="/opt/node-v${NODE_VERSION}-linux-x64"
     if [[ ! -x "$node_root/bin/node" ]]; then
-      work_dir="$(mktemp -d)"
+      TOOLCHAIN_WORK="$(mktemp -d /var/tmp/ddyidc-toolchain.XXXXXX)"
+      work_dir="$TOOLCHAIN_WORK"
       archive="node-v${NODE_VERSION}-linux-x64.tar.xz"
       base_url="https://nodejs.org/dist/v${NODE_VERSION}"
-      curl -fsSLo "$work_dir/$archive" "$base_url/$archive"
-      curl -fsSLo "$work_dir/SHASUMS256.txt" "$base_url/SHASUMS256.txt"
+      retry_network curl -fsSL --connect-timeout 15 --max-time 900 -o "$work_dir/$archive" "$base_url/$archive"
+      retry_network curl -fsSL --connect-timeout 15 --max-time 60 -o "$work_dir/SHASUMS256.txt" "$base_url/SHASUMS256.txt"
       (cd "$work_dir" && grep "  ${archive}$" SHASUMS256.txt | sha256sum -c -)
       tar -C /opt -xJf "$work_dir/$archive"
       rm -rf -- "$work_dir"
+      TOOLCHAIN_WORK=""
     fi
     ln -sfn "$node_root/bin/node" /usr/local/bin/node
     ln -sfn "$node_root/lib/node_modules/npm/bin/npm-cli.js" /usr/local/bin/npm
