@@ -467,6 +467,35 @@ snapshot_clone() {
   SNAPSHOT_WORK=""
 }
 
+snapshot_update() {
+  local repository="$1" directory="$2" slug="$3" commit archive stage
+  commit="$(github_branch_sha "$slug")" || return 1
+  stage="$(mktemp -d /var/tmp/ddyidc-update.XXXXXX)"
+  archive="$stage/source.tar.gz"
+  github_api_get -o "$archive" "https://api.github.com/repos/$slug/tarball/$commit" || {
+    rm -rf -- "$stage"
+    return 1
+  }
+  install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$stage/source"
+  tar -xzf "$archive" -C "$stage/source" --strip-components=1
+  rsync -a --delete \
+    --exclude='.git/' \
+    --exclude='etc/config.yaml' \
+    --exclude='bin/' \
+    --exclude='dist/' \
+    --exclude='node_modules/' \
+    "$stage/source/" "$directory/"
+  chown -R "$APP_USER:$APP_GROUP" "$directory"
+  runuser -u "$APP_USER" -- git -C "$directory" add -A
+  if ! runuser -u "$APP_USER" -- git -C "$directory" diff --cached --quiet; then
+    runuser -u "$APP_USER" -- git -C "$directory" commit -q -m "GitHub snapshot $commit"
+  fi
+  printf '%s\n' "$commit" >"$directory/.git/ddyidc-upstream-commit"
+  chown "$APP_USER:$APP_GROUP" "$directory/.git/ddyidc-upstream-commit"
+  rm -rf -- "$stage"
+  info "$slug 已通过 GitHub 官方源码快照更新"
+}
+
 verify_repository() {
   local directory="$1" slug="$2" remote
   [[ -d "$directory/.git" ]] || return 1
@@ -480,8 +509,13 @@ clone_or_keep() {
     info "保留已有 Git 工作区：$directory"
     if ((UPDATE_CODE == 1)); then
       [[ -z "$(runuser -u "$APP_USER" -- git -C "$directory" status --porcelain)" ]] || die "$directory 有未提交修改，拒绝自动更新"
-      retry_network runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 -C "$directory" fetch origin "$BRANCH" || die "$directory 更新拉取失败"
-      runuser -u "$APP_USER" -- git -C "$directory" merge --ff-only FETCH_HEAD
+      if timeout --signal=TERM --kill-after=5 35s runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 -C "$directory" fetch origin "$BRANCH"; then
+        runuser -u "$APP_USER" -- git -C "$directory" merge --ff-only FETCH_HEAD
+        rm -f -- "$directory/.git/ddyidc-upstream-commit"
+      else
+        warn "Git Smart HTTP 更新不可用，改用 GitHub 官方源码快照"
+        snapshot_update "$repository" "$directory" "$slug" || die "$directory 源码快照更新失败"
+      fi
     fi
     return
   fi
