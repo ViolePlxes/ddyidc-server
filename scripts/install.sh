@@ -41,6 +41,7 @@ BACKEND_STAGE=""
 HELPER_STAGE=""
 FRONTEND_STAGE=""
 CLONE_STAGE=""
+SNAPSHOT_WORK=""
 
 usage() {
   cat <<'USAGE'
@@ -164,6 +165,18 @@ retry_network() {
   done
 }
 
+github_api_get() {
+  printf 'header = "Authorization: Bearer %s"\nheader = "Accept: application/vnd.github+json"\n' "${DDYIDC_GITHUB_TOKEN:-}" |
+    curl --config - -fsSL --retry 4 --retry-all-errors --connect-timeout 15 --max-time 240 "$@"
+}
+
+github_branch_sha() {
+  local slug="$1" sha
+  sha="$(github_api_get "https://api.github.com/repos/$slug/commits/$BRANCH" | jq -r '.sha // empty')" || return 1
+  [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || return 1
+  printf '%s\n' "$sha"
+}
+
 step() {
   CURRENT_STEP="$1"
   printf '\n%s[%s]%s %s\n' "$COLOR_BLUE" "$CURRENT_STEP" "$COLOR_RESET" "$2"
@@ -186,6 +199,9 @@ cleanup() {
   fi
   if [[ -n "$CLONE_STAGE" && ("$CLONE_STAGE" == "$BACKEND_DIR.clone."* || "$CLONE_STAGE" == "$FRONTEND_DIR.clone."*) && -d "$CLONE_STAGE" ]]; then
     rm -rf -- "$CLONE_STAGE"
+  fi
+  if [[ -n "$SNAPSHOT_WORK" && "$SNAPSHOT_WORK" == /var/tmp/ddyidc-snapshot.* && -d "$SNAPSHOT_WORK" ]]; then
+    rm -rf -- "$SNAPSHOT_WORK"
   fi
 }
 
@@ -284,24 +300,12 @@ port_check 8080 'ddyidc-server'
 port_check 3306 'mysqld'
 port_check 6379 'redis-server'
 
-install -d -m 0755 -o root -g root /usr/local/libexec
-GIT_ASKPASS_FILE="/usr/local/libexec/ddyidc-git-askpass.$$"
-cat >"$GIT_ASKPASS_FILE" <<'ASKPASS'
-#!/usr/bin/env bash
-case "${1:-}" in
-  *Username*) printf '%s\n' 'x-access-token' ;;
-  *) printf '%s\n' "${DDYIDC_GITHUB_TOKEN:-}" ;;
-esac
-ASKPASS
-chmod 0755 "$GIT_ASKPASS_FILE"
-export GIT_ASKPASS="$GIT_ASKPASS_FILE" GIT_TERMINAL_PROMPT=0 DDYIDC_GITHUB_TOKEN="$GIT_TOKEN"
-export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=
-for repository in "$SERVER_REPOSITORY" "$FRONTEND_REPOSITORY"; do
-  retry_network git -c http.version=HTTP/1.1 ls-remote --exit-code "$repository" "refs/heads/$BRANCH" >/dev/null || die "无法读取 $repository 的 $BRANCH 分支；请检查 token 权限或网络"
+export DDYIDC_GITHUB_TOKEN="$GIT_TOKEN"
+for slug in ViolePlxes/ddyidc-server ViolePlxes/ddyidc-web; do
+  repository_sha="$(github_branch_sha "$slug")" || die "无法通过 GitHub API 读取 $slug 的 $BRANCH 分支；请检查 token 权限或网络"
+  info "$slug 权限预检通过（${repository_sha:0:12}）"
 done
-unset DDYIDC_GITHUB_TOKEN GIT_ASKPASS GIT_TERMINAL_PROMPT GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
-rm -f -- "$GIT_ASKPASS_FILE"
-GIT_ASKPASS_FILE=""
+unset DDYIDC_GITHUB_TOKEN
 ok "GitHub 仓库权限预检通过"
 ok "基础依赖与端口预检完成"
 
@@ -397,6 +401,7 @@ install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$BIN_DIR" "$UPDATE_RESULT_DIR
 install -d -m 0755 -o root -g root "$DEPLOY_DIR"
 
 setup_git_auth() {
+  install -d -m 0755 -o root -g root /usr/local/libexec
   GIT_ASKPASS_FILE="/usr/local/libexec/ddyidc-git-askpass.$$"
   cat >"$GIT_ASKPASS_FILE" <<'ASKPASS'
 #!/usr/bin/env bash
@@ -413,6 +418,27 @@ ASKPASS
   export GIT_CONFIG_COUNT=1
   export GIT_CONFIG_KEY_0=credential.helper
   export GIT_CONFIG_VALUE_0=
+}
+
+snapshot_clone() {
+  local repository="$1" slug="$2" commit archive
+  commit="$(github_branch_sha "$slug")" || return 1
+  SNAPSHOT_WORK="$(mktemp -d /var/tmp/ddyidc-snapshot.XXXXXX)"
+  archive="$SNAPSHOT_WORK/source.tar.gz"
+  github_api_get -o "$archive" "https://api.github.com/repos/$slug/tarball/$commit" || return 1
+  install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$CLONE_STAGE"
+  tar -xzf "$archive" -C "$CLONE_STAGE" --strip-components=1
+  chown -R "$APP_USER:$APP_GROUP" "$CLONE_STAGE"
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" init -q -b "$BRANCH"
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" config user.name 'DDYIDC Installer'
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" config user.email 'installer@localhost'
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" add -A
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" commit -q -m "GitHub snapshot $commit"
+  runuser -u "$APP_USER" -- git -C "$CLONE_STAGE" remote add origin "$repository"
+  printf '%s\n' "$commit" >"$CLONE_STAGE/.git/ddyidc-upstream-commit"
+  chown "$APP_USER:$APP_GROUP" "$CLONE_STAGE/.git/ddyidc-upstream-commit"
+  rm -rf -- "$SNAPSHOT_WORK"
+  SNAPSHOT_WORK=""
 }
 
 verify_repository() {
@@ -440,12 +466,14 @@ clone_or_keep() {
   CLONE_STAGE="${directory}.clone.$$"
   rm -rf -- "$CLONE_STAGE"
   rmdir -- "$directory" 2>/dev/null || true
-  while ! runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 clone --branch "$BRANCH" --single-branch "$repository" "$CLONE_STAGE"; do
+  while ! timeout --signal=TERM --kill-after=5 35s runuser -u "$APP_USER" -- git -c http.version=HTTP/1.1 clone --branch "$BRANCH" --single-branch "$repository" "$CLONE_STAGE"; do
     rm -rf -- "$CLONE_STAGE"
-    if ((attempt >= 4)); then
-      die "$repository 克隆失败"
+    if ((attempt >= 2)); then
+      warn "Git Smart HTTP 不可用，改用 GitHub 官方源码快照"
+      snapshot_clone "$repository" "$slug" || die "$repository 源码快照下载失败"
+      break
     fi
-    warn "仓库克隆失败；${delay} 秒后重试（$attempt/4）"
+    warn "仓库克隆失败；${delay} 秒后重试（$attempt/2）"
     sleep "$delay"
     attempt=$((attempt + 1))
     delay=$((delay * 2))
@@ -462,8 +490,18 @@ unset GITHUB_TOKEN DDYIDC_GITHUB_TOKEN GIT_ASKPASS GIT_TERMINAL_PROMPT GIT_CONFI
 rm -f -- "$GIT_ASKPASS_FILE"
 GIT_ASKPASS_FILE=""
 chown -R "$APP_USER:$APP_GROUP" "$BACKEND_DIR" "$FRONTEND_DIR"
-server_commit="$(runuser -u "$APP_USER" -- git -C "$BACKEND_DIR" rev-parse HEAD)"
-frontend_commit="$(runuser -u "$APP_USER" -- git -C "$FRONTEND_DIR" rev-parse HEAD)"
+repository_commit() {
+  local directory="$1" marker="$1/.git/ddyidc-upstream-commit" commit
+  if [[ -s "$marker" ]]; then
+    commit="$(tr -d '\r\n' <"$marker")"
+    [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || die "$marker 内容无效"
+    printf '%s\n' "$commit"
+  else
+    runuser -u "$APP_USER" -- git -C "$directory" rev-parse HEAD
+  fi
+}
+server_commit="$(repository_commit "$BACKEND_DIR")"
+frontend_commit="$(repository_commit "$FRONTEND_DIR")"
 ok "后端 ${server_commit:0:12}；前端 ${frontend_commit:0:12}"
 
 if ((GENERATE_DEPLOY_KEY == 1)); then
