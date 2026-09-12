@@ -386,12 +386,22 @@ if command -v redis-server >/dev/null 2>&1; then
   redis_major="$(redis-server --version | sed -n 's/.*v=\([0-9][0-9]*\).*/\1/p')"
   redis_major="${redis_major:-0}"
 fi
-if ((redis_major < 7)); then
-  curl -fsSL https://packages.redis.io/gpg | gpg --dearmor --yes -o /usr/share/keyrings/redis-archive-keyring.gpg
+if ((redis_major != 7)); then
+  redis_key="$(mktemp)"
+  retry_network curl -fsSL --connect-timeout 15 --max-time 60 -o "$redis_key" https://packages.redis.io/gpg
+  gpg --dearmor --yes -o /usr/share/keyrings/redis-archive-keyring.gpg "$redis_key"
+  rm -f -- "$redis_key"
   chmod 0644 /usr/share/keyrings/redis-archive-keyring.gpg
   printf 'deb [signed-by=/usr/share/keyrings/redis-archive-keyring.gpg] https://packages.redis.io/deb %s main\n' "$(lsb_release -cs)" >/etc/apt/sources.list.d/redis.list
+  cat >/etc/apt/preferences.d/ddyidc-redis <<'APT_PREF'
+Package: redis-server redis-tools
+Pin: version 6:7.*
+Pin-Priority: 1001
+APT_PREF
   apt-get update
-  apt-get install -y redis-server
+  redis_version="$(apt-cache madison redis-server | awk '$3 ~ /^6:7\./ {print $3; exit}')"
+  [[ -n "$redis_version" ]] || die "Redis 官方仓库没有可用的 7.x 版本"
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "redis-server=$redis_version" "redis-tools=$redis_version"
 fi
 redis-server --version | grep -Eq 'v=7\.' || die "Redis 必须为 7.x"
 nginx -v 2>&1 | grep -q 'nginx/' || die "Nginx 安装失败"
