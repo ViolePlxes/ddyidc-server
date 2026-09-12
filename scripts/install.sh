@@ -586,6 +586,8 @@ MYSQL_CONFIG
 else
   info "保留已有 MySQL DDYIDC 配置"
 fi
+chown root:root /etc/mysql/mysql.conf.d/99-ddyidc.cnf
+chmod 0644 /etc/mysql/mysql.conf.d/99-ddyidc.cnf
 systemctl enable --now mysql
 systemctl restart mysql
 mysql --protocol=socket --user=root -e 'SELECT 1' >/dev/null || die "MySQL root 本地 socket 认证不可用"
@@ -624,7 +626,7 @@ rm -f -- "$user_sql"
 
 if [[ ! -f /etc/redis/ddyidc.conf ]]; then
   cat >/etc/redis/ddyidc.conf <<REDIS_CONFIG
-bind 127.0.0.1 ::1
+bind 127.0.0.1 -::1
 protected-mode yes
 port 6379
 maxmemory 512mb
@@ -641,6 +643,15 @@ REDIS_CONFIG
 else
   info "保留已有 Redis DDYIDC 配置"
 fi
+if grep -Fqx 'bind 127.0.0.1 ::1' /etc/redis/ddyidc.conf; then
+  sed -i 's/^bind 127\.0\.0\.1 ::1$/bind 127.0.0.1 -::1/' /etc/redis/ddyidc.conf
+  info "已迁移 Redis IPv6 可选绑定写法"
+fi
+chown root:redis /etc/redis/ddyidc.conf
+chmod 0640 /etc/redis/ddyidc.conf
+printf 'vm.overcommit_memory=1\n' >/etc/sysctl.d/99-ddyidc-redis.conf
+chmod 0644 /etc/sysctl.d/99-ddyidc-redis.conf
+sysctl -q -w vm.overcommit_memory=1
 grep -Fqx 'include /etc/redis/ddyidc.conf' /etc/redis/redis.conf || printf '\ninclude /etc/redis/ddyidc.conf\n' >>/etc/redis/redis.conf
 systemctl enable --now redis-server
 systemctl restart redis-server
