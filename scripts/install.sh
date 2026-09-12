@@ -506,6 +506,12 @@ verify_repository() {
 clone_or_keep() {
   local repository="$1" directory="$2" slug="$3"
   if verify_repository "$directory" "$slug"; then
+    if [[ "$directory" == "$FRONTEND_DIR" ]]; then
+      install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$directory/.git/info"
+      touch "$directory/.git/info/exclude"
+      grep -Fqx '/dist.previous.*/' "$directory/.git/info/exclude" || printf '/dist.previous.*/\n' >>"$directory/.git/info/exclude"
+      chown "$APP_USER:$APP_GROUP" "$directory/.git/info/exclude"
+    fi
     info "保留已有 Git 工作区：$directory"
     if ((UPDATE_CODE == 1)); then
       [[ -z "$(runuser -u "$APP_USER" -- git -C "$directory" status --porcelain)" ]] || die "$directory 有未提交修改，拒绝自动更新"
