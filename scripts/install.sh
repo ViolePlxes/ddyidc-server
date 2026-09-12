@@ -399,7 +399,7 @@ Pin: version 6:7.*
 Pin-Priority: 1001
 APT_PREF
   apt-get update
-  redis_version="$(apt-cache madison redis-server | awk '$3 ~ /^6:7\./ {print $3; exit}')"
+  redis_version="$(apt-cache madison redis-server | awk '$3 ~ /^6:7\./ && !found {version=$3; found=1} END {print version}')"
   [[ -n "$redis_version" ]] || die "Redis 官方仓库没有可用的 7.x 版本"
   DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "redis-server=$redis_version" "redis-tools=$redis_version"
 fi
