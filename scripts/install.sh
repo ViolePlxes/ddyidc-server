@@ -419,6 +419,9 @@ fi
 if ! id "$APP_USER" >/dev/null 2>&1; then
   useradd --system --gid "$APP_GROUP" --home-dir /home/ddyidc --create-home --shell /usr/sbin/nologin "$APP_USER"
 fi
+if id www-data >/dev/null 2>&1; then
+  usermod -a -G "$APP_GROUP" www-data
+fi
 install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" /home/ddyidc "$(dirname "$BACKEND_DIR")" "$(dirname "$FRONTEND_DIR")"
 install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$BIN_DIR" "$UPDATE_RESULT_DIR" "$UPDATE_RESULT_DIR/staging" /var/log/ddyidc
 install -d -m 0755 -o root -g root "$DEPLOY_DIR"
@@ -541,7 +544,8 @@ if ((GENERATE_DEPLOY_KEY == 1)); then
 fi
 
 step "6/12" "生成并保护数据库、Redis、JWT 与 AES 密钥"
-install -d -m 0700 -o root -g root "$SECRET_DIR" "$STATE_DIR"
+install -d -m 0750 -o root -g "$APP_GROUP" "$SECRET_DIR"
+install -d -m 0700 -o root -g root "$STATE_DIR"
 ensure_secret() {
   local path="$1" bytes="$2"
   if [[ ! -s "$path" ]]; then
@@ -994,7 +998,7 @@ ln -sfn /etc/nginx/sites-available/ddyidc /etc/nginx/sites-enabled/ddyidc
 rm -f /etc/nginx/sites-enabled/default
 nginx -t
 systemctl enable --now nginx
-systemctl reload nginx
+systemctl restart nginx
 
 if ((SKIP_FIREWALL == 0)); then
   ufw default deny incoming
