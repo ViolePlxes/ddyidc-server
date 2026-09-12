@@ -158,7 +158,7 @@ step() {
 cleanup() {
   GIT_TOKEN=""
   unset GITHUB_TOKEN DDYIDC_GITHUB_TOKEN GIT_ASKPASS GIT_TERMINAL_PROMPT GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 || true
-  if [[ -n "$GIT_ASKPASS_FILE" && "$GIT_ASKPASS_FILE" == /run/ddyidc-git-askpass.* ]]; then
+  if [[ -n "$GIT_ASKPASS_FILE" && "$GIT_ASKPASS_FILE" == /usr/local/libexec/ddyidc-git-askpass.* ]]; then
     rm -f -- "$GIT_ASKPASS_FILE"
   fi
   if [[ -n "$BACKEND_STAGE" && "$BACKEND_STAGE" == "$UPDATE_RESULT_DIR/staging/"* ]]; then
@@ -267,7 +267,8 @@ port_check 8080 'ddyidc-server'
 port_check 3306 'mysqld'
 port_check 6379 'redis-server'
 
-GIT_ASKPASS_FILE="/run/ddyidc-git-askpass-preflight.$$"
+install -d -m 0755 -o root -g root /usr/local/libexec
+GIT_ASKPASS_FILE="/usr/local/libexec/ddyidc-git-askpass.$$"
 cat >"$GIT_ASKPASS_FILE" <<'ASKPASS'
 #!/usr/bin/env bash
 case "${1:-}" in
@@ -379,7 +380,7 @@ install -d -m 0750 -o "$APP_USER" -g "$APP_GROUP" "$BIN_DIR" "$UPDATE_RESULT_DIR
 install -d -m 0755 -o root -g root "$DEPLOY_DIR"
 
 setup_git_auth() {
-  GIT_ASKPASS_FILE="/run/ddyidc-git-askpass.$$"
+  GIT_ASKPASS_FILE="/usr/local/libexec/ddyidc-git-askpass.$$"
   cat >"$GIT_ASKPASS_FILE" <<'ASKPASS'
 #!/usr/bin/env bash
 case "${1:-}" in
