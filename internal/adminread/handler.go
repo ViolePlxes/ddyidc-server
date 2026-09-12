@@ -203,6 +203,9 @@ func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "读取最近订单失败")
 		return
 	}
+	if recent == nil {
+		recent = make([]orderRow, 0)
+	}
 	writeJSON(w, map[string]any{
 		"metrics":      counts,
 		"revenueTrend": trend,

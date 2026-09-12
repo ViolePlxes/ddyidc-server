@@ -83,7 +83,15 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 func (h *Handler) enabled(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		enabled, err := h.service.Enabled(r.Context())
-		if err != nil || !enabled {
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/admin/v1/points/") || r.URL.Path == "/api/v1/points/status" {
+			next(w, r)
+			return
+		}
+		if !enabled {
 			writeMessage(w, http.StatusNotFound, "积分中心未开启")
 			return
 		}

@@ -1007,6 +1007,11 @@ server {
     gzip on; gzip_vary on; gzip_min_length 1024; gzip_comp_level 5;
     gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
     location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location = /health {
+        proxy_pass http://ddyidc_backend; proxy_http_version 1.1; proxy_set_header Connection "";
+        proxy_set_header Host \$host; proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto \$scheme;
+    }
     location ~ ^/api/v1/instance/[0-9]+/vnc/ws\$ {
         proxy_pass http://ddyidc_backend; proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade; proxy_set_header Connection \$ddyidc_connection_upgrade;
@@ -1091,6 +1096,10 @@ for _ in {1..30}; do
 done
 health_json="$(curl --fail --silent --show-error http://127.0.0.1:8080/health)"
 jq -e '.status == "ok" and .database == true and .redis == true' <<<"$health_json" >/dev/null || die "健康检查未达到 database/redis healthy"
+for admin_route in /admin/v1/marketplace/dashboard /admin/v1/points/settings /admin/v1/cdnsell/status; do
+  code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:8080$admin_route")"
+  [[ "$code" == 401 ]] || die "未登录访问 $admin_route 应返回 401，实际为 $code"
+done
 for service in mysql redis-server ddyidc nginx; do
   systemctl is-active --quiet "$service" || die "服务未 active：$service"
 done
@@ -1118,17 +1127,21 @@ done
 ((table_total >= 162)) || die "业务表总数不足：$table_total < 162"
 
 if [[ -n "$DOMAIN" ]]; then
+  public_health="$(curl --fail --silent --show-error --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/health")"
+  jq -e '.status == "ok" and .database == true and .redis == true' <<<"$public_health" >/dev/null || die "公网 /health 未返回健康 JSON"
   for path in / /console /admin /sales; do
     code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN$path")"
     [[ "$code" == 200 ]] || die "HTTPS 前端入口 $path 返回 $code"
   done
 else
+  public_health="$(curl --fail --silent --show-error -H "Host: $server_name" http://127.0.0.1/health)"
+  jq -e '.status == "ok" and .database == true and .redis == true' <<<"$public_health" >/dev/null || die "HTTP /health 未返回健康 JSON"
   for path in / /console /admin /sales; do
     code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' -H "Host: $server_name" "http://127.0.0.1$path")"
     [[ "$code" == 200 ]] || die "HTTP 前端入口 $path 返回 $code"
   done
 fi
-ok "health、4 个前端入口、4 项服务、11 库 $table_total 张表全部通过"
+ok "公网 health、可选模块路由、4 个前端入口、4 项服务、11 库 $table_total 张表全部通过"
 
 step "12/12" "写入 0600 安装摘要"
 health_version="$(jq -r '.version // "unknown"' <<<"$health_json")"

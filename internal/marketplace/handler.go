@@ -77,7 +77,15 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager, 
 func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		enabled, err := h.service.Enabled(r.Context())
-		if err != nil || !enabled {
+		if err != nil {
+			writeServiceError(w, err)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/admin/v1/marketplace/") || r.URL.Path == "/api/v1/marketplace/status" {
+			next(w, r)
+			return
+		}
+		if !enabled {
 			writeError(w, http.StatusNotFound, "交易市场未开启")
 			return
 		}
@@ -96,13 +104,18 @@ func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
+	enabled, err := h.service.Enabled(r.Context())
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	settings, err := h.service.Settings(r.Context())
 	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	stats, _ := h.service.Dashboard(r.Context())
-	writeOK(w, map[string]any{"enabled": true, "maintenance": settings.Maintenance, "feeType": settings.FeeType, "feeRate": settings.FeeRate, "feeFixed": settings.FeeFixed, "feeBearer": settings.FeeBearer, "refundEnabled": settings.RefundEnabled, "onSale": stats["onSale"], "sold": stats["sold"], "wants": stats["wants"]})
+	writeOK(w, map[string]any{"enabled": enabled, "maintenance": settings.Maintenance, "feeType": settings.FeeType, "feeRate": settings.FeeRate, "feeFixed": settings.FeeFixed, "feeBearer": settings.FeeBearer, "refundEnabled": settings.RefundEnabled, "onSale": stats["onSale"], "sold": stats["sold"], "wants": stats["wants"]})
 }
 func (h *Handler) publicListings(w http.ResponseWriter, r *http.Request) {
 	p, z := pages(r)

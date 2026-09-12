@@ -283,8 +283,8 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err != nil {
 		panic("groupbuy configuration failed: " + err.Error())
 	}
+	groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
 	if groupbuyEnabled {
-		groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
 		groupbuySvc.StartMaintenance(context.Background())
 	}
 	marketplaceSvc := marketplace.NewService(db.G, cache.RDB, notifyManager)
@@ -309,20 +309,20 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
+	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
 	if cdnsellEnabled {
-		cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
 		cdnsellSvc.Start(context.Background())
 	}
+	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
 	if marketplaceEnabled {
-		marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
 		marketplaceSvc.StartMaintenance(context.Background())
 	}
 	pointsEnabled, err := pointsSvc.Enabled(context.Background())
 	if err != nil {
 		panic("points configuration failed: " + err.Error())
 	}
+	points.RegisterHandlers(server, pointsSvc, jwt)
 	if pointsEnabled {
-		points.RegisterHandlers(server, pointsSvc, jwt)
 		pointsSvc.StartExpiryScanner(context.Background())
 	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
