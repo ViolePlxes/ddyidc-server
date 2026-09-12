@@ -2,13 +2,16 @@ package adminread
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"ddyidc/internal/shared/snowflake"
 	"ddyidc/pkg/auth"
 	"github.com/zeromicro/go-zero/rest"
+	"github.com/zeromicro/go-zero/rest/pathvar"
 	"gorm.io/gorm"
 )
 
@@ -29,16 +32,61 @@ type orderRow struct {
 }
 
 type customerRow struct {
-	ID            string    `json:"id" gorm:"column:id"`
-	Username      string    `json:"username" gorm:"column:username"`
-	Email         string    `json:"email" gorm:"column:email"`
-	Phone         string    `json:"phone" gorm:"column:phone"`
-	Status        uint8     `json:"status" gorm:"column:status"`
-	Level         uint8     `json:"level" gorm:"column:level"`
-	OrderCount    int64     `json:"orderCount" gorm:"column:order_count"`
-	InstanceCount int64     `json:"instanceCount" gorm:"column:instance_count"`
-	CreatedAt     time.Time `json:"createdAt" gorm:"column:created_at"`
+	ID                 string    `json:"id" gorm:"column:id"`
+	Username           string    `json:"username" gorm:"column:username"`
+	DisplayName        string    `json:"displayName" gorm:"column:display_name"`
+	RealnameStatus     uint8     `json:"realnameStatus" gorm:"column:realname_status"`
+	Email              string    `json:"email" gorm:"column:email"`
+	Phone              string    `json:"phone" gorm:"column:phone"`
+	Status             uint8     `json:"status" gorm:"column:status"`
+	Level              uint8     `json:"level" gorm:"column:level"`
+	SocialLogin        string    `json:"socialLogin" gorm:"column:social_login"`
+	Country            string    `json:"country" gorm:"column:country"`
+	Address            string    `json:"address" gorm:"column:address"`
+	Language           string    `json:"language" gorm:"column:language"`
+	Remark             string    `json:"remark" gorm:"column:remark"`
+	ActiveProductCount int64     `json:"activeProductCount" gorm:"column:active_product_count"`
+	ProductCount       int64     `json:"productCount" gorm:"column:product_count"`
+	Balance            int64     `json:"balance" gorm:"column:balance"`
+	ConsumeAmount      int64     `json:"consumeAmount" gorm:"column:consume_amount"`
+	RefundAmount       int64     `json:"refundAmount" gorm:"column:refund_amount"`
+	WithdrawalAmount   int64     `json:"withdrawalAmount" gorm:"column:withdrawal_amount"`
+	OrderCount         int64     `json:"orderCount" gorm:"column:order_count"`
+	InstanceCount      int64     `json:"instanceCount" gorm:"column:instance_count"`
+	CreatedAt          time.Time `json:"createdAt" gorm:"column:created_at"`
 }
+
+type createCustomerInput struct {
+	Name        string `json:"name"`
+	CountryCode string `json:"countryCode"`
+	Mobile      string `json:"mobile"`
+	Email       string `json:"email"`
+	Password    string `json:"password"`
+}
+
+type normalizedCustomerInput struct {
+	Name     string
+	Phone    string
+	Email    string
+	Password string
+}
+
+const customerProjection = "CAST(c.id AS CHAR) AS id, " +
+	"c.username, " +
+	"COALESCE((SELECT CASE WHEN cr.type = 2 THEN COALESCE(NULLIF(cr.company_name, ''), cr.name) ELSE cr.name END FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), NULLIF(cp.company, ''), NULLIF(c.real_name, ''), NULLIF(c.nickname, ''), c.username) AS display_name, " +
+	"COALESCE((SELECT cr.status FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), 0) AS realname_status, " +
+	"COALESCE(c.email, '') AS email, COALESCE(c.phone, '') AS phone, c.status, c.level, " +
+	"COALESCE((SELECT GROUP_CONCAT(DISTINCT oa.platform ORDER BY oa.platform SEPARATOR ',') FROM customer.oauth_accounts oa WHERE oa.customer_id = c.id), '') AS social_login, " +
+	"COALESCE(cp.country, '') AS country, TRIM(CONCAT_WS(' ', NULLIF(cp.province, ''), NULLIF(cp.city, ''), NULLIF(cp.address, ''))) AS address, " +
+	"COALESCE(c.language, '') AS language, '' AS remark, " +
+	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status IN (1, 2, 3, 4)) AS active_product_count, " +
+	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status <> 6) AS product_count, " +
+	"COALESCE((SELECT ba.balance FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS balance, " +
+	"COALESCE((SELECT ba.total_consume FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS consume_amount, " +
+	"COALESCE((SELECT SUM(bt.amount) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 3), 0) AS refund_amount, " +
+	"COALESCE((SELECT SUM(bt.amount) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 4), 0) AS withdrawal_amount, " +
+	"(SELECT COUNT(*) FROM `order`.orders o WHERE o.customer_id = c.id) AS order_count, " +
+	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL) AS instance_count, c.created_at"
 
 type trendPoint struct {
 	Date         string `json:"date" gorm:"column:date"`
@@ -52,6 +100,8 @@ func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.
 		{Method: http.MethodGet, Path: "/admin/v1/dashboard", Handler: h.dashboard},
 		{Method: http.MethodGet, Path: "/admin/v1/orders", Handler: h.orders},
 		{Method: http.MethodGet, Path: "/admin/v1/customers", Handler: h.customers},
+		{Method: http.MethodPost, Path: "/admin/v1/customers", Handler: h.createCustomer},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:id", Handler: h.customerDetail},
 	})
 }
 
@@ -219,13 +269,13 @@ func (h *handler) customers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
-	query := h.db.WithContext(r.Context()).Table("customer.customers AS c").Where("c.deleted_at IS NULL")
+	query := h.customerQuery(r).Where("c.deleted_at IS NULL")
 	if status != nil {
 		query = query.Where("c.status = ?", *status)
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where("c.username LIKE ? OR c.email LIKE ? OR c.phone LIKE ?", like, like, like)
+		query = query.Where("c.username LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.real_name LIKE ? OR cp.company LIKE ? OR EXISTS (SELECT 1 FROM customer.customer_realname cr WHERE cr.customer_id = c.id AND (cr.name LIKE ? OR cr.company_name LIKE ?))", like, like, like, like, like, like, like)
 	}
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
@@ -233,24 +283,210 @@ func (h *handler) customers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []customerRow
-	if err := query.Select(
-		"CAST(c.id AS CHAR) AS id, " +
-			"c.username, " +
-			"COALESCE(c.email, '') AS email, " +
-			"COALESCE(c.phone, '') AS phone, " +
-			"c.status, c.level, " +
-			"(SELECT COUNT(*) FROM `order`.orders o WHERE o.customer_id = c.id) AS order_count, " +
-			"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL) AS instance_count, " +
-			"c.created_at",
-	).Order("c.created_at DESC, c.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error; err != nil {
+	if err := query.Select(customerProjection).Order("c.created_at DESC, c.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "读取客户列表失败")
 		return
 	}
-	for index := range rows {
-		rows[index].Email = maskEmail(rows[index].Email)
-		rows[index].Phone = maskPhone(rows[index].Phone)
+	var totalUsers int64
+	if err := h.db.WithContext(r.Context()).Table("customer.customers").Where("deleted_at IS NULL").Count(&totalUsers).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "读取客户总数失败")
+		return
 	}
-	writeJSON(w, map[string]any{"items": rows, "total": total, "page": page, "pageSize": pageSize})
+	var totalBalanceSum int64
+	if err := h.db.WithContext(r.Context()).Table("customer.customers AS c").
+		Joins("LEFT JOIN billing.accounts ba ON ba.customer_id = c.id").
+		Where("c.deleted_at IS NULL").
+		Select("COALESCE(SUM(ba.balance), 0)").Scan(&totalBalanceSum).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "读取客户余额总计失败")
+		return
+	}
+	var pageBalanceSum int64
+	for _, row := range rows {
+		pageBalanceSum += row.Balance
+	}
+	writeJSON(w, map[string]any{
+		"items": rows, "total": total, "page": page, "pageSize": pageSize,
+		"pageBalanceSum": pageBalanceSum, "totalBalanceSum": totalBalanceSum, "totalUsers": totalUsers,
+	})
+}
+
+func (h *handler) customerQuery(r *http.Request) *gorm.DB {
+	return h.db.WithContext(r.Context()).Table("customer.customers AS c").
+		Joins("LEFT JOIN customer.customer_profiles cp ON cp.customer_id = c.id")
+}
+
+func (h *handler) customerDetail(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	id, err := strconv.ParseInt(strings.Trim(pathvar.Vars(r)["id"], "/"), 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, http.StatusBadRequest, "客户 ID 无效")
+		return
+	}
+	var row customerRow
+	err = h.customerQuery(r).Select(customerProjection).Where("c.id = ? AND c.deleted_at IS NULL", id).Take(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, http.StatusNotFound, "客户不存在")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "读取客户详情失败")
+		return
+	}
+	writeJSON(w, row)
+}
+
+func (h *handler) createCustomer(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	var input createCustomerInput
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "新建用户参数格式错误")
+		return
+	}
+	normalized, message := normalizeCustomerInput(input)
+	if message != "" {
+		writeError(w, http.StatusBadRequest, message)
+		return
+	}
+	if normalized.Phone != "" {
+		exists, err := h.customerIdentityExists(r, "phone", normalized.Phone)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "查询手机号失败")
+			return
+		}
+		if exists {
+			writeError(w, http.StatusConflict, "手机号已注册")
+			return
+		}
+	}
+	if normalized.Email != "" {
+		exists, err := h.customerIdentityExists(r, "email", normalized.Email)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "查询邮箱失败")
+			return
+		}
+		if exists {
+			writeError(w, http.StatusConflict, "邮箱已注册")
+			return
+		}
+	}
+	hash, err := auth.HashPassword(normalized.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "密码加密失败")
+		return
+	}
+	id := snowflake.GenID()
+	username := normalized.Phone
+	if username == "" {
+		username = normalized.Email
+	}
+	now := time.Now()
+	row := map[string]any{
+		"id": id, "tenant_id": 0, "username": username, "password_hash": hash,
+		"real_name": normalized.Name, "status": 1, "level": 1, "language": "zh-CN",
+		"register_source": "admin", "created_at": now, "updated_at": now,
+	}
+	if normalized.Phone != "" {
+		row["phone"] = normalized.Phone
+	}
+	if normalized.Email != "" {
+		row["email"] = normalized.Email
+	}
+	if err := h.db.WithContext(r.Context()).Table("customer.customers").Create(row).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) || strings.Contains(strings.ToLower(err.Error()), "duplicate entry") {
+			writeError(w, http.StatusConflict, "手机号或邮箱已注册")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "创建用户失败")
+		return
+	}
+	var created customerRow
+	if err := h.customerQuery(r).Select(customerProjection).Where("c.id = ?", id).Take(&created).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "用户已创建，但读取详情失败")
+		return
+	}
+	writeJSONStatus(w, http.StatusCreated, created)
+}
+
+func (h *handler) customerIdentityExists(r *http.Request, column, value string) (bool, error) {
+	var count int64
+	err := h.db.WithContext(r.Context()).Table("customer.customers").Where(column+" = ? AND deleted_at IS NULL", value).Count(&count).Error
+	return count > 0, err
+}
+
+func normalizeCustomerInput(input createCustomerInput) (normalizedCustomerInput, string) {
+	value := normalizedCustomerInput{
+		Name: strings.TrimSpace(input.Name), Email: strings.ToLower(strings.TrimSpace(input.Email)), Password: input.Password,
+	}
+	if value.Name == "" {
+		return value, "姓名 / 公司不能为空"
+	}
+	if len([]rune(value.Name)) > 64 {
+		return value, "姓名 / 公司不能超过 64 个字符"
+	}
+	mobile := strings.TrimSpace(input.Mobile)
+	if mobile != "" {
+		countryCode := strings.TrimSpace(input.CountryCode)
+		if countryCode == "" {
+			countryCode = "+86"
+		}
+		if !validCountryCode(countryCode) {
+			return value, "手机号区号格式无效"
+		}
+		if countryCode == "+86" {
+			if !validMainlandMobile(mobile) {
+				return value, "请输入正确的 11 位中国大陆手机号"
+			}
+			value.Phone = mobile
+		} else {
+			value.Phone = countryCode + mobile
+			if len(value.Phone) > 20 {
+				return value, "手机号不能超过 20 个字符"
+			}
+		}
+	}
+	if value.Phone == "" && value.Email == "" {
+		return value, "手机号与邮箱至少填写一项"
+	}
+	if value.Email != "" && !validEmail(value.Email) {
+		return value, "请输入正确的邮箱"
+	}
+	if len(value.Password) < 6 || len(value.Password) > 20 {
+		return value, "请输入 6-20 位密码"
+	}
+	return value, ""
+}
+
+func validCountryCode(value string) bool {
+	if len(value) < 2 || len(value) > 5 || value[0] != '+' {
+		return false
+	}
+	for _, char := range value[1:] {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validMainlandMobile(value string) bool {
+	if len(value) != 11 || value[0] != '1' || value[1] < '3' || value[1] > '9' {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validEmail(value string) bool {
+	parts := strings.Split(value, "@")
+	return len(parts) == 2 && parts[0] != "" && strings.Contains(parts[1], ".") && len(value) <= 128
 }
 
 func pageParams(r *http.Request) (int, int) {
@@ -301,7 +537,12 @@ func maskEmail(value string) string {
 }
 
 func writeJSON(w http.ResponseWriter, data any) {
+	writeJSONStatus(w, http.StatusOK, data)
+}
+
+func writeJSONStatus(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
 }
 
