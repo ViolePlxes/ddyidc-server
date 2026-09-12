@@ -148,7 +148,7 @@ func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		{h.db.WithContext(ctx).Table("instance.instances").Where("deleted_at IS NULL"), &counts.TotalInstances},
 		{h.db.WithContext(ctx).Table("instance.instances").Where("deleted_at IS NULL AND status = ?", 2), &counts.RunningInstances},
 		{h.db.WithContext(ctx).Table("`order`.orders").Where("status = ?", 1), &counts.PendingOrders},
-		{h.db.WithContext(ctx).Table("ticket.tickets").Where("status <> ?", 4), &counts.OpenTickets},
+		{h.db.WithContext(ctx).Table("ticket.ticket").Where("status <> ?", 4), &counts.OpenTickets},
 	}
 	for _, item := range queries {
 		if err := item.query.Count(item.to).Error; err != nil {
