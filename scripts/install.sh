@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION="1.0.1"
+readonly INSTALLER_VERSION="1.0.2"
 readonly DEFAULT_BACKEND_DIR="/home/ddyidc/ddyidc-project/server"
 readonly DEFAULT_FRONTEND_DIR="/home/ddyidc/web-react"
 readonly DEFAULT_LOG_FILE="/var/log/ddyidc-install.log"
@@ -646,6 +646,7 @@ unset GITHUB_TOKEN DDYIDC_GITHUB_TOKEN GIT_ASKPASS GIT_TERMINAL_PROMPT GIT_CONFI
 rm -f -- "$GIT_ASKPASS_FILE"
 GIT_ASKPASS_FILE=""
 chown -R "$APP_USER:$APP_GROUP" "$BACKEND_DIR" "$FRONTEND_DIR"
+chmod 0750 "$BACKEND_DIR" "$FRONTEND_DIR"
 repository_commit() {
   local directory="$1" marker="$1/.git/ddyidc-upstream-commit" commit
   if [[ -s "$marker" ]]; then
@@ -974,6 +975,7 @@ fi
 chown -R "$APP_USER:$APP_GROUP" "$FRONTEND_DIR/dist"
 find "$FRONTEND_DIR/dist" -type d -exec chmod 0750 {} +
 find "$FRONTEND_DIR/dist" -type f -exec chmod 0640 {} +
+runuser -u www-data -- test -r "$FRONTEND_DIR/dist/index.html" || die "Nginx 用户无法读取前端构建产物；请检查 $FRONTEND_DIR 路径权限"
 
 step "9/12" "安装 systemd、更新辅助、备份与磁盘守护"
 rsync -a --exclude package/ "$BACKEND_DIR/deploy/linux/" "$DEPLOY_DIR/"
