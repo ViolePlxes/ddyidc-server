@@ -1,6 +1,9 @@
 package contracts
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Supplier struct {
 	ID, Name, Type, URL, Username, Token, Secret string
@@ -9,29 +12,30 @@ type Supplier struct {
 	Status                                       int
 }
 type UpstreamProduct struct {
-	ID                 int     `json:"id,string"`
-	Name               string  `json:"name"`
-	Description        string  `json:"description"`
-	Price              float64 `json:"price"`
-	Cycle              string  `json:"cycle"`
-	PayType            string  `json:"payType"`
-	Type               string  `json:"type"`
-	GroupID            int     `json:"groupId,string"`
-	CurrencyCode       string  `json:"currencyCode"`
-	SetupFee           float64 `json:"setupFee"`
-	UpstreamPriceType  string  `json:"upstreamPriceType"`
-	UpstreamPriceValue float64 `json:"upstreamPriceValue"`
-	Stock              int     `json:"stock"`
-	TrialEnabled       bool    `json:"trialEnabled"`
-	TrialPrice         float64 `json:"trialPrice"`
+	ID                 int             `json:"id,string"`
+	Name               string          `json:"name"`
+	Description        string          `json:"description"`
+	Price              float64         `json:"price"`
+	Cycle              string          `json:"cycle"`
+	PayType            string          `json:"payType"`
+	Type               string          `json:"type"`
+	GroupID            int             `json:"groupId,string"`
+	CurrencyCode       string          `json:"currencyCode"`
+	SetupFee           float64         `json:"setupFee"`
+	UpstreamPriceType  string          `json:"upstreamPriceType"`
+	UpstreamPriceValue float64         `json:"upstreamPriceValue"`
+	Stock              int             `json:"stock"`
+	StockValue         json.RawMessage `json:"stockValue,omitempty"`
+	TrialEnabled       bool            `json:"trialEnabled"`
+	TrialPrice         float64         `json:"trialPrice"`
 }
 type UpstreamProductDetail struct {
 	UpstreamProduct
 	Config           map[string]string `json:"config"`
 	HasConfigOptions bool              `json:"hasConfigOptions"`
 	// ConfigOptions is the supplier product-detail configoptions field. It is
-	// the sole authority for whether the mapped SKU is customer-configurable;
-	// cart/set_config is a cart presentation schema, not this signal.
+	// a provider resource schema; finance providers can additionally expose
+	// resource choices through the order-page schema.
 	ConfigOptions []ConfigOption `json:"configOptions"`
 }
 

@@ -58,14 +58,17 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	config := map[string]string{}
-	// Configuration shape comes only from the agent product-detail
-	// configoptions field. Finance cart/set_config describes that system's cart
-	// form and must never turn one fixed upstream SKU into many local SKUs.
+	// Classify the real provider resource choices without changing SKU count.
 	configMode := "fixed"
 	configOptions := []upstreamcontracts.ConfigOption(nil)
 	specs, specsErr := h.products.ListSpecs(r.Context(), id)
 	if specsErr != nil {
 		writeError(w, http.StatusInternalServerError, "读取商品规格失败")
+		return
+	}
+	view, viewErr := h.products.Specification(r.Context(), id)
+	if viewErr != nil {
+		writeError(w, 500, "读取规格快照失败")
 		return
 	}
 	stock, cycle := product.Stock, product.Cycle
@@ -83,15 +86,12 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 			}
 			configOptions = detail.ConfigOptions
 			configMode = productConfigMode(detail.ConfigOptions)
-			if detail.HasConfigOptions && configMode == "fixed" {
-				configMode = "elastic"
-			}
 		}
 		// Finance product-detail responses frequently omit configoptions even
 		// though cart/set_config is authoritative and complete. Use the existing
 		// cloud-to-legacy fallback to classify and expose the real purchase form.
 		if page, pageErr := h.upstream.GetOrderPage(product.SupplierID, product.UpstreamProductID); pageErr == nil {
-			if pageMode := productConfigMode(page.ConfigOptions); pageMode == "elastic" {
+			if pageMode := productConfigMode(page.ConfigOptions); len(page.ConfigOptions) > 0 {
 				configMode = pageMode
 			}
 			if cycle == "" && len(page.Cycles) > 0 {
@@ -110,6 +110,7 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		"name": product.Name, "summary": product.Summary, "description": product.Description,
 		"moduleType": product.ModuleType, "price": product.Price, "cycle": cycle, "stock": stock, "config": config,
 		"configMode": configMode, "configOptions": configOptions, "specs": specs,
+		"catalogSpec": view.Spec, "upstreamStock": view.UpstreamStock,
 		// These identifiers are deliberately exposed to the catalogue client so
 		// it can request the provider's order-page configuration for this mapping.
 		"supplierId": product.SupplierID, "upstreamProductId": strconv.Itoa(product.UpstreamProductID),
@@ -151,26 +152,17 @@ func (h *publicHandler) adminSpecs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	product, err := h.products.FindPublicByID(r.Context(), id)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		writeError(w, http.StatusInternalServerError, "读取商品价格失败")
+	view, err := h.products.Specification(r.Context(), id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		writeError(w, 404, "商品不存在")
 		return
 	}
-	items, err := h.products.ListSpecs(r.Context(), id)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "读取商品规格失败")
+		writeError(w, 500, "读取本地规格快照失败")
 		return
 	}
-	if product != nil {
-		for _, spec := range items {
-			if spec.PriceMode == "upstream" {
-				spec.Price = product.Price
-			}
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	writeJSON(w, 200, map[string]any{"items": []domain.ProductSpec{view.Spec}, "configured": view.Configured, "upstreamStock": view.UpstreamStock, "capturedAt": view.CapturedAt})
 }
-
 func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 	id, ok := parseProductPathID(w, r)
 	if !ok {
@@ -185,8 +177,8 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "规格配置格式错误")
 		return
 	}
-	if len(input.Items) > 64 {
-		writeError(w, http.StatusBadRequest, "每个商品最多配置 64 行规格")
+	if len(input.Items) != 1 || input.Items[0] == nil {
+		writeError(w, http.StatusBadRequest, "每个商品只能保存一条规格配置")
 		return
 	}
 	for index, spec := range input.Items {
@@ -199,7 +191,11 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 		spec.DownstreamRate = strings.TrimSpace(spec.DownstreamRate)
 		spec.PriceMode = strings.ToLower(strings.TrimSpace(spec.PriceMode))
 		spec.Sort = index
-		if spec.Name == "" || len([]rune(spec.Name)) > 64 || spec.VCPU < 1 || spec.VCPU > 1024 || spec.Memory == "" {
+		if len([]rune(spec.ProcessorModel)) > 128 || len([]rune(spec.ProcessorFrequency)) > 64 || len([]rune(spec.Defense)) > 64 || len([]rune(spec.UpstreamBandwidth)) > 64 || len([]rune(spec.DownstreamRate)) > 64 {
+			writeError(w, 400, "规格字段过长")
+			return
+		}
+		if spec.Name == "" || len([]rune(spec.Name)) > 64 || spec.VCPU < 0 || spec.VCPU > 1024 || len([]rune(spec.Memory)) > 32 {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行规格名称、vCPU 或内存无效", index+1))
 			return
 		}
@@ -211,7 +207,7 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行固定价格无效", index+1))
 			return
 		}
-		if spec.Stock != nil && *spec.Stock < 0 {
+		if spec.Stock != nil && (*spec.Stock < 0 || *spec.Stock > 2147483647) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行库存不能小于 0", index+1))
 			return
 		}

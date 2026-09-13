@@ -3,9 +3,11 @@ package product
 import (
 	"context"
 	dom "ddyidc/internal/product/domain"
+	"ddyidc/internal/product/specification"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -17,6 +19,7 @@ const (
 
 type Repository interface {
 	EnsureSpecsSchema(context.Context) error
+	Specification(context.Context, int64) (*specification.View, error)
 	CreateGroup(context.Context, *dom.ProductGroup) error
 	ListGroups(context.Context, int64) ([]*dom.ProductGroup, error)
 	Create(context.Context, *dom.Product) error
@@ -106,7 +109,7 @@ type GormRepository struct{ db *gorm.DB }
 
 func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: database} }
 func (r *GormRepository) EnsureSpecsSchema(c context.Context) error {
-	return r.db.WithContext(c).Exec(`CREATE TABLE IF NOT EXISTS product.product_specs (
+	if err := r.db.WithContext(c).Exec(`CREATE TABLE IF NOT EXISTS product.product_specs (
 		id BIGINT UNSIGNED NOT NULL,
 		product_id BIGINT UNSIGNED NOT NULL,
 		name VARCHAR(64) NOT NULL,
@@ -125,7 +128,10 @@ func (r *GormRepository) EnsureSpecsSchema(c context.Context) error {
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		PRIMARY KEY (id),
 		KEY idx_product_sort (product_id, sort, id)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).Error
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`).Error; err != nil {
+		return err
+	}
+	return ensureSingleSpecSchema(r.db.WithContext(c))
 }
 func (r *GormRepository) CreateGroup(c context.Context, v *dom.ProductGroup) error {
 	return r.db.WithContext(c).Table(groupTable).Create(v).Error
@@ -178,26 +184,51 @@ func (r *GormRepository) ListSpecs(c context.Context, id int64) (out []*dom.Prod
 	e = r.db.WithContext(c).Table(specTable).Where("product_id = ?", id).Order("sort ASC,id ASC").Find(&out).Error
 	return
 }
+func (r *GormRepository) Specification(ctx context.Context, id int64) (*specification.View, error) {
+	return specification.Read(ctx, r.db, id)
+}
+func ensureSingleSpecSchema(db *gorm.DB) error {
+	if err := specification.EnsureSchema(db); err != nil {
+		return err
+	}
+	var duplicates int64
+	if err := db.Raw("SELECT COUNT(*) FROM (SELECT product_id FROM product.product_specs GROUP BY product_id HAVING COUNT(*)>1) d").Scan(&duplicates).Error; err != nil {
+		return err
+	}
+	if duplicates > 0 {
+		return fmt.Errorf("run migrations/20260913_single_product_spec.sql to archive legacy multi-row specs first")
+	}
+	var indexes int64
+	if err := db.Raw("SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema='product' AND table_name='product_specs' AND index_name='uk_product_spec'").Scan(&indexes).Error; err != nil {
+		return err
+	}
+	if indexes == 0 {
+		return db.Exec("ALTER TABLE product.product_specs ADD UNIQUE KEY uk_product_spec(product_id)").Error
+	}
+	return nil
+}
 func (r *GormRepository) ReplaceSpecs(c context.Context, productID int64, specs []*dom.ProductSpec) error {
+	if len(specs) != 1 || specs[0] == nil {
+		return fmt.Errorf("one product requires exactly one specification")
+	}
 	return r.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
-		var count int64
-		if err := tx.Table(productTable).Where("id = ?", productID).Count(&count).Error; err != nil {
+		var product dom.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", productID).Take(&product).Error; err != nil {
 			return err
 		}
-		if count == 0 {
-			return gorm.ErrRecordNotFound
-		}
-		if err := tx.Table(specTable).Where("product_id = ?", productID).Delete(&dom.ProductSpec{}).Error; err != nil {
+		spec := specs[0]
+		var existing dom.ProductSpec
+		err := tx.Where("product_id=?", productID).Take(&existing).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 			return err
 		}
-		for _, spec := range specs {
-			spec.ID = 0
-			spec.ProductID = productID
-			if err := tx.Table(specTable).Create(spec).Error; err != nil {
-				return err
-			}
+		spec.ID = existing.ID
+		spec.ProductID = productID
+		spec.Sort = 0
+		if existing.ID != 0 {
+			spec.CreatedAt = existing.CreatedAt
 		}
-		return nil
+		return tx.Save(spec).Error
 	})
 }
 func (r *GormRepository) ListAdminProducts(c context.Context, page, limit int, groupID *int64) (out []*AdminProduct, total int64, e error) {

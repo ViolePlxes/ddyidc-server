@@ -12,8 +12,8 @@ import (
 
 func TestSelectedPricingSpecRequiresConfiguredRow(t *testing.T) {
 	specs := []rep.PricingSpec{{ID: 42, Name: "4核8G", PriceMode: "fixed", PriceYuan: 129}}
-	if _, err := selectedPricingSpec(specs, ""); err == nil {
-		t.Fatal("configured product accepted an empty spec id")
+	if selected, err := selectedPricingSpec(specs, ""); err != nil || selected == nil || selected.ID != 42 {
+		t.Fatal("legacy draft did not resolve the single product specification")
 	}
 	selected, err := selectedPricingSpec(specs, "42")
 	if err != nil || selected == nil || selected.Name != "4核8G" {
@@ -133,5 +133,24 @@ func TestNormalizeConfigOptionsRejectsIncompleteSelection(t *testing.T) {
 	_, err := normalizeConfigOptions([]upstreamcontracts.ConfigOption{{ID: 10, Name: "CPU", Required: true}}, &CreateOrderInput{ConfigOptions: map[string]ConfigOptionInput{}})
 	if err == nil || !strings.Contains(err.Error(), "完整选配") {
 		t.Fatalf("expected incomplete configuration error, got %v", err)
+	}
+}
+
+func TestBuildConfigSnapshotGeneratesHostnameForNewDraft(t *testing.T) {
+	input := &CreateOrderInput{DurationMonth: 1, BillingCycle: "monthly", Password: "aB1234567890", ConfigOptions: map[string]ConfigOptionInput{"12": {Value: "2"}}}
+	raw, err := buildConfigSnapshot(input, []byte("0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored persistedConfigSnapshot
+	if err = json.Unmarshal([]byte(raw), &stored); err != nil {
+		t.Fatal(err)
+	}
+	if !hostnamePattern.MatchString(input.Hostname) || stored.Hostname != input.Hostname {
+		t.Fatal("missing system hostname")
+	}
+	first := input.Hostname
+	if _, err = buildConfigSnapshot(input, []byte("0123456789abcdef0123456789abcdef")); err != nil || input.Hostname != first {
+		t.Fatal("hostname changed on repeat snapshot")
 	}
 }

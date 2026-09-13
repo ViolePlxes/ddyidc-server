@@ -679,6 +679,9 @@ func (p financeProduct) toContract(requestedID int) *contracts.UpstreamProductDe
 		id = requestedID
 	}
 	stock := int(number(p.Quantity))
+	if _, err := strconv.ParseFloat(rawString(p.Quantity), 64); err != nil {
+		stock = -1
+	}
 	if control := strings.TrimSpace(rawString(p.StockControl)); control == "" || control == "0" || strings.EqualFold(control, "false") {
 		stock = -1
 	}
@@ -696,6 +699,7 @@ func (p financeProduct) toContract(requestedID int) *contracts.UpstreamProductDe
 			UpstreamPriceType:  p.UpstreamPriceType,
 			UpstreamPriceValue: number(p.UpstreamPriceValue),
 			Stock:              stock,
+			StockValue:         p.Quantity,
 			TrialEnabled:       number(p.OnTrial) != 0,
 			TrialPrice:         number(p.OnTrialPrice),
 		},

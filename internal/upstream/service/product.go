@@ -9,6 +9,7 @@ import (
 	"time"
 
 	productdomain "ddyidc/internal/product/domain"
+	"ddyidc/internal/product/specification"
 	"ddyidc/internal/upstream/model"
 	"ddyidc/internal/upstream/provider/contracts"
 	"gorm.io/gorm"
@@ -106,6 +107,10 @@ func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
 	if e != nil {
 		return model.UpstreamProduct{}, e
 	}
+	var page *contracts.OrderPage
+	if optional, ok := p.(contracts.OptionalProvider); ok {
+		page, _ = optional.GetOrderPage(in.UpstreamProductID)
+	}
 	if in.Name == "" {
 		in.Name = detail.Name
 	}
@@ -137,7 +142,7 @@ func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
 			} else if !errors.Is(findErr, gorm.ErrRecordNotFound) {
 				return findErr
 			}
-			if e := ensurePublishedLocalProduct(tx, &v, detail); e != nil {
+			if e := ensurePublishedLocalProduct(tx, &v, detail, page); e != nil {
 				return e
 			}
 			if findErr == nil {
@@ -325,6 +330,10 @@ func (s *Store) SyncProduct(key string) error {
 	if e != nil {
 		return e
 	}
+	var page *contracts.OrderPage
+	if optional, ok := p.(contracts.OptionalProvider); ok {
+		page, _ = optional.GetOrderPage(v.UpstreamProductID)
+	}
 	v.UpstreamPrice = d.Price
 	v.Price = CalculatePrice(d.Price, supplier.Rate, v.ProfitType, v.ProfitValue)
 	v.Cycle = d.Cycle
@@ -338,7 +347,7 @@ func (s *Store) SyncProduct(key string) error {
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		if v.Mode == "sync" {
-			if e := ensurePublishedLocalProduct(tx, &v, d); e != nil {
+			if e := ensurePublishedLocalProduct(tx, &v, d, page); e != nil {
 				return e
 			}
 		}
@@ -346,7 +355,15 @@ func (s *Store) SyncProduct(key string) error {
 	})
 }
 
-func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, detail *contracts.UpstreamProductDetail) error {
+func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, detail *contracts.UpstreamProductDetail, pages ...*contracts.OrderPage) error {
+	var page *contracts.OrderPage
+	if len(pages) > 0 {
+		page = pages[0]
+	}
+	saveSnapshot := func() error {
+		localID, _ := strconv.ParseInt(mapping.ProductID, 10, 64)
+		return specification.Save(tx, localID, specification.Capture(detail, page, mapping.Name, mapping.Price))
+	}
 	groupID, _ := strconv.ParseInt(mapping.ProductGroupID, 10, 64)
 	var stock *int
 	if detail.Stock >= 0 {
@@ -376,7 +393,10 @@ func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, de
 			return e
 		}
 		if count > 0 {
-			return tx.Table((productdomain.Product{}).TableName()).Where("id = ?", localID).Updates(values).Error
+			if err := tx.Table((productdomain.Product{}).TableName()).Where("id = ?", localID).Updates(values).Error; err != nil {
+				return err
+			}
+			return saveSnapshot()
 		}
 	}
 	local := productdomain.Product{
@@ -395,5 +415,5 @@ func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, de
 		return e
 	}
 	mapping.ProductID = strconv.FormatInt(local.ID, 10)
-	return nil
+	return saveSnapshot()
 }

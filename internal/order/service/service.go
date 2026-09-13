@@ -5,6 +5,7 @@ package order
 
 import (
 	"context"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +115,10 @@ func buildConfigSnapshot(input *CreateOrderInput, key []byte) (string, error) {
 		input.ConfigOptions[optionID] = option
 	}
 	hostname := strings.TrimSpace(input.Hostname)
+	if hostname == "" {
+		hostname = fmt.Sprintf("ser%d", snowflake.GenID())
+		input.Hostname = hostname
+	}
 	if !hostnamePattern.MatchString(hostname) {
 		return "", errors.New("主机名格式错误")
 	}
@@ -218,6 +223,10 @@ func selectedPricingSpec(specs []rep.PricingSpec, rawID string) (*rep.PricingSpe
 			return nil, errors.New("该商品没有可选人工规格")
 		}
 		return nil, nil
+	}
+	// Legacy drafts may predate the product's single specification.
+	if len(specs) == 1 && strings.TrimSpace(rawID) == "" {
+		return &specs[0], nil
 	}
 	id, err := parseID(strings.TrimSpace(rawID))
 	if err != nil {
