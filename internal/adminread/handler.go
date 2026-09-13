@@ -32,6 +32,8 @@ type orderRow struct {
 }
 
 type customerRow struct {
+	Name               string    `json:"name"`
+	Company            string    `json:"company"`
 	ID                 string    `json:"id" gorm:"column:id"`
 	Username           string    `json:"username" gorm:"column:username"`
 	DisplayName        string    `json:"displayName" gorm:"column:display_name"`
@@ -72,13 +74,13 @@ type normalizedCustomerInput struct {
 }
 
 const customerProjection = "CAST(c.id AS CHAR) AS id, " +
-	"c.username, " +
+	"c.username, COALESCE(c.real_name,c.nickname,'') AS name, COALESCE(cp.company,'') AS company, " +
 	"COALESCE((SELECT CASE WHEN cr.type = 2 THEN COALESCE(NULLIF(cr.company_name, ''), cr.name) ELSE cr.name END FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), NULLIF(cp.company, ''), NULLIF(c.real_name, ''), NULLIF(c.nickname, ''), c.username) AS display_name, " +
 	"COALESCE((SELECT cr.status FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), 0) AS realname_status, " +
 	"COALESCE(c.email, '') AS email, COALESCE(c.phone, '') AS phone, c.status, c.level, " +
 	"COALESCE((SELECT GROUP_CONCAT(DISTINCT oa.platform ORDER BY oa.platform SEPARATOR ',') FROM customer.oauth_accounts oa WHERE oa.customer_id = c.id), '') AS social_login, " +
 	"COALESCE(cp.country, '') AS country, TRIM(CONCAT_WS(' ', NULLIF(cp.province, ''), NULLIF(cp.city, ''), NULLIF(cp.address, ''))) AS address, " +
-	"COALESCE(c.language, '') AS language, '' AS remark, " +
+	"COALESCE(c.language, '') AS language, COALESCE((SELECT s.remark FROM customer.admin_customer_settings s WHERE s.customer_id=c.id), '') AS remark, " +
 	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status IN (1, 2, 3, 4)) AS active_product_count, " +
 	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status <> 6) AS product_count, " +
 	"COALESCE((SELECT ba.balance FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS balance, " +
@@ -102,6 +104,11 @@ func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.
 		{Method: http.MethodGet, Path: "/admin/v1/customers", Handler: h.customers},
 		{Method: http.MethodPost, Path: "/admin/v1/customers", Handler: h.createCustomer},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:id", Handler: h.customerDetail},
+		{Method: http.MethodDelete, Path: "/admin/v1/customers/:id", Handler: h.deleteCustomer},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:id/profile", Handler: h.customerProfile},
+		{Method: http.MethodPut, Path: "/admin/v1/customers/:id/profile", Handler: h.updateCustomer},
+		{Method: http.MethodPost, Path: "/admin/v1/customers/:id/status", Handler: h.customerStatus},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:id/records/:kind", Handler: h.customerRecords},
 	})
 }
 

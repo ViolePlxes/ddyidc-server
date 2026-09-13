@@ -58,8 +58,10 @@ func (v *NotifyLog) BeforeCreate(_ *gorm.DB) error {
 }
 
 type Contact struct {
-	Email string `gorm:"column:email"`
-	Phone string `gorm:"column:phone"`
+	SkipSMS   bool   `gorm:"column:skip_sms"`
+	SkipEmail bool   `gorm:"column:skip_email"`
+	Email     string `gorm:"column:email"`
+	Phone     string `gorm:"column:phone"`
 }
 
 type ExpiringInstance struct {

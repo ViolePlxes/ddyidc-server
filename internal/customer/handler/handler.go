@@ -3,6 +3,7 @@ package customer
 
 import (
 	"context"
+	"ddyidc/internal/shared/snowflake"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	domain "ddyidc/internal/customer/domain"
 	repository "ddyidc/internal/customer/repository"
@@ -257,6 +259,20 @@ func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, 
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "创建登录会话失败")
 		return
+	}
+	if kind == auth.SessionUser {
+		now := time.Now()
+		err = db.G.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Table("customer.login_logs").Create(map[string]any{"id": snowflake.GenID(), "customer_id": userID, "username": account, "ip": clientIP(r), "status": 1, "created_at": now, "updated_at": now}).Error; err != nil {
+				return err
+			}
+			return tx.Table("customer.customers").Where("id=?", userID).Updates(map[string]any{"last_login_at": now, "last_login_ip": clientIP(r)}).Error
+		})
+		if err != nil {
+			_ = h.jwt.RevokeSession(r.Context(), kind, userID)
+			writeError(w, 500, "保存登录记录失败")
+			return
+		}
 	}
 	h.jwt.SetSessionCookie(w, kind, token)
 	writeJSON(w, http.StatusOK, map[string]any{"token": "", "user": user, "needBindMobile": needBindMobile})
