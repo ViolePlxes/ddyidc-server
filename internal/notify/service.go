@@ -417,13 +417,16 @@ func (m *Manager) notifyContact(ctx context.Context, scene string, contact Conta
 		return nil
 	}
 	var targets []struct{ channel, value string }
-	if (template.Channel == ChannelEmail || template.Channel == ChannelBoth) && validEmail(contact.Email) {
+	if (template.Channel == ChannelEmail || template.Channel == ChannelBoth) && !contact.SkipEmail && validEmail(contact.Email) {
 		targets = append(targets, struct{ channel, value string }{ChannelEmail, strings.ToLower(contact.Email)})
 	}
-	if (template.Channel == ChannelSMS || template.Channel == ChannelBoth) && validMobile(contact.Phone) {
+	if (template.Channel == ChannelSMS || template.Channel == ChannelBoth) && !contact.SkipSMS && validMobile(contact.Phone) {
 		targets = append(targets, struct{ channel, value string }{ChannelSMS, contact.Phone})
 	}
 	if len(targets) == 0 {
+		if (template.Channel == ChannelEmail && contact.SkipEmail) || (template.Channel == ChannelSMS && contact.SkipSMS) || (template.Channel == ChannelBoth && (contact.SkipEmail || contact.SkipSMS)) {
+			return nil
+		}
 		return errors.New("接收人没有可用的通知联系方式")
 	}
 	var failures []string
