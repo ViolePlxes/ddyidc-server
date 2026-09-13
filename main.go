@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"ddyidc/internal/adminread"
+	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/cdnsell"
 	customerhandler "ddyidc/internal/customer/handler"
 	customerrrepo "ddyidc/internal/customer/repository"
@@ -219,6 +220,8 @@ func main() {
 	// 注册路由（各域 handler 在此注册）
 	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile)
 	notifyManager.StartExpiryScanner(context.Background())
+	balance.New(db.G).StartReconciliation(context.Background())
+	balance.New(db.G).StartNotifications(context.Background(), notifyManager)
 	updateManager.StartResultWatcher(context.Background())
 
 	fmt.Printf("DDYIDC 服务启动，监听 %s:%d\n", c.Host, c.Port)

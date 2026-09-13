@@ -3,6 +3,7 @@ package points
 import (
 	"context"
 	"crypto/rand"
+	balance "ddyidc/internal/billing/balance"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -607,7 +608,7 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 			}
 		}
 		total := goods.PointsCost * int64(quantity)
-		out = Order{OrderNo: "PM" + s.now().Format("20060102150405") + fmt.Sprintf("%06d", snowflake.GenID()%1000000), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
+		out = Order{ID: snowflake.GenID(), OrderNo: "PM" + s.now().Format("20060102150405") + fmt.Sprintf("%06d", snowflake.GenID()%1000000), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
 		cfg := jsonObject(goods.Config)
 		if goods.Type == "physical" {
 			out.Status = "pending"
@@ -659,14 +660,16 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 			if amount <= 0 {
 				return errors.New("余额商品配置无效")
 			}
-			now := s.now()
-			if e := tx.Exec("INSERT IGNORE INTO billing.accounts (id,customer_id,balance,frozen_amount,credit_limit,total_recharge,total_consume,created_at,updated_at) VALUES (?,?,0,0,0,0,0,?,?)", snowflake.GenID(), userID, now, now).Error; e != nil {
+			if amount > int64(balance.MaxMoney)/int64(quantity) {
+				return errors.New("余额商品金额超限")
+			}
+			if e := tx.Table(ordersTable).Create(&out).Error; e != nil {
 				return e
 			}
-			if e := tx.Table("billing.accounts").Where("customer_id=?", userID).Updates(map[string]any{"balance": gorm.Expr("balance+?", amount*int64(quantity)), "updated_at": now}).Error; e != nil {
+			if _, e := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: userID, Type: "points_credit", Amount: balance.Money(amount * int64(quantity)).String(), RefType: "points_order", RefID: out.ID, Channel: "points", RequestID: "POINTS:" + out.OrderNo, Notes: "积分商城兑换余额"}); e != nil {
 				return e
 			}
-			out.DeliveryContent = fmt.Sprintf("余额已到账：¥%.2f", float64(amount*int64(quantity))/100)
+			out.DeliveryContent = "余额已到账：¥" + balance.Money(amount*int64(quantity)).String()
 		}
 		if goods.Type == "coupon" {
 			couponID, e := strconv.ParseInt(stringValue(cfg["couponId"]), 10, 64)
@@ -697,6 +700,9 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 		}
 		if e := tx.Table(goodsTable).Where("id=?", goods.ID).Update("sold", gorm.Expr("sold+?", quantity)).Error; e != nil {
 			return e
+		}
+		if goods.Type == "balance" {
+			return tx.Table(ordersTable).Where("id=?", out.ID).Update("delivery_content", out.DeliveryContent).Error
 		}
 		return tx.Table(ordersTable).Create(&out).Error
 	})

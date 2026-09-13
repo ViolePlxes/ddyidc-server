@@ -96,6 +96,9 @@ func validateProfile(in updateCustomerInput) (normalizedCustomerInput, string) {
 	if in.OperationPassword != "" && (len(in.OperationPassword) < 6 || len(in.OperationPassword) > 20) {
 		return normalizedCustomerInput{}, "操作密码须为 6-20 位"
 	}
+	if in.Mobile != "" && strings.TrimSpace(in.CountryCode) == "" {
+		return normalizedCustomerInput{}, "手机号必须带国家区号"
+	}
 	base := in.createCustomerInput
 	if base.Password == "" {
 		base.Password = "unchanged"
@@ -152,6 +155,10 @@ func (h *handler) updateCustomer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	e := h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+		changedFields, err := profileChangedFields(tx, id, in, n)
+		if err != nil {
+			return err
+		}
 		if e := tx.Table("customer.customers").Where("id=? AND deleted_at IS NULL", id).Updates(updates).Error; e != nil {
 			return e
 		}
@@ -169,7 +176,14 @@ func (h *handler) updateCustomer(w http.ResponseWriter, r *http.Request) {
 			settings.OperationPasswordHash = hash
 			columns = append(columns, "operation_password_hash")
 		}
-		return tx.Clauses(clause.OnConflict{DoUpdates: clause.AssignmentColumns(columns)}).Create(&settings).Error
+		if e := tx.Clauses(clause.OnConflict{DoUpdates: clause.AssignmentColumns(columns)}).Create(&settings).Error; e != nil {
+			return e
+		}
+		actor, name, e := h.balanceActor(r)
+		if e != nil {
+			return e
+		}
+		return auditCustomer(tx, id, actor, name, "profile_update", changedFields, requestIP(r))
 	})
 	if e != nil {
 		if strings.Contains(strings.ToLower(e.Error()), "duplicate") {
@@ -219,7 +233,7 @@ func (h *handler) customerRecords(w http.ResponseWriter, r *http.Request) {
 		selection = "CAST(o.id AS CHAR) id,o.order_no number,COALESCE(oi.product_name,'') name,o.status,o.pay_amount amount,o.created_at"
 		order = "o.created_at DESC,o.id DESC"
 	case "transactions":
-		selection = "CAST(id AS CHAR) id,tx_no number,type,direction,amount,balance_before,balance_after,COALESCE(remark,'') remark,created_at"
+		selection = "CAST(id AS CHAR) id,tx_no number,CASE type WHEN 'recharge' THEN 1 WHEN 'order_pay' THEN 2 WHEN 'refund' THEN 3 WHEN 'withdraw' THEN 4 WHEN 'commission' THEN 5 ELSE 6 END type,direction,CAST(ABS(amount)*100 AS SIGNED) amount,CAST(balance_before*100 AS SIGNED) balance_before,CAST(balance_after*100 AS SIGNED) balance_after,COALESCE(remark,'') remark,created_at"
 		order = "created_at DESC,id DESC"
 	case "logins":
 		selection = "CAST(id AS CHAR) id,ip,created_at"
@@ -278,6 +292,7 @@ func (h *handler) deleteCustomer(w http.ResponseWriter, r *http.Request) {
 	}
 	protected := errors.New("客户有关联业务记录或资金账户，不能删除；可改为停用")
 	e := h.db.WithContext(r.Context()).Transaction(func(tx *gorm.DB) error {
+
 		var row struct{ ID int64 }
 		if e := tx.Table("customer.customers").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND deleted_at IS NULL", id).Take(&row).Error; e != nil {
 			return e

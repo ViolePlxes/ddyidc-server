@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	balance "ddyidc/internal/billing/balance"
 	"errors"
 	"fmt"
 	"time"
@@ -280,9 +281,7 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 			if result.RowsAffected != 1 {
 				return ErrInvalidState
 			}
-			if err := creditRecharge(tx, &completed, paidAt); err != nil {
-				return err
-			}
+
 		case dom.BizMarketplace:
 			if err := tx.SavePoint("before_marketplace_transfer").Error; err != nil {
 				return err
@@ -321,6 +320,11 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 			return ErrInvalidState
 		}
 		completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusPaid, notification.TransactionID, notification.SafeRaw, &paidAt
+		if completed.BizType == dom.BizRecharge {
+			if err := creditRecharge(tx, &completed, paidAt); err != nil {
+				return err
+			}
+		}
 		transitioned = true
 		return nil
 	})
@@ -328,26 +332,9 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 }
 
 func creditRecharge(tx *gorm.DB, payment *dom.Payment, now time.Time) error {
-	accountID := snowflake.GenID()
-	if err := tx.Exec("INSERT IGNORE INTO billing.accounts (id, customer_id, balance, frozen_amount, credit_limit, total_recharge, total_consume, created_at, updated_at) VALUES (?, ?, 0, 0, 0, 0, 0, ?, ?)", accountID, payment.CustomerID, now, now).Error; err != nil {
-		return err
-	}
-	var account struct {
-		ID            int64
-		Balance       int64
-		TotalRecharge int64
-	}
-	if err := tx.Table("billing.accounts").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,balance,total_recharge").Where("customer_id = ?", payment.CustomerID).First(&account).Error; err != nil {
-		return err
-	}
-	after := account.Balance + payment.AmountFen
-	if err := tx.Table("billing.accounts").Where("id = ?", account.ID).Updates(map[string]any{"balance": after, "total_recharge": account.TotalRecharge + payment.AmountFen, "updated_at": now}).Error; err != nil {
-		return err
-	}
-	return tx.Exec("INSERT INTO billing.transactions (id, tx_no, customer_id, type, direction, amount, balance_before, balance_after, related_type, related_id, remark, created_at, updated_at) VALUES (?, ?, ?, 1, 1, ?, ?, ?, 'recharge', ?, '在线充值到账', ?, ?)",
-		snowflake.GenID(), "RCT"+fmt.Sprintf("%d", payment.ID), payment.CustomerID, payment.AmountFen, account.Balance, after, payment.BizID, now, now).Error
+	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: payment.CustomerID, Type: "recharge", Amount: balance.Money(payment.AmountFen).String(), RefType: "payment", RefID: payment.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("RCT%d", payment.ID), BizTrace: payment.TransactionID, Notes: "在线充值到账"})
+	return err
 }
-
 func (r *GormRepository) Close(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
 	var payment dom.Payment
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	balance "ddyidc/internal/billing/balance"
 	"errors"
 	"fmt"
 	"strconv"
@@ -88,19 +89,8 @@ func (s *Service) PayBalance(ctx context.Context, buyerID, orderID int64) (*Orde
 		if err != nil {
 			return err
 		}
-		var account struct{ ID, Balance, TotalConsume int64 }
-		if err := tx.Table("billing.accounts").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,balance,total_consume").Where("customer_id=?", buyerID).First(&account).Error; err != nil {
-			return errors.New("账户余额不足")
-		}
-		if account.Balance < pay {
-			return errors.New("账户余额不足")
-		}
-		after := account.Balance - pay
 		now := s.now()
-		if err := tx.Table("billing.accounts").Where("id=?", account.ID).Updates(map[string]any{"balance": after, "total_consume": account.TotalConsume + pay, "updated_at": now}).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec("INSERT INTO billing.transactions (id,tx_no,customer_id,type,direction,amount,balance_before,balance_after,related_type,related_id,remark,created_at,updated_at) VALUES (?,?,?,2,2,?,?,?,?,?,'交易市场购买',?,?)", snowflake.GenID(), "MT"+fmt.Sprintf("%d", snowflake.GenID()), buyerID, pay, account.Balance, after, "marketplace", orderID, now, now).Error; err != nil {
+		if _, err := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyerID, Type: "order_pay", Amount: balance.Money(-pay).String(), RefType: "marketplace", RefID: orderID, Channel: "marketplace", RequestID: fmt.Sprintf("MT:%d", orderID), Notes: "交易市场购买"}); err != nil {
 			return err
 		}
 		if err := CompletePaidOrderTx(tx, orderID, buyerID, now, "balance"); err != nil {
@@ -155,13 +145,11 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 	if err := tx.Table(walletTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", order.SellerID).First(&wallet).Error; err != nil {
 		return err
 	}
-	frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
 	income, err := parsePositiveMoney(order.SellerIncome)
 	if err != nil {
 		return err
 	}
-	frozenAfter := frozen + income
-	if err := tx.Table(walletTable).Where("user_id=?", order.SellerID).Updates(map[string]any{"frozen_balance": formatMoney(frozenAfter), "updated_at": paidAt}).Error; err != nil {
+	if err := changeWallet(tx, order.SellerID, "seller_pending", income, order.ID, "marketplace", "卖家待结算"); err != nil {
 		return err
 	}
 	if err := tx.Table("instance.instances").Where("id=? AND customer_id=?", host.ID, order.SellerID).Updates(map[string]any{"customer_id": buyerID, "updated_at": paidAt}).Error; err != nil {
@@ -210,7 +198,7 @@ func CompensateFailedExternalPaymentTx(tx *gorm.DB, orderID, buyerID int64, paid
 	if err := creditBilling(tx, buyerID, amount, orderID, paidAt); err != nil {
 		return err
 	}
-	var account struct{ Balance int64 }
+	var account struct{ Balance balance.Money }
 	if err := tx.Table("billing.accounts").Select("balance").Where("customer_id=?", buyerID).First(&account).Error; err != nil {
 		return err
 	}
@@ -220,7 +208,7 @@ func CompensateFailedExternalPaymentTx(tx *gorm.DB, orderID, buyerID int64, paid
 	if err := tx.Table(listingsTable).Where("id=? AND status='locked'", order.ListingID).Updates(map[string]any{"status": "on_sale", "updated_at": paidAt}).Error; err != nil {
 		return err
 	}
-	return appendFlow(tx, buyerID, "refund_reversed", "in", order.PayAmount, formatMoney(account.Balance), orderID, "第三方支付后过户失败，已退至账户余额", paidAt)
+	return appendFlow(tx, buyerID, "refund_reversed", "in", order.PayAmount, account.Balance.String(), orderID, "第三方支付后过户失败，已退至账户余额", paidAt)
 }
 
 func (s *Service) AfterExternalPayment(ctx context.Context, orderID, buyerID int64) error {
@@ -309,21 +297,18 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 		income, _ := parsePositiveMoney(out.SellerIncome)
 		balance, _ := parseUnsignedMoney(wallet.Balance)
 		frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
-		updates := map[string]any{"updated_at": s.now()}
 		if out.Status == "settled" {
 			if balance < income {
 				return errors.New("卖家钱包余额不足，需平台仲裁")
 			}
 			balance -= income
-			updates["balance"] = formatMoney(balance)
 		} else {
 			if frozen < income {
 				return errors.New("冻结金额不足，需平台仲裁")
 			}
 			frozen -= income
-			updates["frozen_balance"] = formatMoney(frozen)
 		}
-		if err := tx.Table(walletTable).Where("user_id=?", out.SellerID).Updates(updates).Error; err != nil {
+		if err := changeWallet(tx, out.SellerID, "refund_reversed", -income, out.ID, "marketplace", "退款回滚"); err != nil {
 			return err
 		}
 		pay, _ := parsePositiveMoney(out.PayAmount)
@@ -422,14 +407,13 @@ func (s *Service) createWithdrawal(ctx context.Context, userID int64, amountText
 			return err
 		}
 		balance, _ := parseUnsignedMoney(wallet.Balance)
-		frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
 		if balance < amount {
 			return errors.New("交易账户余额不足")
 		}
-		if err := tx.Table(walletTable).Where("user_id=?", userID).Updates(map[string]any{"balance": formatMoney(balance - amount), "frozen_balance": formatMoney(frozen + amount), "updated_at": s.now()}).Error; err != nil {
+		if err := tx.Table(withdrawalsTable).Create(row).Error; err != nil {
 			return err
 		}
-		if err := tx.Table(withdrawalsTable).Create(row).Error; err != nil {
+		if err := changeWallet(tx, userID, "withdraw_hold", -amount, row.ID, "marketplace_withdrawal", "申请提现冻结"); err != nil {
 			return err
 		}
 		if !settings.WithdrawalAuditEnabled {
@@ -482,7 +466,7 @@ func (s *Service) AuditWithdrawal(ctx context.Context, adminID, id int64, approv
 		if frozen < amount {
 			return errors.New("冻结金额不足")
 		}
-		if err := tx.Table(walletTable).Where("user_id=?", out.UserID).Updates(map[string]any{"balance": formatMoney(balance + amount), "frozen_balance": formatMoney(frozen - amount), "updated_at": s.now()}).Error; err != nil {
+		if err := changeWallet(tx, out.UserID, "withdraw_reject", amount, out.ID, "marketplace_withdrawal", "提现拒绝退回", adminID); err != nil {
 			return err
 		}
 		if err := tx.Table(withdrawalsTable).Where("id=?", id).Updates(map[string]any{"status": "rejected", "auditor_id": adminID, "remark": strings.TrimSpace(remark), "updated_at": s.now()}).Error; err != nil {
@@ -507,11 +491,10 @@ func (s *Service) completeWithdrawalTx(tx *gorm.DB, row *Withdrawal, adminID int
 		return err
 	}
 	frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
-	withdrawn, _ := parseUnsignedMoney(wallet.TotalWithdrawn)
 	if frozen < amount {
 		return errors.New("冻结金额不足")
 	}
-	if err := tx.Table(walletTable).Where("user_id=?", row.UserID).Updates(map[string]any{"frozen_balance": formatMoney(frozen - amount), "total_withdrawn": formatMoney(withdrawn + amount), "updated_at": s.now()}).Error; err != nil {
+	if err := changeWallet(tx, row.UserID, "withdraw", -amount, row.ID, "marketplace_withdrawal", "提现已处理", adminID); err != nil {
 		return err
 	}
 	updates := map[string]any{"status": "paid", "remark": strings.TrimSpace(remark), "updated_at": s.now()}
@@ -669,12 +652,11 @@ func settleOrderTx(tx *gorm.DB, o *Order, now time.Time) error {
 	income, _ := parsePositiveMoney(o.SellerIncome)
 	balance, _ := parseUnsignedMoney(wallet.Balance)
 	frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
-	total, _ := parseUnsignedMoney(wallet.TotalIncome)
 	if frozen < income {
 		return errors.New("待结算资金不足")
 	}
 	after := balance + income
-	if err := tx.Table(walletTable).Where("user_id=?", o.SellerID).Updates(map[string]any{"balance": formatMoney(after), "frozen_balance": formatMoney(frozen - income), "total_income": formatMoney(total + income), "updated_at": now}).Error; err != nil {
+	if err := changeWallet(tx, o.SellerID, "settled", income, o.ID, "marketplace", "交易结算"); err != nil {
 		return err
 	}
 	if err := tx.Table(ordersTable).Where("id=? AND status='paid'", o.ID).Updates(map[string]any{"status": "settled", "updated_at": now}).Error; err != nil {
@@ -698,21 +680,18 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 }
 
 func appendFlow(tx *gorm.DB, userID int64, flowType, direction, amount, balance string, refID int64, remark string, at time.Time) error {
+	var existing int64
+	if err := tx.Table(flowsTable).Where("user_id=? AND type=? AND ref_id=?", userID, flowType, refID).Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
 	return tx.Table(flowsTable).Create(&Flow{FlowNo: "MF" + at.Format("20060102150405") + fmt.Sprintf("%06d", snowflake.GenID()%1000000), UserID: userID, Type: flowType, Direction: direction, Amount: amount, BalanceAfter: balance, RefID: refID, Remark: remark, CreatedAt: at}).Error
 }
 func creditBilling(tx *gorm.DB, userID, amount, refID int64, now time.Time) error {
-	if err := tx.Exec("INSERT IGNORE INTO billing.accounts (id,customer_id,balance,frozen_amount,credit_limit,total_recharge,total_consume,created_at,updated_at) VALUES (?,?,0,0,0,0,0,?,?)", snowflake.GenID(), userID, now, now).Error; err != nil {
-		return err
-	}
-	var account struct{ ID, Balance int64 }
-	if err := tx.Table("billing.accounts").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,balance").Where("customer_id=?", userID).First(&account).Error; err != nil {
-		return err
-	}
-	after := account.Balance + amount
-	if err := tx.Table("billing.accounts").Where("id=?", account.ID).Updates(map[string]any{"balance": after, "updated_at": now}).Error; err != nil {
-		return err
-	}
-	return tx.Exec("INSERT INTO billing.transactions (id,tx_no,customer_id,type,direction,amount,balance_before,balance_after,related_type,related_id,remark,created_at,updated_at) VALUES (?,?,?,4,1,?,?,?,?,?,'交易市场退款',?,?)", snowflake.GenID(), "MR"+fmt.Sprintf("%d", snowflake.GenID()), userID, amount, account.Balance, after, "marketplace", refID, now, now).Error
+	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: userID, Type: "refund", Amount: balance.Money(amount).String(), RefType: "marketplace", RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MR:%d", refID), Notes: "交易市场退款"})
+	return err
 }
 func (s *Service) acquire(ctx context.Context, key string, ttl time.Duration) (func(), error) {
 	if s.redis == nil {
@@ -748,3 +727,18 @@ func (s *Service) notifyTrade(o *Order) {
 }
 
 func MoneyToCents(v string) (int64, error) { return parsePositiveMoney(v) }
+
+func changeWallet(tx *gorm.DB, userID int64, typ string, amount, refID int64, refType, notes string, actors ...int64) error {
+	actor := int64(0)
+	name := ""
+	if len(actors) > 0 && actors[0] > 0 {
+		actor = actors[0]
+		var admin struct{ Username string }
+		if err := tx.Table("system.admins").Select("username").Where("id=? AND status=1", actor).Take(&admin).Error; err != nil {
+			return err
+		}
+		name = admin.Username
+	}
+	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{Scope: "marketplace_wallet", CustomerID: userID, Type: typ, Amount: balance.Money(amount).String(), RefType: refType, RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MW:%s:%d", typ, refID), Notes: notes, AdminID: actor, AdminName: name})
+	return err
+}

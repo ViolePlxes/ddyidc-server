@@ -56,6 +56,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 type templateSeed struct{ scene, channel, title, content string }
 
 var defaultTemplates = []templateSeed{
+ {"balance_freeze", ChannelBoth, "余额冻结通知", "您的余额已冻结 {{amount}} 元，原因：{{reason}}。"},
 	{"register", ChannelBoth, "注册验证码", "您的注册验证码为 {{code}}，{{minutes}} 分钟内有效。"},
 	{"login", ChannelBoth, "登录验证码", "您的登录验证码为 {{code}}，{{minutes}} 分钟内有效。"},
 	{"reset", ChannelBoth, "重置密码验证码", "您的重置密码验证码为 {{code}}，{{minutes}} 分钟内有效。"},

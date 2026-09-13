@@ -720,7 +720,7 @@ func (r *GormRepository) salesCustomerQuery(c context.Context, salesID int64) *g
 			"(SELECT COUNT(*) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS order_count, "+
 			"(SELECT COALESCE(SUM(o.pay_amount), 0) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS total_spend, "+
 			"(SELECT MAX(o.paid_at) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS last_pay_at, "+
-			"(SELECT ba.balance FROM billing.accounts ba WHERE ba.customer_id = cu.id LIMIT 1) AS balance").
+			"(SELECT CAST(ba.balance*100 AS SIGNED) FROM billing.accounts ba WHERE ba.customer_id = cu.id LIMIT 1) AS balance").
 		Where("sc.sales_id = ? AND sc.status = 1", salesID)
 }
 

@@ -3,6 +3,7 @@ package groupbuy
 import (
 	"context"
 	"crypto/rand"
+	balance "ddyidc/internal/billing/balance"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -331,10 +332,10 @@ func (s *Service) StartGroup(ctx context.Context, clientID int64, input StartInp
 		if created.NeedNum == 0 {
 			return errors.New("团型仅支持2/3/5人团")
 		}
-		if err := s.changeBalance(tx, clientID, -created.PayAmount, "groupbuy", id, "发起拼团扣款"); err != nil {
+		if err := tx.Table(recordTable).Create(&created).Error; err != nil {
 			return err
 		}
-		return tx.Table(recordTable).Create(&created).Error
+		return s.changeBalance(tx, clientID, -created.PayAmount, "groupbuy", id, "发起拼团扣款")
 	})
 	if err != nil {
 		return nil, err
@@ -381,10 +382,10 @@ func (s *Service) JoinGroup(ctx context.Context, clientID, leaderID int64, recom
 			return err
 		}
 		created = Record{ID: snowflake.GenID(), ActivityID: activity.ID, ClientID: clientID, GroupType: leader.GroupType, LeaderID: leader.ID, CurrentNum: 0, NeedNum: leader.NeedNum, PayAmount: price - discount, GroupPrice: price, LevelDiscountAmount: discount, InviteCode: invite, Status: 1, TimeoutTime: leader.TimeoutTime, RecommendIdentify: strings.TrimSpace(recommend), RecommendClientID: recommendID}
-		if err := s.changeBalance(tx, clientID, -created.PayAmount, "groupbuy", created.ID, "参与拼团扣款"); err != nil {
+		if err := tx.Table(recordTable).Create(&created).Error; err != nil {
 			return err
 		}
-		if err := tx.Table(recordTable).Create(&created).Error; err != nil {
+		if err := s.changeBalance(tx, clientID, -created.PayAmount, "groupbuy", created.ID, "参与拼团扣款"); err != nil {
 			return err
 		}
 		leader.CurrentNum++
@@ -496,40 +497,20 @@ func (s *Service) memberPrice(tx *gorm.DB, activity *Activity, clientID int64, g
 }
 
 func (s *Service) changeBalance(tx *gorm.DB, clientID, delta int64, related string, relatedID int64, remark string) error {
-	now := s.now()
-	if err := tx.Exec("INSERT IGNORE INTO billing.accounts (id,customer_id,balance,frozen_amount,credit_limit,total_recharge,total_consume,created_at,updated_at) VALUES (?,?,0,0,0,0,0,?,?)", snowflake.GenID(), clientID, now, now).Error; err != nil {
-		return err
+	if delta == 0 {
+		return nil
 	}
-	var account struct{ ID, Balance, TotalConsume int64 }
-	if err := tx.Table("billing.accounts").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,balance,total_consume").Where("customer_id=?", clientID).Take(&account).Error; err != nil {
-		return err
+	typ := "order_pay"
+	if delta > 0 {
+		typ = "refund"
 	}
-	after := account.Balance + delta
-	if after < 0 {
-		return errors.New("余额不足，请先充值")
-	}
-	total := account.TotalConsume
-	typ, direction := 3, 1
-	if delta < 0 {
-		typ, direction = 2, 2
-		total += -delta
-	} else {
-		total -= delta
-		if total < 0 {
-			total = 0
-		}
-	}
-	if err := tx.Table("billing.accounts").Where("id=?", account.ID).Updates(map[string]any{"balance": after, "total_consume": total, "updated_at": now}).Error; err != nil {
-		return err
-	}
-	amount := delta
-	if amount < 0 {
-		amount = -amount
-	}
-	txNo := fmt.Sprintf("GB%d", snowflake.GenID())
-	return tx.Exec("INSERT INTO billing.transactions (id,tx_no,customer_id,type,direction,amount,balance_before,balance_after,related_type,related_id,remark,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)", snowflake.GenID(), txNo, clientID, typ, direction, amount, account.Balance, after, related, relatedID, remark, now, now).Error
+	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{
+		CustomerID: clientID, Type: typ, Amount: balance.Money(delta).String(),
+		RefType: related, RefID: relatedID, Channel: "groupbuy",
+		RequestID: fmt.Sprintf("GB:%s:%d", typ, relatedID), Notes: remark,
+	})
+	return err
 }
-
 func (s *Service) completeGroup(ctx context.Context, leaderID int64) error {
 	lockValue, _ := s.completion.LoadOrStore(leaderID, &sync.Mutex{})
 	mu := lockValue.(*sync.Mutex)

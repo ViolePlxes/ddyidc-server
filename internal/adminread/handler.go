@@ -83,10 +83,10 @@ const customerProjection = "CAST(c.id AS CHAR) AS id, " +
 	"COALESCE(c.language, '') AS language, COALESCE((SELECT s.remark FROM customer.admin_customer_settings s WHERE s.customer_id=c.id), '') AS remark, " +
 	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status IN (1, 2, 3, 4)) AS active_product_count, " +
 	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL AND i.status <> 6) AS product_count, " +
-	"COALESCE((SELECT ba.balance FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS balance, " +
-	"COALESCE((SELECT ba.total_consume FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS consume_amount, " +
-	"COALESCE((SELECT SUM(bt.amount) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 3), 0) AS refund_amount, " +
-	"COALESCE((SELECT SUM(bt.amount) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 4), 0) AS withdrawal_amount, " +
+	"COALESCE((SELECT CAST(ba.balance*100 AS SIGNED) FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS balance, " +
+	"COALESCE((SELECT CAST(ba.total_consume*100 AS SIGNED) FROM billing.accounts ba WHERE ba.customer_id = c.id LIMIT 1), 0) AS consume_amount, " +
+	"COALESCE((SELECT CAST(SUM(bt.amount)*100 AS SIGNED) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 'refund'), 0) AS refund_amount, " +
+	"COALESCE((SELECT CAST(-SUM(bt.amount)*100 AS SIGNED) FROM billing.transactions bt WHERE bt.customer_id = c.id AND bt.type = 'withdraw'), 0) AS withdrawal_amount, " +
 	"(SELECT COUNT(*) FROM `order`.orders o WHERE o.customer_id = c.id) AS order_count, " +
 	"(SELECT COUNT(*) FROM instance.instances i WHERE i.customer_id = c.id AND i.deleted_at IS NULL) AS instance_count, c.created_at"
 
@@ -99,6 +99,15 @@ type trendPoint struct {
 func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.Manager) {
 	h := &handler{db: database, auth: authManager}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/admin/v1/clients/:id", Handler: h.clientDetail},
+		{Method: http.MethodPut, Path: "/admin/v1/clients/:id", Handler: h.clientUpdate},
+		{Method: http.MethodGet, Path: "/admin/v1/clients/:id/credit", Handler: h.credit},
+		{Method: http.MethodPut, Path: "/admin/v1/clients/:id/credit", Handler: h.credit},
+		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/recharge", Handler: h.credit},
+		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/credit/freeze", Handler: h.credit},
+		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/credit/unfreeze", Handler: h.credit},
+		{Method: http.MethodGet, Path: "/admin/v1/clients/:id/credit/freeze", Handler: h.frozenCredits},
+		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/login", Handler: h.clientLogin},
 		{Method: http.MethodGet, Path: "/admin/v1/dashboard", Handler: h.dashboard},
 		{Method: http.MethodGet, Path: "/admin/v1/orders", Handler: h.orders},
 		{Method: http.MethodGet, Path: "/admin/v1/customers", Handler: h.customers},
@@ -306,7 +315,7 @@ func (h *handler) customers(w http.ResponseWriter, r *http.Request) {
 	if err := h.db.WithContext(r.Context()).Table("customer.customers AS c").
 		Joins("LEFT JOIN billing.accounts ba ON ba.customer_id = c.id").
 		Where("c.deleted_at IS NULL").
-		Select("COALESCE(SUM(ba.balance), 0)").Scan(&totalBalanceSum).Error; err != nil {
+		Select("CAST(COALESCE(SUM(ba.balance), 0)*100 AS SIGNED)").Scan(&totalBalanceSum).Error; err != nil {
 		writeError(w, http.StatusInternalServerError, "读取客户余额总计失败")
 		return
 	}
