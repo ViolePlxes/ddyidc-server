@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION="1.0.3"
+readonly INSTALLER_VERSION="1.0.4"
 readonly DEFAULT_BACKEND_DIR="/home/ddyidc/ddyidc-project/server"
 readonly DEFAULT_FRONTEND_DIR="/home/ddyidc/web-react"
 readonly DEFAULT_LOG_FILE="/var/log/ddyidc-install.log"
@@ -67,7 +67,7 @@ GitHub 私有仓库：
   GITHUB_TOKEN=TOKEN        推荐通过环境变量传入；token 不写入 Git URL、配置或日志
   --branch BRANCH           后端与前端分支，默认 main
   --update                  已有 Git 工作区也执行 fetch + fast-forward
-  --deploy-key              生成后续自动更新用 ed25519 deploy key，并输出公钥
+  --deploy-key              为后端/前端生成独立 deploy key，并配置后续只读更新
 
 路径与数据：
   --backend-dir PATH        后端目录，默认 /home/ddyidc/ddyidc-project/server
@@ -671,16 +671,60 @@ frontend_commit="$(repository_commit "$FRONTEND_DIR")"
 ok "后端 ${server_commit:0:12}；前端 ${frontend_commit:0:12}"
 
 if ((GENERATE_DEPLOY_KEY == 1)); then
-  deploy_key="/home/ddyidc/.ssh/ddyidc_deploy"
-  install -d -m 0700 -o "$APP_USER" -g "$APP_GROUP" /home/ddyidc/.ssh
-  if [[ ! -s "$deploy_key" ]]; then
-    runuser -u "$APP_USER" -- ssh-keygen -q -t ed25519 -N '' -C "ddyidc-deploy@$(hostname)" -f "$deploy_key"
-  else
-    info "保留已有 deploy key：$deploy_key"
+  ssh_dir="/home/ddyidc/.ssh"
+  backend_deploy_key="$ssh_dir/ddyidc-server-deploy"
+  frontend_deploy_key="$ssh_dir/ddyidc-web-deploy"
+  github_known_hosts="$ssh_dir/known_hosts"
+  install -d -m 0700 -o "$APP_USER" -g "$APP_GROUP" "$ssh_dir"
+
+  ensure_deploy_key() {
+    local key_path="$1" key_comment="$2"
+    if [[ ! -s "$key_path" ]]; then
+      runuser -u "$APP_USER" -- ssh-keygen -q -t ed25519 -N '' -C "$key_comment@$(hostname)" -f "$key_path"
+    else
+      info "保留已有 deploy key：$key_path"
+    fi
+    if [[ ! -s "$key_path.pub" ]]; then
+      ssh-keygen -y -f "$key_path" >"$key_path.pub"
+    fi
+    chown "$APP_USER:$APP_GROUP" "$key_path" "$key_path.pub"
+    chmod 0600 "$key_path"
+    chmod 0644 "$key_path.pub"
+  }
+
+  ensure_deploy_key "$backend_deploy_key" "ddyidc-server-deploy"
+  ensure_deploy_key "$frontend_deploy_key" "ddyidc-web-deploy"
+
+  github_meta_file="$(mktemp /var/tmp/ddyidc-github-meta.XXXXXX)"
+  if ! retry_network curl -fsSL --connect-timeout 15 --max-time 60 -H 'Accept: application/vnd.github+json' -o "$github_meta_file" https://api.github.com/meta; then
+    rm -f -- "$github_meta_file"
+    die "无法读取 GitHub 官方 SSH 主机公钥元数据"
   fi
-  chmod 0600 "$deploy_key"; chmod 0644 "$deploy_key.pub"
-  printf '\n%sGitHub deploy key 公钥（请分别添加到两个仓库）：%s\n' "$COLOR_YELLOW" "$COLOR_RESET"
-  cat "$deploy_key.pub"
+  jq -r '.ssh_keys[]? | "github.com " + .' "$github_meta_file" >"$github_known_hosts"
+  rm -f -- "$github_meta_file"
+  [[ "$(wc -l <"$github_known_hosts")" -ge 2 ]] || die "GitHub 官方 SSH 主机公钥元数据不完整"
+  chown "$APP_USER:$APP_GROUP" "$github_known_hosts"
+  chmod 0644 "$github_known_hosts"
+
+  runuser -u "$APP_USER" -- git -C "$BACKEND_DIR" remote set-url origin 'git@github.com:ViolePlxes/ddyidc-server.git'
+  runuser -u "$APP_USER" -- git -C "$BACKEND_DIR" config core.sshCommand "ssh -i $backend_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$github_known_hosts"
+  runuser -u "$APP_USER" -- git -C "$FRONTEND_DIR" remote set-url origin 'git@github.com:ViolePlxes/ddyidc-web.git'
+  runuser -u "$APP_USER" -- git -C "$FRONTEND_DIR" config core.sshCommand "ssh -i $frontend_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$github_known_hosts"
+
+  if [[ -e "$ssh_dir/ddyidc_deploy" || -e "$ssh_dir/ddyidc_deploy.pub" ]]; then
+    warn "检测到旧版单仓库密钥 $ssh_dir/ddyidc_deploy；已保留但不再用于更新"
+  fi
+
+  printf '\n%s后端仓库 deploy key（添加后不要勾选 Allow write access）：%s\n' "$COLOR_YELLOW" "$COLOR_RESET"
+  printf 'https://github.com/ViolePlxes/ddyidc-server/settings/keys\n'
+  cat "$backend_deploy_key.pub"
+  printf '\n%s前端仓库 deploy key（添加后不要勾选 Allow write access）：%s\n' "$COLOR_YELLOW" "$COLOR_RESET"
+  printf 'https://github.com/ViolePlxes/ddyidc-web/settings/keys\n'
+  cat "$frontend_deploy_key.pub"
+  printf '\n添加完成后分别验证：\n'
+  printf 'sudo -u %s git -C %q ls-remote origin HEAD\n' "$APP_USER" "$BACKEND_DIR"
+  printf 'sudo -u %s git -C %q ls-remote origin HEAD\n' "$APP_USER" "$FRONTEND_DIR"
+  ok "已配置两个仓库各自独立的 SSH 更新 remote；请在 GitHub 保持 deploy key 只读"
 fi
 
 step "6/12" "生成并保护数据库、Redis、JWT 与 AES 密钥"
@@ -1298,7 +1342,7 @@ AES_KEY=$aes_key
 首次登录后必须立即修改初始密码，并将本文件转移到安全的密码管理器后删除。
 
 独立密钥文件目录：$SECRET_DIR
-$(if ((GENERATE_DEPLOY_KEY == 1)); then printf 'Deploy key 私钥：/home/ddyidc/.ssh/ddyidc_deploy\nDeploy key 公钥：/home/ddyidc/.ssh/ddyidc_deploy.pub'; else printf 'Deploy key：未生成（可加 --deploy-key 重跑）'; fi)
+$(if ((GENERATE_DEPLOY_KEY == 1)); then printf '后端 deploy key 私钥：/home/ddyidc/.ssh/ddyidc-server-deploy\n后端 deploy key 公钥：/home/ddyidc/.ssh/ddyidc-server-deploy.pub\n前端 deploy key 私钥：/home/ddyidc/.ssh/ddyidc-web-deploy\n前端 deploy key 公钥：/home/ddyidc/.ssh/ddyidc-web-deploy.pub\nGitHub SSH 主机公钥：/home/ddyidc/.ssh/known_hosts'; else printf 'Deploy key：未生成（可加 --deploy-key 重跑）'; fi)
 SUMMARY
 chown root:root "$SUMMARY_FILE"
 chmod 0600 "$SUMMARY_FILE"
