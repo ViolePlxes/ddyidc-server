@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION="1.0.2"
+readonly INSTALLER_VERSION="1.0.3"
 readonly DEFAULT_BACKEND_DIR="/home/ddyidc/ddyidc-project/server"
 readonly DEFAULT_FRONTEND_DIR="/home/ddyidc/web-react"
 readonly DEFAULT_LOG_FILE="/var/log/ddyidc-install.log"
@@ -36,6 +36,9 @@ GENERATE_DEPLOY_KEY=0
 REBUILD=0
 UPDATE_CODE=0
 SKIP_FIREWALL=0
+LETSENCRYPT_STAGING=0
+HTTPS_ENABLED=0
+CERTIFICATE_STATUS="未配置"
 CURRENT_STEP="启动"
 FAILURE_REPORTED=0
 GIT_ASKPASS_FILE=""
@@ -75,6 +78,7 @@ GitHub 私有仓库：
 系统：
   --ssh-port PORT           UFW 放行的 SSH 端口，默认 22
   --skip-firewall           不修改/启用 UFW
+  --letsencrypt-staging     使用 Let's Encrypt 测试证书（不受信任，仅供重复部署测试）
   --log-file PATH           安装日志，默认 /var/log/ddyidc-install.log
   -h, --help                显示帮助
 
@@ -101,6 +105,7 @@ while (($#)); do
     --rebuild) REBUILD=1; shift ;;
     --update) UPDATE_CODE=1; shift ;;
     --skip-firewall) SKIP_FIREWALL=1; shift ;;
+    --letsencrypt-staging) LETSENCRYPT_STAGING=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "未知参数：$1" >&2; usage >&2; exit 2 ;;
   esac
@@ -131,6 +136,10 @@ if [[ -n "$DOMAIN" ]]; then
   [[ -n "$EMAIL" ]] || { echo "提供 --domain 时必须同时提供 --email" >&2; exit 2; }
 elif [[ -n "$EMAIL" ]]; then
   echo "提供 --email 时必须同时提供 --domain" >&2
+  exit 2
+fi
+if ((LETSENCRYPT_STAGING == 1)) && [[ -z "$DOMAIN" ]]; then
+  echo "--letsencrypt-staging 必须与 --domain、--email 同时使用" >&2
   exit 2
 fi
 if [[ -n "$EMAIL" ]] && [[ ! "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; then
@@ -1155,26 +1164,48 @@ else
 fi
 
 if [[ -n "$DOMAIN" ]]; then
-  certbot certonly --webroot -w /var/www/letsencrypt --non-interactive --agree-tos --keep-until-expiring --email "$EMAIL" -d "$DOMAIN"
-  ln -sfn "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /etc/ddyidc/tls/fullchain.pem
-  ln -sfn "/etc/letsencrypt/live/$DOMAIN/privkey.pem" /etc/ddyidc/tls/privkey.pem
-  sed -e "s#REPLACE_WITH_DOMAIN#$DOMAIN#g" -e "s#/opt/ddyidc/web-react#$FRONTEND_DIR#g" "$DEPLOY_DIR/nginx-ddyidc.conf" >/etc/nginx/sites-available/ddyidc
-  install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
-  cat >/etc/letsencrypt/renewal-hooks/deploy/ddyidc-reload-nginx <<'HOOK'
+  certificate_name="$DOMAIN"
+  certbot_args=(certonly --webroot -w /var/www/letsencrypt --non-interactive --agree-tos --keep-until-expiring --email "$EMAIL" -d "$DOMAIN")
+  if ((LETSENCRYPT_STAGING == 1)); then
+    certificate_name="$DOMAIN-staging"
+    certbot_args+=(--staging --cert-name "$certificate_name")
+    info "使用 Let's Encrypt staging 环境申请测试证书"
+  else
+    certbot_args+=(--cert-name "$certificate_name")
+  fi
+  if certbot "${certbot_args[@]}"; then
+    ln -sfn "/etc/letsencrypt/live/$certificate_name/fullchain.pem" /etc/ddyidc/tls/fullchain.pem
+    ln -sfn "/etc/letsencrypt/live/$certificate_name/privkey.pem" /etc/ddyidc/tls/privkey.pem
+    sed -e "s#REPLACE_WITH_DOMAIN#$DOMAIN#g" -e "s#/opt/ddyidc/web-react#$FRONTEND_DIR#g" "$DEPLOY_DIR/nginx-ddyidc.conf" >/etc/nginx/sites-available/ddyidc
+    install -d -m 0755 /etc/letsencrypt/renewal-hooks/deploy
+    cat >/etc/letsencrypt/renewal-hooks/deploy/ddyidc-reload-nginx <<'HOOK'
 #!/usr/bin/env bash
 set -euo pipefail
 nginx -t
 systemctl reload nginx
 HOOK
-  chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/ddyidc-reload-nginx
-  systemctl enable --now certbot.timer
-  nginx -t
-  systemctl reload nginx
-  access_url="https://$DOMAIN"
-  ok "HTTPS 证书与自动续期已启用"
+    chmod 0755 /etc/letsencrypt/renewal-hooks/deploy/ddyidc-reload-nginx
+    systemctl enable --now certbot.timer
+    nginx -t
+    systemctl reload nginx
+    HTTPS_ENABLED=1
+    access_url="https://$DOMAIN"
+    if ((LETSENCRYPT_STAGING == 1)); then
+      CERTIFICATE_STATUS="Let's Encrypt staging 测试证书（浏览器不受信任）"
+    else
+      CERTIFICATE_STATUS="Let's Encrypt 正式证书"
+    fi
+    ok "HTTPS 证书与自动续期已启用"
+  else
+    certbot_status=$?
+    access_url="http://$DOMAIN"
+    CERTIFICATE_STATUS="签发失败，已降级 HTTP（certbot exit $certbot_status）"
+    warn "HTTPS 证书申请失败，已保留 HTTP 并继续完成服务启动与验收；修复 DNS 或等待证书限流解除后重跑即可"
+  fi
 else
   primary_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
   access_url="http://${primary_ip:-127.0.0.1}"
+  CERTIFICATE_STATUS="未提供域名，仅启用 HTTP"
   warn "未提供域名/邮箱，当前仅启用 HTTP"
 fi
 
@@ -1218,11 +1249,15 @@ for schema in "${schemas[@]}"; do
 done
 ((table_total >= 162)) || die "业务表总数不足：$table_total < 162"
 
-if [[ -n "$DOMAIN" ]]; then
-  public_health="$(curl --fail --silent --show-error --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/health")"
+if ((HTTPS_ENABLED == 1)); then
+  tls_curl_args=()
+  if ((LETSENCRYPT_STAGING == 1)); then
+    tls_curl_args+=(--insecure)
+  fi
+  public_health="$(curl --fail --silent --show-error "${tls_curl_args[@]}" --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/health")"
   jq -e '.status == "ok" and .database == true and .redis == true' <<<"$public_health" >/dev/null || die "公网 /health 未返回健康 JSON"
   for path in / /console /admin /sales; do
-    code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN$path")"
+    code="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' "${tls_curl_args[@]}" --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN$path")"
     [[ "$code" == 200 ]] || die "HTTPS 前端入口 $path 返回 $code"
   done
 else
@@ -1242,6 +1277,7 @@ cat >"$SUMMARY_FILE" <<SUMMARY
 DDYIDC 安装摘要（仅 root 可读）
 生成时间：$(date -Is)
 访问地址：$access_url
+证书状态：$CERTIFICATE_STATUS
 后端目录：$BACKEND_DIR
 前端目录：$FRONTEND_DIR
 配置文件：$config_file
@@ -1270,6 +1306,7 @@ mysql_password=""; redis_password=""; aes_key=""; jwt_access=""; jwt_refresh=""
 
 printf '\n%s========== DDYIDC 部署完成 ==========%s\n' "$COLOR_GREEN" "$COLOR_RESET"
 printf '访问地址：%s\n' "$access_url"
+printf '证书状态：%s\n' "$CERTIFICATE_STATUS"
 printf '后端版本/commit：%s / %s\n' "$health_version" "$health_commit"
 printf '前端 commit：%s\n' "$frontend_commit"
 printf '服务：mysql、redis-server、ddyidc、nginx（全部 active）\n'
