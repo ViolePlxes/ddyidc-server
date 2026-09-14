@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"strconv"
 )
 
 const (
@@ -59,18 +60,22 @@ var (
 // PublicProduct is the saleable catalogue projection. Price and billing data
 // are supplied by the linked upstream product when the product is synchronized.
 type PublicProduct struct {
-	ID            string  `json:"id"`
-	GroupID       string  `json:"groupId"`
-	ParentGroupID string  `json:"parentGroupId"`
-	GroupName     string  `json:"groupName"`
-	Name          string  `json:"name"`
-	ModuleType    string  `json:"moduleType"`
-	Stock         *int    `json:"stock"`
-	Summary       string  `json:"summary"`
-	Description   string  `json:"description"`
-	Price         float64 `json:"price"`
-	Cycle         string  `json:"cycle"`
-	Sort          int     `json:"sort"`
+	SupplierID        string           `json:"supplierId"`
+	UpstreamProductID int              `json:"upstreamProductId,string"`
+	CatalogSpec       *dom.ProductSpec `json:"catalogSpec,omitempty" gorm:"-"`
+	UpstreamStock     any              `json:"upstreamStock" gorm:"-"`
+	ID                string           `json:"id"`
+	GroupID           string           `json:"groupId"`
+	ParentGroupID     string           `json:"parentGroupId"`
+	GroupName         string           `json:"groupName"`
+	Name              string           `json:"name"`
+	ModuleType        string           `json:"moduleType"`
+	Stock             *int             `json:"stock"`
+	Summary           string           `json:"summary"`
+	Description       string           `json:"description"`
+	Price             float64          `json:"price"`
+	Cycle             string           `json:"cycle"`
+	Sort              int              `json:"sort"`
 }
 
 type PublicGroup struct {
@@ -85,8 +90,6 @@ type PublicGroup struct {
 // while exposing only safe catalogue fields to the public API.
 type PublicProductDetail struct {
 	PublicProduct
-	SupplierID        string `json:"-"`
-	UpstreamProductID int    `json:"-"`
 }
 
 type AdminProduct struct {
@@ -280,10 +283,30 @@ func (r *GormRepository) ListPublic(c context.Context, page, limit int) (out []*
 		CASE WHEN g.parent_id > 0 THEN g.parent_id ELSE 0 END AS parent_group_id,
 		COALESCE(parent.name, g.name, CONCAT('商品分组 ', p.group_id)) AS group_name,
 		p.name, p.module_type, p.stock, p.summary, p.description,
-		COALESCE(up.price, 0) AS price, COALESCE(up.cycle, '') AS cycle, p.sort`).
+		COALESCE(up.price, 0) AS price, COALESCE(up.cycle, '') AS cycle, p.sort, COALESCE(up.supplier_id, '') AS supplier_id, COALESCE(up.upstream_product_id, 0) AS upstream_product_id`).
 		Joins("LEFT JOIN product.upstream_products AS up ON up.product_id = p.id AND up.hidden = 0").
 		Order(catalogSort).
 		Offset((page - 1) * limit).Limit(limit).Scan(&out).Error
+	if e != nil {
+		return
+	}
+	bases := make([]specification.ProductBase, 0, len(out))
+	for _, item := range out {
+		id, err := strconv.ParseInt(item.ID, 10, 64)
+		if err != nil {
+			return nil, 0, err
+		}
+		bases = append(bases, specification.ProductBase{ID: id, Name: item.Name, Stock: item.Stock, Price: item.Price})
+	}
+	views, err := specification.ReadBatch(c, r.db, bases)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i, item := range out {
+		view := views[bases[i].ID]
+		item.CatalogSpec = &view.Spec
+		item.UpstreamStock = view.UpstreamStock
+	}
 	return
 }
 func (r *GormRepository) FindPublicByID(c context.Context, id int64) (*PublicProductDetail, error) {

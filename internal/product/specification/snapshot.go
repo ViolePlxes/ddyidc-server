@@ -130,23 +130,81 @@ func Save(db *gorm.DB, productID int64, view View) error {
 	return db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "product_id"}}, DoUpdates: clause.AssignmentColumns([]string{"data", "captured_at"})}).Create(&row).Error
 }
 
+// ProductBase is the already loaded, local catalogue projection.
+type ProductBase struct {
+	ID    int64
+	Name  string
+	Stock *int
+	Price float64
+}
+
 func Read(ctx context.Context, db *gorm.DB, productID int64) (*View, error) {
-	var product struct {
-		ID    int64
-		Name  string
-		Stock *int
-		Price float64
-	}
+	var product ProductBase
 	err := db.WithContext(ctx).Table("product.products p").Select("p.id,p.name,p.stock,COALESCE(up.price,0) price").Joins("LEFT JOIN product.upstream_products up ON up.product_id=p.id").Where("p.id=?", productID).Take(&product).Error
 	if err != nil {
 		return nil, err
 	}
+	views, err := ReadBatch(ctx, db, []ProductBase{product})
+	if err != nil {
+		return nil, err
+	}
+	view := views[productID]
+	return &view, nil
+}
+
+// ReadBatch adds two bounded IN queries, independent of the page's SKU count.
+// Both single-product administration and public lists use the same merge rules.
+// This path never calls an upstream provider.
+func ReadBatch(ctx context.Context, db *gorm.DB, products []ProductBase) (map[int64]View, error) {
+	views := make(map[int64]View, len(products))
+	if len(products) == 0 {
+		return views, nil
+	}
+	ids := make([]int64, 0, len(products))
+	for _, product := range products {
+		ids = append(ids, product.ID)
+	}
+	var snapshots []Snapshot
+	if err := db.WithContext(ctx).Where("product_id IN ?", ids).Find(&snapshots).Error; err != nil {
+		return nil, err
+	}
+	var configured []domain.ProductSpec
+	if err := db.WithContext(ctx).Where("product_id IN ?", ids).Order("sort,id").Find(&configured).Error; err != nil {
+		return nil, err
+	}
+	saved := map[int64]*Snapshot{}
+	for i := range snapshots {
+		saved[snapshots[i].ProductID] = &snapshots[i]
+	}
+	overrides := map[int64]*domain.ProductSpec{}
+	for i := range configured {
+		if overrides[configured[i].ProductID] == nil {
+			overrides[configured[i].ProductID] = &configured[i]
+		}
+	}
+	for _, product := range products {
+		view, err := merge(product, saved[product.ID], overrides[product.ID])
+		if err != nil {
+			return nil, err
+		}
+		views[product.ID] = *view
+	}
+	return views, nil
+}
+
+func merge(product ProductBase, saved *Snapshot, override *domain.ProductSpec) (*View, error) {
+	productID := product.ID
+	var err error
 	view := &View{Spec: domain.ProductSpec{ProductID: productID, Name: product.Name, PriceMode: "upstream", Price: product.Price}}
 	if product.Stock != nil {
 		view.UpstreamStock = *product.Stock
 	}
 	var snapshot Snapshot
-	err = db.WithContext(ctx).Where("product_id=?", productID).Take(&snapshot).Error
+	err = gorm.ErrRecordNotFound
+	if saved != nil {
+		snapshot = *saved
+		err = nil
+	}
 	if err == nil {
 		if err = json.Unmarshal([]byte(snapshot.Data), view); err != nil {
 			return nil, err
@@ -156,7 +214,11 @@ func Read(ctx context.Context, db *gorm.DB, productID int64) (*View, error) {
 		return nil, err
 	}
 	var configured domain.ProductSpec
-	err = db.WithContext(ctx).Where("product_id=?", productID).Order("sort,id").Take(&configured).Error
+	err = gorm.ErrRecordNotFound
+	if override != nil {
+		configured = *override
+		err = nil
+	}
 	if err == nil {
 		base := view.Spec
 		if configured.Name == "" {
