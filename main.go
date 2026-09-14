@@ -16,6 +16,7 @@ import (
 	marketingrepo "ddyidc/internal/marketing/repository"
 	marketingservice "ddyidc/internal/marketing/service"
 	"ddyidc/internal/marketplace"
+	"ddyidc/internal/navigation"
 	"ddyidc/internal/notify"
 	orderhandler "ddyidc/internal/order/handler"
 	orderrepo "ddyidc/internal/order/repository"
@@ -251,6 +252,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
 	adminread.RegisterHandlers(server, db.G, jwt)
+	navigationSvc := navigation.New(db.G)
+	if err := navigationSvc.EnsureSchema(context.Background()); err != nil {
+		panic(err)
+	}
+	navigation.Register(server, navigationSvc, jwt)
 
 	// 营销套件（M1-M6）
 	marketingSvc := marketingservice.NewService(db.G, repositories.Marketing)
