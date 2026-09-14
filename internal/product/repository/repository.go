@@ -40,6 +40,7 @@ type Repository interface {
 	DeleteAdminGroup(context.Context, int64) error
 	SetAdminGroupHidden(context.Context, int64, bool) error
 	SortAdminGroups(context.Context, int64, []int64) error
+	MoveAdminGroup(context.Context, int64, int64, []int64, []int64) error
 	MoveProducts(context.Context, []int64, int64) error
 	SortProducts(context.Context, int64, []int64) error
 	ListPublicGroups(context.Context) ([]*PublicGroup, error)
@@ -48,6 +49,7 @@ type Repository interface {
 var (
 	ErrGroupNotFound    = errors.New("商品分组不存在")
 	ErrGroupLevel       = errors.New("目标分组必须是二级分组")
+	ErrGroupMove        = errors.New("只能将二级分组移入另一个一级分组")
 	ErrGroupHasChildren = errors.New("该分组下存在子分组，禁止删除")
 	ErrGroupHasProducts = errors.New("该分组下存在商品，禁止删除")
 	ErrInvalidSort      = errors.New("排序列表必须包含当前层级的全部记录")
@@ -255,7 +257,7 @@ func (r *GormRepository) ListAdminProducts(c context.Context, page, limit int, g
 		Joins("LEFT JOIN product.product_groups AS g ON g.id = p.group_id").
 		Joins("LEFT JOIN product.product_groups AS parent ON parent.id = g.parent_id").
 		Joins("LEFT JOIN product.upstream_products AS up ON up.product_id = p.id AND up.hidden = 0").
-		Order("p.sort ASC,p.id DESC").Offset((page - 1) * limit).Limit(limit).Scan(&out).Error
+		Order(catalogSort).Offset((page - 1) * limit).Limit(limit).Scan(&out).Error
 	return
 }
 func (r *GormRepository) ListPublic(c context.Context, page, limit int) (out []*PublicProduct, total int64, e error) {
@@ -280,8 +282,7 @@ func (r *GormRepository) ListPublic(c context.Context, page, limit int) (out []*
 		p.name, p.module_type, p.stock, p.summary, p.description,
 		COALESCE(up.price, 0) AS price, COALESCE(up.cycle, '') AS cycle, p.sort`).
 		Joins("LEFT JOIN product.upstream_products AS up ON up.product_id = p.id AND up.hidden = 0").
-		Order(`COALESCE(parent.sort, g.sort, 2147483647) ASC,
-			CASE WHEN g.parent_id > 0 THEN g.sort ELSE 0 END ASC, p.sort ASC, p.id DESC`).
+		Order(catalogSort).
 		Offset((page - 1) * limit).Limit(limit).Scan(&out).Error
 	return
 }
@@ -406,31 +407,6 @@ func (r *GormRepository) SetAdminGroupHidden(c context.Context, id int64, hidden
 	return r.db.WithContext(c).Table(groupTable).Where("id = ?", id).Update("status", status).Error
 }
 
-func (r *GormRepository) SortAdminGroups(c context.Context, parentID int64, ids []int64) error {
-	return r.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
-		var count int64
-		if err := tx.Table(groupTable).Where("tenant_id = 0 AND parent_id = ?", parentID).Count(&count).Error; err != nil {
-			return err
-		}
-		if int64(len(ids)) != count || hasDuplicateIDs(ids) {
-			return ErrInvalidSort
-		}
-		for index, id := range ids {
-			var itemCount int64
-			if err := tx.Table(groupTable).Where("id = ? AND tenant_id = 0 AND parent_id = ?", id, parentID).Count(&itemCount).Error; err != nil {
-				return err
-			}
-			if itemCount == 0 {
-				return ErrInvalidSort
-			}
-			if err := tx.Table(groupTable).Where("id = ?", id).Update("sort", index).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func (r *GormRepository) MoveProducts(c context.Context, ids []int64, targetGroupID int64) error {
 	return r.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
 		if err := validateSecondLevelGroup(tx, targetGroupID); err != nil {
@@ -453,41 +429,12 @@ func (r *GormRepository) MoveProducts(c context.Context, ids []int64, targetGrou
 	})
 }
 
-func (r *GormRepository) SortProducts(c context.Context, groupID int64, ids []int64) error {
-	return r.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
-		if err := validateSecondLevelGroup(tx, groupID); err != nil {
-			return err
-		}
-		var count int64
-		if err := tx.Table(productTable).Where("group_id = ?", groupID).Count(&count).Error; err != nil {
-			return err
-		}
-		if int64(len(ids)) != count || hasDuplicateIDs(ids) {
-			return ErrInvalidProducts
-		}
-		for index, id := range ids {
-			var itemCount int64
-			if err := tx.Table(productTable).Where("id = ? AND group_id = ?", id, groupID).Count(&itemCount).Error; err != nil {
-				return err
-			}
-			if itemCount == 0 {
-				return ErrInvalidProducts
-			}
-			if err := tx.Table(productTable).Where("id = ?", id).Update("sort", index).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
 func (r *GormRepository) ListPublicGroups(c context.Context) (out []*PublicGroup, e error) {
 	e = r.db.WithContext(c).Table(groupTable + " AS g").
 		Select("g.id, g.parent_id, g.name, g.sort, g.status").
 		Joins("LEFT JOIN product.product_groups AS parent ON parent.id = g.parent_id").
 		Where("g.tenant_id = 0 AND g.status = 1 AND (g.parent_id = 0 OR parent.status = 1)").
-		Order(`CASE WHEN g.parent_id = 0 THEN g.sort ELSE parent.sort END ASC,
-			CASE WHEN g.parent_id = 0 THEN 0 ELSE 1 END ASC, g.sort ASC, g.id ASC`).Scan(&out).Error
+		Order(`COALESCE(parent.sort,g.sort) ASC,COALESCE(parent.id,g.id) ASC, CASE WHEN g.parent_id=0 THEN 0 ELSE 1 END ASC,g.sort ASC,g.id ASC`).Scan(&out).Error
 	return
 }
 
