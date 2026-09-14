@@ -63,6 +63,7 @@ func parseIDs(values []string) ([]int64, error) {
 
 func isAdminInputError(err error) bool {
 	return errors.Is(err, repository.ErrGroupNotFound) ||
+		errors.Is(err, repository.ErrGroupMove) ||
 		errors.Is(err, repository.ErrGroupLevel) ||
 		errors.Is(err, repository.ErrGroupHasChildren) ||
 		errors.Is(err, repository.ErrGroupHasProducts) ||
