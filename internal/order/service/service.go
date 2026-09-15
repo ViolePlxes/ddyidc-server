@@ -5,6 +5,7 @@ package order
 
 import (
 	"context"
+	"ddyidc/internal/certification"
 
 	"encoding/json"
 	"errors"
@@ -375,6 +376,9 @@ func parseID(raw string) (int64, error) {
 
 // CreateOrder 创建订单：服务端定价 + 服务端核销优惠券（同事务）。
 func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*OrderView, error) {
+	if err := s.repo.Transaction(ctx, func(tx *gorm.DB) error { return certification.CheckPurchase(tx, customerID) }); err != nil {
+		return nil, err
+	}
 	productID, err := parseID(strings.TrimSpace(input.ProductID))
 	if err != nil {
 		return nil, errors.New("请选择有效商品")
@@ -453,6 +457,9 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		orderRow.CustomerRemark = strings.TrimSpace(input.Remark)
 	}
 	if e := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		if e := certification.CheckPurchase(tx, customerID); e != nil {
+			return e
+		}
 		if e := s.repo.CreateOrderTx(ctx, tx, orderRow); e != nil {
 			return e
 		}
