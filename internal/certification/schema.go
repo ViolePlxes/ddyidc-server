@@ -21,7 +21,7 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	if duplicates > 0 {
 		return errors.New("实名记录存在重复客户；请先备份并人工核对，迁移不会删除记录")
 	}
-	columns := map[string]string{"phone": "varchar(32) NOT NULL DEFAULT ''", "document_type": "tinyint NOT NULL DEFAULT 1", "document_hash": "char(64) NOT NULL DEFAULT ''", "company_hash": "char(64) NOT NULL DEFAULT ''", "legal_type": "tinyint NOT NULL DEFAULT 1", "authorization": "varchar(255) NOT NULL DEFAULT ''"}
+	columns := map[string]string{"certify_channel": "varchar(16) NOT NULL DEFAULT 'manual'", "certify_id": "varchar(128) NOT NULL DEFAULT ''", "certify_config": "text NULL", "certify_attempts": "int NOT NULL DEFAULT 0", "certify_fee_order": "bigint NOT NULL DEFAULT 0", "phone": "varchar(32) NOT NULL DEFAULT ''", "document_type": "tinyint NOT NULL DEFAULT 1", "document_hash": "char(64) NOT NULL DEFAULT ''", "company_hash": "char(64) NOT NULL DEFAULT ''", "legal_type": "tinyint NOT NULL DEFAULT 1", "authorization": "varchar(255) NOT NULL DEFAULT ''"}
 	for name, definition := range columns {
 		var n int64
 		if err := s.db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='customer' AND table_name='customer_realname' AND column_name=?", name).Scan(&n).Error; err != nil {

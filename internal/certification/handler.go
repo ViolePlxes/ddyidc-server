@@ -29,7 +29,7 @@ func Register(server *rest.Server, s *Service, jwt *auth.Manager) {
 		for _, x := range []struct {
 			method, path string
 			fn           http.HandlerFunc
-		}{{"GET", "/info", h.info}, {"POST", "/person", h.submit}, {"POST", "/company", h.submit}, {"POST", "/uploads", h.upload}, {"GET", "/files/:file", h.file}} {
+		}{{"POST", "/alipay/initialize", h.alipayInitialize}, {"GET", "/alipay/certify", h.alipayCertify}, {"GET", "/alipay/status", h.alipayQuery}, {"GET", "/info", h.info}, {"POST", "/person", h.submit}, {"POST", "/company", h.submit}, {"POST", "/uploads", h.upload}, {"GET", "/files/:file", h.file}} {
 			routes = append(routes, rest.Route{Method: x.method, Path: prefix + x.path, Handler: x.fn})
 		}
 	}
@@ -251,28 +251,19 @@ func (h *handler) settings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if r.Method == "GET" {
-		cfg, err := LoadSettings(h.s.db)
-		if err != nil {
-			fail(w, 500, "读取设置失败")
+	if r.Method != "GET" {
+		var in AdminSettings
+		if !decode(w, r, &in) {
 			return
 		}
-		reply(w, 200, cfg, "")
-		return
-	}
-	var cfg Settings
-	if !decode(w, r, &cfg) {
-		return
-	}
-	encoded, _ := json.Marshal(cfg)
-	err := h.s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table("system.system_configs").Where("`key`='certification.settings'").Update("value", string(encoded)).Error; err != nil {
-			return err
+		if err := h.s.saveSettings(in, a.UserID, ip(r)); err != nil {
+			fail(w, 400, err.Error())
+			return
 		}
-		return audit(tx, a.UserID, true, "settings", 0, map[string]any{"settings": cfg}, ip(r))
-	})
+	}
+	cfg, err := h.s.adminSettings()
 	if err != nil {
-		fail(w, 500, "保存设置失败")
+		fail(w, 500, "读取设置失败")
 		return
 	}
 	reply(w, 200, cfg, "")

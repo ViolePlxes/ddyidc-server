@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -26,12 +27,21 @@ var ErrUsed = errors.New("每人仅有一次免费实名认证机会")
 var ErrRequired = errors.New("请先完成实名认证后再购买")
 
 type Settings struct {
-	Enabled               bool `json:"enabled"`
-	RequirePurchase       bool `json:"requirePurchase"`
-	CompanyEnabled        bool `json:"companyEnabled"`
-	CompanyRequiresPerson bool `json:"companyRequiresPerson"`
+	Channel               string `json:"channel"`
+	BizCode               string `json:"bizCode"`
+	FreeAttempts          int    `json:"freeAttempts"`
+	Fee                   string `json:"fee"`
+	Enabled               bool   `json:"enabled"`
+	RequirePurchase       bool   `json:"requirePurchase"`
+	CompanyEnabled        bool   `json:"companyEnabled"`
+	CompanyRequiresPerson bool   `json:"companyRequiresPerson"`
 }
 type Record struct {
+	CertifyChannel    string     `json:"certifyChannel"`
+	CertifyID         string     `json:"-"`
+	CertifyConfig     string     `json:"-"`
+	CertifyAttempts   int        `json:"certifyAttempts"`
+	CertifyFeeOrder   int64      `json:"-"`
 	ID                int64      `json:"id,string" gorm:"primaryKey;autoIncrement:false"`
 	CustomerID        int64      `json:"customerId,string"`
 	Type              int        `json:"type"`
@@ -72,10 +82,11 @@ type Input struct {
 	Authorization  string `json:"authorization"`
 }
 type Service struct {
-	db    *gorm.DB
-	redis redis.UniversalClient
-	key   []byte
-	root  string
+	alipayTransport http.RoundTripper // Test-only injection; no runtime configuration.
+	db              *gorm.DB
+	redis           redis.UniversalClient
+	key             []byte
+	root            string
 }
 
 func New(db *gorm.DB, r redis.UniversalClient, key []byte, root string) *Service {
@@ -90,7 +101,7 @@ func LoadSettings(db *gorm.DB) (Settings, error) {
 	if err != nil {
 		return Settings{}, err
 	}
-	var out Settings
+	out := Settings{Channel: "manual", BizCode: "FACE", FreeAttempts: 1, Fee: "0"}
 	err = json.Unmarshal([]byte(row.Value), &out)
 	return out, err
 }
@@ -245,6 +256,9 @@ func (s *Service) Submit(ctx context.Context, customer int64, kind int, in Input
 		if !cfg.Enabled {
 			return errors.New("实名认证暂未开放")
 		}
+		if kind == 1 && cfg.Channel == "alipay" {
+			return errors.New("请使用支付宝认证通道")
+		}
 		if kind == 2 && (!cfg.CompanyEnabled || cfg.CompanyRequiresPerson) {
 			return errors.New("当前设置不允许提交企业认证；每人仅有一次免费机会")
 		}
@@ -316,6 +330,9 @@ func (s *Service) Review(ctx context.Context, id, actor int64, action, reason, i
 		var row Record
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, id).Error; err != nil {
 			return errors.New("认证记录不存在")
+		}
+		if row.CertifyChannel == "alipay" {
+			return errors.New("支付宝认证由系统自动处理，不支持人工审核或解除限制")
 		}
 		if action == "unlock" {
 			if row.Status != 3 {

@@ -74,9 +74,10 @@ var repositories struct {
 }
 
 type paymentCoordinator struct {
-	orders      *orderservice.Service
-	marketplace *marketplace.Service
-	cdnsell     *cdnsell.Service
+	certification *certification.Service
+	orders        *orderservice.Service
+	marketplace   *marketplace.Service
+	cdnsell       *cdnsell.Service
 }
 
 type authEventHooks struct {
@@ -126,6 +127,12 @@ func (h orderEventHooks) OnRechargePaid(ctx context.Context, rechargeID int64, r
 }
 
 func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
+	if c.certification != nil {
+		matched, err := c.certification.ProvisionPlatformOrder(ctx, customerID, orderID, method)
+		if matched || err != nil {
+			return err
+		}
+	}
 	if c.cdnsell != nil {
 		matched, err := c.cdnsell.ProvisionPlatformOrder(ctx, customerID, orderID, method)
 		if matched || err != nil {
@@ -323,7 +330,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err != nil {
 		panic("payment channel initialization failed: " + err.Error())
 	}
-	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
+	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
