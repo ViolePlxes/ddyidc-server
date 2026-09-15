@@ -5,6 +5,7 @@ import (
 	"ddyidc/internal/adminread"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/cdnsell"
+	"ddyidc/internal/certification"
 	customerhandler "ddyidc/internal/customer/handler"
 	customerrrepo "ddyidc/internal/customer/repository"
 	"ddyidc/internal/groupbuy"
@@ -208,7 +209,9 @@ func main() {
 	}
 
 	// 创建服务
+	c.RestConf.Middlewares.Log = false // Certification requests must never enter the body-copying logger.
 	server := rest.MustNewServer(c.RestConf)
+	server.Use(certification.RequestLogger)
 	defer server.Stop()
 
 	// 全局中间件
@@ -257,6 +260,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic(err)
 	}
 	navigation.Register(server, navigationSvc, jwt)
+	certificationSvc := certification.New(db.G, cache.RDB, snapshotKey, "storage/certification")
+	if err := certificationSvc.EnsureSchema(context.Background()); err != nil {
+		panic("certification initialization failed: " + err.Error())
+	}
+	certification.Register(server, certificationSvc, jwt)
 
 	// 营销套件（M1-M6）
 	marketingSvc := marketingservice.NewService(db.G, repositories.Marketing)

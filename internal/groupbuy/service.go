@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/certification"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -107,9 +108,7 @@ func (s *Service) validateActivity(ctx context.Context, activity *Activity) erro
 	if activity.EndTime.Before(s.now()) {
 		return errors.New("活动截止时间必须晚于当前时间")
 	}
-	if activity.RequireCertification {
-		return errors.New("实名模块尚未上线，暂不能启用实名限制")
-	}
+
 	cycleNames := map[string]string{"monthly": "月付", "quarterly": "季付", "semiannually": "半年付", "annually": "年付"}
 	if cycleNames[activity.BillingCycle] == "" {
 		return errors.New("计费周期仅支持月/季/半年/年")
@@ -429,7 +428,9 @@ func lockCustomer(tx *gorm.DB, id int64) error {
 
 func (s *Service) validateMember(tx *gorm.DB, activity *Activity, clientID int64, leader bool) error {
 	if activity.RequireCertification {
-		return errors.New("实名模块尚未上线，当前活动不可参与")
+		if err := certification.RequireApproved(tx, clientID); err != nil {
+			return err
+		}
 	}
 	if activity.PurchaseLimit > 0 {
 		var n int64

@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	"ddyidc/internal/certification"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -130,8 +131,7 @@ func (s *Service) SaveSettings(ctx context.Context, row *Settings) error {
 }
 
 func validateSettings(v *Settings) error {
-	if v.RequireRealnameListing || v.RequireRealnamePurchase { /* existing customer.real_name is the integration source */
-	}
+
 	if v.FeeType != "ratio" && v.FeeType != "fixed" {
 		return errors.New("手续费类型无效")
 	}
@@ -547,16 +547,19 @@ func (s *Service) OfferWant(ctx context.Context, userID, wantID int64, row *Want
 func (s *Service) checkUserRisk(ctx context.Context, userID int64, settings *Settings, listing bool) error {
 	var user struct {
 		CreatedAt time.Time
-		RealName  string
 	}
-	if err := s.db.WithContext(ctx).Table("customer.customers").Select("created_at,real_name").Where("id=? AND deleted_at IS NULL AND status=1", userID).First(&user).Error; err != nil {
+	if err := s.db.WithContext(ctx).Table("customer.customers").Select("created_at").Where("id=? AND deleted_at IS NULL AND status=1", userID).First(&user).Error; err != nil {
 		return ErrForbidden
 	}
-	if listing && settings.RequireRealnameListing && strings.TrimSpace(user.RealName) == "" {
-		return errors.New("挂牌前请先完成实名认证")
+	if listing && settings.RequireRealnameListing {
+		if err := certification.RequireApproved(s.db.WithContext(ctx), userID); err != nil {
+			return err
+		}
 	}
-	if !listing && settings.RequireRealnamePurchase && strings.TrimSpace(user.RealName) == "" {
-		return errors.New("购买前请先完成实名认证")
+	if !listing && settings.RequireRealnamePurchase {
+		if err := certification.RequireApproved(s.db.WithContext(ctx), userID); err != nil {
+			return err
+		}
 	}
 	if listing && settings.NewUserLimitDays > 0 && user.CreatedAt.AddDate(0, 0, settings.NewUserLimitDays).After(s.now()) {
 		return errors.New("账号注册时间未达到市场挂牌要求")
