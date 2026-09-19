@@ -100,8 +100,8 @@ func (p *Provider) isQKIDC() bool {
 }
 
 func (p *Provider) enforceQKIDCProduct(id int) error {
-	if p.isQKIDC() && id != 489 {
-		return fmt.Errorf("qkidc safety policy only permits product 489")
+	if p.isQKIDC() && id != 489 && id != 353 {
+		return fmt.Errorf("qkidc safety policy only permits products 353 and 489")
 	}
 	return nil
 }
@@ -840,7 +840,11 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 	isQKIDC := parsed.Hostname() == "qkidc.cn" || strings.HasSuffix(parsed.Hostname(), ".qkidc.cn")
 	remoteAudit := isRemoteAudit(bodyBytes)
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	attempts := 1
+	if method == http.MethodGet {
+		attempts = 2
+	}
+	for attempt := 0; attempt < attempts; attempt++ {
 		if isQKIDC {
 			waitForRequestSlot(parsed.Hostname(), 2*time.Second)
 		}
@@ -862,7 +866,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if err != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)
 			lastErr = err
-			if attempt == 0 {
+			if attempt+1 < attempts {
 				if isQKIDC {
 					time.Sleep(30 * time.Second)
 				}
@@ -875,7 +879,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if readErr != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr, remoteAudit)
 			lastErr = readErr
-			if attempt == 0 {
+			if attempt+1 < attempts {
 				if isQKIDC {
 					time.Sleep(30 * time.Second)
 				}
@@ -885,7 +889,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		}
 		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil, remoteAudit)
 		retryable := response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
-		if retryable && attempt == 0 {
+		if retryable && attempt+1 < attempts {
 			lastErr = fmt.Errorf("upstream HTTP status %d", response.StatusCode)
 			if isQKIDC {
 				time.Sleep(30 * time.Second)
@@ -1343,6 +1347,9 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 			Start: true, Stop: true, Reboot: true, Reinstall: true,
 			ResetPassword: true, Traffic: true, Remote: true, Destroy: false,
 		},
+	}
+	if err := parseInstanceSnapshot(data, hostData, hostID, result); err != nil {
+		return nil, err
 	}
 	if result.PowerStatus == "" {
 		result.PowerStatus = normalizePowerStatus(result.Status)

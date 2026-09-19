@@ -189,6 +189,12 @@ type InstanceIP struct {
 }
 
 type InstanceDetail struct {
+	ID              string               `json:"id,omitempty"`
+	ProductID       string               `json:"productId,omitempty"`
+	BillingCycle    string               `json:"billingCycle,omitempty"`
+	ActivatedAt     *time.Time           `json:"activatedAt,omitempty"`
+	ExpiresAt       *time.Time           `json:"expiresAt,omitempty"`
+	Config          []InstanceConfig     `json:"config,omitempty"`
 	Hostname        string               `json:"hostname,omitempty"`
 	PrimaryIP       string               `json:"primaryIp,omitempty"`
 	SubnetMask      string               `json:"subnetMask,omitempty"`
@@ -198,6 +204,14 @@ type InstanceDetail struct {
 	PowerStatus     string               `json:"powerStatus,omitempty"`
 	IPs             []InstanceIP         `json:"ips"`
 	Capabilities    InstanceCapabilities `json:"capabilities"`
+}
+
+// InstanceConfig contains actual provisioned values, never catalogue defaults.
+type InstanceConfig struct {
+	ID    string `json:"id"`
+	Field string `json:"field"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type InstanceActionInput struct {
