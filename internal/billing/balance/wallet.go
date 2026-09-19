@@ -28,7 +28,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		return nil, ErrInvalid
 	}
 	switch r.Type {
-	case "seller_pending", "settled", "refund_reversed", "withdraw_hold", "withdraw_reject", "withdraw":
+	case "seller_pending", "settled", "settled_to_balance", "refund_reversed", "withdraw_hold", "withdraw_reject", "withdraw":
 	default:
 		return nil, ErrInvalid
 	}
@@ -62,7 +62,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		var count int64
 		var state string
 		if r.RefType == "marketplace" {
-			if r.Type != "seller_pending" && r.Type != "settled" && r.Type != "refund_reversed" {
+			if r.Type != "seller_pending" && r.Type != "settled" && r.Type != "settled_to_balance" && r.Type != "refund_reversed" {
 				return ErrBusiness
 			}
 			var order struct {
@@ -76,7 +76,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 				return ErrBusiness
 			}
 			state = order.Status
-			if (r.Type == "seller_pending" && state != "pending_pay") || (r.Type == "settled" && state != "paid") || (r.Type == "refund_reversed" && state != "paid" && state != "settled") {
+			if (r.Type == "seller_pending" && state != "pending_pay") || ((r.Type == "settled" || r.Type == "settled_to_balance") && state != "paid") || (r.Type == "refund_reversed" && state != "paid" && state != "settled") {
 				return ErrBusiness
 			}
 		} else if r.RefType == "marketplace_withdrawal" {
@@ -118,6 +118,9 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		switch r.Type {
 		case "seller_pending":
 			wallet.FrozenBalance += amount
+		case "settled_to_balance":
+			wallet.FrozenBalance -= amount
+			wallet.TotalIncome += amount
 		case "settled":
 			wallet.Balance += amount
 			wallet.FrozenBalance -= amount

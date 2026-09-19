@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager, 
 		{Method: http.MethodPost, Path: "/api/v1/marketplace/orders", Handler: h.createOrder},
 		{Method: http.MethodGet, Path: "/api/v1/marketplace/orders/my", Handler: h.myOrders},
 		{Method: http.MethodPost, Path: "/api/v1/marketplace/orders/:id/pay", Handler: h.payOrder},
+		{Method: http.MethodPost, Path: "/api/v1/marketplace/orders/:id/confirm", Handler: h.confirmReceipt},
 		{Method: http.MethodPost, Path: "/api/v1/marketplace/orders/:id/refund", Handler: h.refundOrder},
 		{Method: http.MethodGet, Path: "/api/v1/marketplace/wallet", Handler: h.wallet},
 		{Method: http.MethodGet, Path: "/api/v1/marketplace/flows", Handler: h.myFlows},
@@ -85,11 +87,12 @@ func (h *Handler) guard(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
-		if !enabled {
+		existing := r.URL.Path == "/api/v1/marketplace/orders/my" || strings.HasPrefix(r.URL.Path, "/api/v1/marketplace/orders/") || r.URL.Path == "/api/v1/marketplace/my/listings" || r.URL.Path == "/api/v1/marketplace/wallet" || r.URL.Path == "/api/v1/marketplace/flows" || r.URL.Path == "/api/v1/marketplace/withdrawals" || strings.HasSuffix(r.URL.Path, "/off")
+		if !enabled && !existing {
 			writeError(w, http.StatusNotFound, "交易市场未开启")
 			return
 		}
-		if strings.HasPrefix(r.URL.Path, "/api/v1/marketplace") && r.Method != http.MethodGet {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/marketplace") && r.Method != http.MethodGet && !existing {
 			settings, settingsErr := h.service.Settings(r.Context())
 			if settingsErr != nil {
 				writeServiceError(w, settingsErr)
@@ -249,7 +252,7 @@ func (h *Handler) createOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "挂牌ID无效")
 		return
 	}
-	row, err := h.service.CreateOrder(r.Context(), user, CreateOrderInput{ListingID: id})
+	row, err := h.service.CreateOrder(r.Context(), user, CreateOrderInput{ListingID: id, OperatorIP: requestIP(r)})
 	writeResult(w, row, err)
 }
 func (h *Handler) myOrders(w http.ResponseWriter, r *http.Request) {
@@ -651,4 +654,24 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
+}
+
+func requestIP(r *http.Request) string {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if ip == "" {
+		return r.RemoteAddr
+	}
+	return ip
+}
+func (h *Handler) confirmReceipt(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.claims(w, r, "customer")
+	if !ok {
+		return
+	}
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	row, err := h.service.ConfirmReceipt(r.Context(), user, id)
+	writeResult(w, row, err)
 }

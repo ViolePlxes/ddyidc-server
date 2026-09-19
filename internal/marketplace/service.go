@@ -3,6 +3,7 @@ package marketplace
 import (
 	"context"
 	"ddyidc/internal/certification"
+	"ddyidc/internal/pushtransfer"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,7 @@ type Notifier interface {
 }
 
 type Service struct {
+	refunder OriginalRefunder
 	db       *gorm.DB
 	redis    *redis.Client
 	notifier Notifier
@@ -46,12 +48,15 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
 		return fmt.Errorf("初始化交易市场表失败: %w", err)
 	}
+	if err := s.ensureTransferUpgrade(ctx); err != nil {
+		return err
+	}
 	var count int64
 	if err := s.db.WithContext(ctx).Table(settingsTable).Count(&count).Error; err != nil {
 		return err
 	}
 	if count == 0 {
-		row := &Settings{ID: snowflake.GenID(), Enabled: false, AuditEnabled: true, RequireBackupConfirm: true,
+		row := &Settings{ID: snowflake.GenID(), Enabled: true, AutoConfirmHours: 24, RequireRealnameListing: true, RequireRealnamePurchase: true, AuditEnabled: true, RequireBackupConfirm: true,
 			RefundEnabled: true, ForceSettleAfterWindow: true, WithdrawalAuditEnabled: true,
 			Announcement: "交易前请确认产品配置、剩余周期与续费价格。",
 			Agreement:    "买卖双方须遵守平台交易规则。订单支付后由系统完成本地资源归属转移，争议须在退款窗口内提交。",
@@ -62,6 +67,9 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 		if err := s.db.WithContext(ctx).Table(settingsTable).Create(row).Error; err != nil {
 			return err
 		}
+	}
+	if err := s.ensureTransferUpgrade(ctx); err != nil {
+		return err
 	}
 	return s.ensureNotificationTemplates(ctx)
 }
@@ -86,12 +94,7 @@ func (s *Service) ensureNotificationTemplates(ctx context.Context) error {
 }
 
 func (s *Service) Enabled(ctx context.Context) (bool, error) {
-	var row Settings
-	err := s.db.WithContext(ctx).Table(settingsTable).Select("enabled").Order("id").First(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
-	}
-	return row.Enabled, err
+	return pushtransfer.Enabled(s.db.WithContext(ctx), "marketplace.enabled")
 }
 
 func (s *Service) Settings(ctx context.Context) (*Settings, error) {
@@ -99,6 +102,15 @@ func (s *Service) Settings(ctx context.Context) (*Settings, error) {
 	if err := s.db.WithContext(ctx).Table(settingsTable).Order("id").First(&row).Error; err != nil {
 		return nil, err
 	}
+	enabled, err := s.Enabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	row.Enabled = enabled
+	row.RequireRealnameListing = true
+	row.RequireRealnamePurchase = true
+	row.FeeType = "ratio"
+	row.FeeBearer = "seller"
 	if len(row.AllowGroups) == 0 {
 		row.AllowGroups = json.RawMessage("[]")
 	}
@@ -111,23 +123,39 @@ func (s *Service) SaveSettings(ctx context.Context, row *Settings) error {
 		return err
 	}
 	row.ID = current.ID
+	row.RequireRealnameListing = true
+	row.RequireRealnamePurchase = true
+	row.FeeType = "ratio"
+	row.FeeBearer = "seller"
+	if row.AutoConfirmHours == 0 {
+		row.AutoConfirmHours = 24
+	}
+	if row.AutoConfirmHours < 1 || row.AutoConfirmHours > 720 {
+		return errors.New("自动收货时间须为 1 至 720 小时")
+	}
 	if err := validateSettings(row); err != nil {
 		return err
 	}
-	return s.db.WithContext(ctx).Table(settingsTable).Where("id=?", row.ID).Updates(map[string]any{
-		"enabled": row.Enabled, "maintenance": row.Maintenance, "audit_enabled": row.AuditEnabled,
-		"require_backup_confirm": row.RequireBackupConfirm, "require_realname_listing": row.RequireRealnameListing,
-		"require_realname_purchase": row.RequireRealnamePurchase, "refund_enabled": row.RefundEnabled,
-		"force_settle_after_window": row.ForceSettleAfterWindow, "withdrawal_audit_enabled": row.WithdrawalAuditEnabled,
-		"announcement": strings.TrimSpace(row.Announcement), "agreement": strings.TrimSpace(row.Agreement),
-		"maintenance_tip": strings.TrimSpace(row.MaintenanceTip), "fee_type": row.FeeType, "fee_bearer": row.FeeBearer,
-		"fee_rate": row.FeeRate, "fee_fixed": row.FeeFixed, "withdraw_fee_type": row.WithdrawFeeType,
-		"withdraw_fee_rate": row.WithdrawFeeRate, "withdraw_fee_fixed": row.WithdrawFeeFixed,
-		"max_listings_per_user": row.MaxListingsPerUser, "new_user_limit_days": row.NewUserLimitDays,
-		"listing_valid_minutes": row.ListingValidMinutes, "order_lock_minutes": row.OrderLockMinutes,
-		"settle_freeze_days": row.SettleFreezeDays, "refund_window_days": row.RefundWindowDays,
-		"allow_groups": row.AllowGroups, "updated_at": s.now(),
-	}).Error
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("system.system_configs").Where("`key`=?", "marketplace.enabled").Update("value", strconv.FormatBool(row.Enabled)).Error; err != nil {
+			return err
+		}
+		return tx.Table(settingsTable).Where("id=?", row.ID).Updates(map[string]any{
+			"auto_confirm_hours": row.AutoConfirmHours,
+			"enabled":            row.Enabled, "maintenance": row.Maintenance, "audit_enabled": row.AuditEnabled,
+			"require_backup_confirm": row.RequireBackupConfirm, "require_realname_listing": row.RequireRealnameListing,
+			"require_realname_purchase": row.RequireRealnamePurchase, "refund_enabled": row.RefundEnabled,
+			"force_settle_after_window": row.ForceSettleAfterWindow, "withdrawal_audit_enabled": row.WithdrawalAuditEnabled,
+			"announcement": strings.TrimSpace(row.Announcement), "agreement": strings.TrimSpace(row.Agreement),
+			"maintenance_tip": strings.TrimSpace(row.MaintenanceTip), "fee_type": row.FeeType, "fee_bearer": row.FeeBearer,
+			"fee_rate": row.FeeRate, "fee_fixed": row.FeeFixed, "withdraw_fee_type": row.WithdrawFeeType,
+			"withdraw_fee_rate": row.WithdrawFeeRate, "withdraw_fee_fixed": row.WithdrawFeeFixed,
+			"max_listings_per_user": row.MaxListingsPerUser, "new_user_limit_days": row.NewUserLimitDays,
+			"listing_valid_minutes": row.ListingValidMinutes, "order_lock_minutes": row.OrderLockMinutes,
+			"settle_freeze_days": row.SettleFreezeDays, "refund_window_days": row.RefundWindowDays,
+			"allow_groups": row.AllowGroups, "updated_at": s.now(),
+		}).Error
+	})
 }
 
 func validateSettings(v *Settings) error {
@@ -218,6 +246,9 @@ func (s *Service) ListListings(ctx context.Context, in ListingQuery) ([]Listing,
 	err := q.Select("l.*").Order(order).Offset((in.Page - 1) * in.PageSize).Limit(in.PageSize).Find(&rows).Error
 	if in.Public {
 		for i := range rows {
+			rows[i].SellerLabel = fmt.Sprintf("卖家 #%06d", rows[i].SellerID%1000000)
+			rows[i].ConfigSnapshot = mergeSnapshot(rows[i].ConfigSnapshot, "")
+			rows[i].RiskFlag = ""
 			rows[i].SellerID = 0
 			rows[i].AuditorID = nil
 			rows[i].AuditRemark = ""
@@ -241,6 +272,9 @@ func (s *Service) Listing(ctx context.Context, id, viewerID int64, public bool) 
 	if public {
 		_ = s.db.WithContext(ctx).Table(listingsTable).Where("id=?", id).UpdateColumn("views", gorm.Expr("views+1")).Error
 		row.Views++
+		row.SellerLabel = fmt.Sprintf("卖家 #%06d", row.SellerID%1000000)
+		row.ConfigSnapshot = mergeSnapshot(row.ConfigSnapshot, "")
+		row.RiskFlag = ""
 		row.SellerID = 0
 		row.AuditorID = nil
 		row.AuditRemark = ""
@@ -271,7 +305,7 @@ func (s *Service) ListingProducts(ctx context.Context, userID int64, keyword str
 		return nil, err
 	}
 	allowed := allowedGroups(settings.AllowGroups)
-	q := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.id,i.product_name,i.module_type AS product_type,p.group_id,i.primary_ip,i.config_snapshot,i.expires_at").Joins("LEFT JOIN product.products p ON p.id=i.product_id").Where("i.customer_id=? AND i.deleted_at IS NULL AND i.status<>6", userID).Where("NOT EXISTS (SELECT 1 FROM system.marketplace_listings ml WHERE ml.product_id=i.id AND ml.status IN ('pending','on_sale','locked'))")
+	q := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.id,i.product_name,i.module_type AS product_type,p.group_id,i.primary_ip,i.config_snapshot,i.expires_at").Joins("LEFT JOIN product.products p ON p.id=i.product_id").Where("i.customer_id=? AND i.deleted_at IS NULL AND i.status<>6", userID).Where("NOT EXISTS (SELECT 1 FROM system.marketplace_listings ml WHERE ml.product_id=i.id AND ml.status IN ('pending','on_sale','locked'))").Where("NOT EXISTS (SELECT 1 FROM system.push_transfers pt WHERE pt.instance_id=i.id AND pt.status='pending')")
 	if k := strings.TrimSpace(keyword); k != "" {
 		like := "%" + k + "%"
 		q = q.Where("i.product_name LIKE ? OR i.primary_ip LIKE ? OR CAST(i.config_snapshot AS CHAR) LIKE ?", like, like, like)
@@ -299,6 +333,9 @@ type CreateListingInput struct {
 }
 
 func (s *Service) CreateListing(ctx context.Context, userID int64, in CreateListingInput) (*Listing, error) {
+	if err := s.requireOpen(ctx); err != nil {
+		return nil, err
+	}
 	settings, err := s.Settings(ctx)
 	if err != nil {
 		return nil, err
@@ -358,7 +395,26 @@ func (s *Service) CreateListing(ctx context.Context, userID int64, in CreateList
 		status, audit = "on_sale", "passed"
 	}
 	row := &Listing{ListingNo: s.newNo("TM"), SellerID: userID, ProductID: host.ID, SourceProductID: host.SourceProductID, GroupID: host.GroupID, ProductName: name, ProductType: host.ModuleType, Region: strings.TrimSpace(in.Region), ConfigSnapshot: config, Price: formatMoney(price), OriginalRenewalPrice: formatMoney(renewal), RemainingDays: remaining, Status: status, AuditStatus: audit, SellerNote: strings.TrimSpace(in.SellerNote), ExpiresAt: s.now().Add(time.Duration(settings.ListingValidMinutes) * time.Minute)}
-	if err = s.db.WithContext(ctx).Table(listingsTable).Create(row).Error; err != nil {
+	if err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		locked, e := pushtransfer.LockHost(tx, host.ID)
+		if e != nil {
+			return e
+		}
+		if locked.CustomerID != userID {
+			return ErrForbidden
+		}
+		if e = pushtransfer.AvailableTx(tx, host.ID, 0, 0); e != nil {
+			return e
+		}
+		var transfers int64
+		if e = tx.Table(pushtransfer.Table).Where("instance_id=? AND status='completed' AND updated_at>?", host.ID, s.now().Add(-24*time.Hour)).Count(&transfers).Error; e != nil {
+			return e
+		}
+		if transfers > 0 {
+			row.RiskFlag = "rapid_resale"
+		}
+		return tx.Table(listingsTable).Create(row).Error
+	}); err != nil {
 		return nil, err
 	}
 	return row, nil
@@ -551,12 +607,12 @@ func (s *Service) checkUserRisk(ctx context.Context, userID int64, settings *Set
 	if err := s.db.WithContext(ctx).Table("customer.customers").Select("created_at").Where("id=? AND deleted_at IS NULL AND status=1", userID).First(&user).Error; err != nil {
 		return ErrForbidden
 	}
-	if listing && settings.RequireRealnameListing {
+	if listing {
 		if err := certification.RequireApproved(s.db.WithContext(ctx), userID); err != nil {
 			return err
 		}
 	}
-	if !listing && settings.RequireRealnamePurchase {
+	if !listing {
 		if err := certification.RequireApproved(s.db.WithContext(ctx), userID); err != nil {
 			return err
 		}
@@ -599,17 +655,39 @@ func groupAllowed(raw json.RawMessage, id int64) bool {
 	}
 	return false
 }
-func mergeSnapshot(raw json.RawMessage, ip string) json.RawMessage {
-	var value map[string]any
-	if json.Unmarshal(raw, &value) != nil {
-		value = map[string]any{}
+func mergeSnapshot(raw json.RawMessage, _ string) json.RawMessage {
+	var source map[string]any
+	if json.Unmarshal(raw, &source) != nil {
+		return json.RawMessage("{}")
 	}
-	if strings.TrimSpace(ip) != "" {
-		value["primaryIp"] = ip
+	safe := map[string]any{}
+	for _, key := range []string{"cpu", "vcpu", "memory", "bandwidth", "systemDisk", "dataDisk", "operatingSystem", "region", "networkType"} {
+		if value, ok := source[key]; ok {
+			switch value.(type) {
+			case string, float64:
+				safe[key] = value
+			}
+		}
 	}
-	out, _ := json.Marshal(value)
+	if options, ok := source["configOptions"].(map[string]any); ok {
+		for _, raw := range options {
+			if option, ok := raw.(map[string]any); ok {
+				field, _ := option["field"].(string)
+				name, _ := option["displayName"].(string)
+				value, _ := option["displayValue"].(string)
+				switch strings.ToLower(field) {
+				case "cpu", "vcpu", "memory", "bandwidth", "system_disk", "data_disk", "network_type", "data_center", "region":
+					if name != "" && value != "" {
+						safe[field] = name + "：" + value
+					}
+				}
+			}
+		}
+	}
+	out, _ := json.Marshal(safe)
 	return out
 }
+
 func normalizePage(page, size int) (int, int) {
 	if page < 1 {
 		page = 1
@@ -687,7 +765,7 @@ func calculateFee(amount int64, settings *Settings) (fee, buyerPay, sellerIncome
 	} else {
 		var rate int64
 		rate, err = parsePercent(settings.FeeRate)
-		fee = amount * rate / 10000
+		fee = (amount*rate + 5000) / 10000
 	}
 	if err != nil {
 		return

@@ -41,10 +41,11 @@ type NoVNCProvider struct {
 type cachedSession struct {
 	session *RemoteSession
 	inUse   bool
+	cancel  context.CancelFunc
 }
 
 func NewNoVNCProvider(source UpstreamSource) *NoVNCProvider {
-	return &NoVNCProvider{
+	p := &NoVNCProvider{
 		source:   source,
 		ttl:      defaultSessionTTL,
 		now:      time.Now,
@@ -52,6 +53,8 @@ func NewNoVNCProvider(source UpstreamSource) *NoVNCProvider {
 		dialer:   &websocket.Dialer{HandshakeTimeout: 15 * time.Second, Subprotocols: []string{"binary"}},
 		sessions: make(map[int64]*cachedSession),
 	}
+	activeProviders.Store(p, struct{}{})
+	return p
 }
 
 func (p *NoVNCProvider) Engine() string { return "novnc" }
@@ -59,6 +62,14 @@ func (p *NoVNCProvider) Engine() string { return "novnc" }
 func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerID int64) (*RemoteSession, error) {
 	if p.source == nil || instanceID <= 0 || customerID <= 0 {
 		return nil, ErrUpstreamUnavailable
+	}
+	var version int64
+	if source, ok := p.source.(OwnershipSource); ok {
+		v, e := source.RemoteOwnership(ctx, instanceID, customerID)
+		if e != nil {
+			return nil, ErrSessionInvalid
+		}
+		version = v
 	}
 	upstream, err := p.source.CreateRemoteUpstream(ctx, instanceID, customerID)
 	if err != nil || upstream == nil || strings.TrimSpace(upstream.URL) == "" {
@@ -74,16 +85,21 @@ func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerI
 	}
 	token := hex.EncodeToString(secret)
 	session := &RemoteSession{
-		Type:       "novnc",
-		URL:        "/console/instance/" + strconv.FormatInt(instanceID, 10) + "/vnc?token=" + url.QueryEscape(token) + "&type=novnc",
-		Token:      token,
-		ExpiresAt:  p.now().Add(p.ttl).UnixMilli(),
-		instanceID: instanceID,
-		customerID: customerID,
-		engine:     p.Engine(),
-		upstream:   wsURL,
-		password:   upstream.Password,
+		ownershipVersion: version,
+		Type:             "novnc",
+		URL:              "/console/instance/" + strconv.FormatInt(instanceID, 10) + "/vnc?token=" + url.QueryEscape(token) + "&type=novnc",
+		Token:            token,
+		ExpiresAt:        p.now().Add(p.ttl).UnixMilli(),
+		instanceID:       instanceID,
+		customerID:       customerID,
+		engine:           p.Engine(),
+		upstream:         wsURL,
+		password:         upstream.Password,
 	}
+	if !p.valid(ctx, session) {
+		return nil, ErrSessionInvalid
+	}
+	p.revoke(instanceID)
 	p.mu.Lock()
 	p.sessions[instanceID] = &cachedSession{session: session}
 	p.mu.Unlock()
@@ -116,6 +132,21 @@ func (p *NoVNCProvider) Proxy(ctx context.Context, session *RemoteSession, clien
 	if session == nil || clientConn == nil || session.engine != p.Engine() || strings.TrimSpace(session.upstream) == "" {
 		return ErrSessionInvalid
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	p.mu.Lock()
+	cached := p.sessions[session.instanceID]
+	if cached == nil || cached.session != session {
+		p.mu.Unlock()
+		return ErrSessionInvalid
+	}
+	cached.cancel = cancel
+	p.mu.Unlock()
+	if !p.valid(ctx, session) {
+		return ErrSessionInvalid
+	}
+	go p.watch(ctx, cancel, session)
+	clientConn = &ownershipConn{Conn: clientConn, valid: func() bool { return p.valid(ctx, session) }}
 	defer p.Discard(session)
 	upstream, response, err := p.dialer.DialContext(ctx, session.upstream, nil)
 	if response != nil && response.Body != nil {

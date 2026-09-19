@@ -103,7 +103,7 @@ func validate(r ChangeRequest) (Money, error) {
 	}
 	sign := 1
 	switch r.Type {
-	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission":
+	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income":
 	case "manual_debit", "freeze", "order_pay", "withdraw", "underpayment":
 		sign = -1
 	default:
@@ -292,6 +292,13 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		}
 		err := tx.Table("system.groupbuy_records").Where("id=? AND client_id=? AND status=1 AND pay_amount=?", r.RefID, r.CustomerID, int64(abs)).Count(&count).Error
 		if err != nil {
+			return err
+		}
+	case "marketplace_sale":
+		if r.Type != "marketplace_income" || r.Channel != "marketplace" {
+			return ErrBusiness
+		}
+		if err := tx.Table("system.marketplace_orders").Where("id=? AND seller_id=? AND status='paid' AND settlement_mode='balance' AND seller_income=?", r.RefID, r.CustomerID, amount.String()).Count(&count).Error; err != nil {
 			return err
 		}
 	case "marketplace":

@@ -33,7 +33,7 @@ func (r *GormRepository) Create(c context.Context, v *dom.Host) error {
 	return r.db.WithContext(c).Table(hostTable).Create(v).Error
 }
 func (r *GormRepository) Update(c context.Context, v *dom.Host) error {
-	return r.db.WithContext(c).Table(hostTable).Save(v).Error
+	return r.db.WithContext(c).Table(hostTable).Omit("customer_id", "ownership_version").Save(v).Error
 }
 func (r *GormRepository) Delete(c context.Context, id int64) error {
 	return r.db.WithContext(c).Table(hostTable).Where("id = ?", id).Delete(&dom.Host{}).Error
@@ -112,6 +112,12 @@ func (r *GormRepository) EnsureSchema(c context.Context) error {
 }
 
 func (r *GormRepository) UpdateFields(c context.Context, id int64, fields map[string]any) error {
+	if _, ok := fields["customer_id"]; ok {
+		return fmt.Errorf("ownership changes require Push engine")
+	}
+	if _, ok := fields["ownership_version"]; ok {
+		return fmt.Errorf("ownership changes require Push engine")
+	}
 	fields["updated_at"] = time.Now()
 	return r.db.WithContext(c).Table(hostTable).Where("id = ?", id).Updates(fields).Error
 }

@@ -3,6 +3,8 @@ package marketplace
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	orderdom "ddyidc/internal/order/domain"
+	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/distsync"
 	"errors"
 	"fmt"
@@ -15,9 +17,15 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-type CreateOrderInput struct{ ListingID int64 }
+type CreateOrderInput struct {
+	ListingID  int64
+	OperatorIP string
+}
 
 func (s *Service) CreateOrder(ctx context.Context, buyerID int64, in CreateOrderInput) (*Order, error) {
+	if err := s.requireOpen(ctx); err != nil {
+		return nil, err
+	}
 	settings, err := s.Settings(ctx)
 	if err != nil {
 		return nil, err
@@ -45,16 +53,30 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID int64, in CreateOrder
 		if listing.Status != "on_sale" || listing.AuditStatus != "passed" || !listing.ExpiresAt.After(s.now()) {
 			return ErrInvalid
 		}
+		if err := pushtransfer.ValidatePartiesTx(tx, listing.ProductID, listing.SellerID, buyerID); err != nil {
+			return err
+		}
 		amount, err := parsePositiveMoney(listing.Price)
 		if err != nil {
 			return err
 		}
-		fee, buyerPay, sellerIncome, err := calculateFee(amount, settings)
+		feeSettings := *settings
+		feeSettings.FeeType = "ratio"
+		feeSettings.FeeBearer = "seller"
+		fee, buyerPay, sellerIncome, err := calculateFee(amount, &feeSettings)
 		if err != nil {
 			return err
 		}
-		out = Order{OrderNo: s.newNo("TL"), ListingID: listing.ID, BuyerID: buyerID, SellerID: listing.SellerID, Amount: formatMoney(amount), PayAmount: formatMoney(buyerPay), Fee: formatMoney(fee), FeeBearer: settings.FeeBearer, SellerIncome: formatMoney(sellerIncome), Status: "pending_pay", LockExpiresAt: s.now().Add(time.Duration(settings.OrderLockMinutes) * time.Minute)}
+		out = Order{SettlementMode: "balance", OperatorIP: in.OperatorIP, OrderNo: s.newNo("TL"), ListingID: listing.ID, BuyerID: buyerID, SellerID: listing.SellerID, Amount: formatMoney(amount), PayAmount: formatMoney(buyerPay), Fee: formatMoney(fee), FeeBearer: "seller", SellerIncome: formatMoney(sellerIncome), Status: "pending_pay", LockExpiresAt: s.now().Add(time.Duration(settings.OrderLockMinutes) * time.Minute)}
 		if err := tx.Table(ordersTable).Create(&out).Error; err != nil {
+			return err
+		}
+		platformOrder := orderdom.Order{ID: out.ID, OrderNo: out.OrderNo, CustomerID: buyerID, TotalAmount: buyerPay, PayAmount: buyerPay, Status: 1, CustomerRemark: "交易市场担保订单"}
+		if err := tx.Create(&platformOrder).Error; err != nil {
+			return err
+		}
+		item := orderdom.OrderItem{OrderID: out.ID, ProductID: listing.SourceProductID, ProductName: listing.ProductName, ModuleType: "marketplace", ConfigSnapshot: "{}", Qty: 1, UnitPrice: buyerPay, Subtotal: buyerPay}
+		if err := tx.Create(&item).Error; err != nil {
 			return err
 		}
 		res := tx.Table(listingsTable).Where("id=? AND status='on_sale'", listing.ID).Updates(map[string]any{"status": "locked", "updated_at": s.now()})
@@ -83,8 +105,18 @@ func (s *Service) PayBalance(ctx context.Context, buyerID, orderID int64) (*Orde
 		if out.BuyerID != buyerID {
 			return ErrForbidden
 		}
+		if out.Status == "paid" || out.Status == "settled" {
+			return nil
+		}
 		if out.Status != "pending_pay" || !out.LockExpiresAt.After(s.now()) {
 			return ErrInvalid
+		}
+		var online int64
+		if err := tx.Table("payment.payments").Where("biz_type='marketplace' AND biz_id=? AND status='pending'", orderID).Count(&online).Error; err != nil {
+			return err
+		}
+		if online > 0 {
+			return errors.New("该订单已发起在线支付，请完成原支付或等待订单关闭")
 		}
 		pay, err := parsePositiveMoney(out.PayAmount)
 		if err != nil {
@@ -146,21 +178,17 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 	if err := tx.Table(walletTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", order.SellerID).First(&wallet).Error; err != nil {
 		return err
 	}
-	income, err := parsePositiveMoney(order.SellerIncome)
+	income, err := parseUnsignedMoney(order.SellerIncome)
 	if err != nil {
 		return err
 	}
 	if err := changeWallet(tx, order.SellerID, "seller_pending", income, order.ID, "marketplace", "卖家待结算"); err != nil {
 		return err
 	}
-	if err := tx.Table("instance.instances").Where("id=? AND customer_id=?", host.ID, order.SellerID).Updates(map[string]any{"customer_id": buyerID, "updated_at": paidAt}).Error; err != nil {
+	if err := completeOwnership(tx, &order, &listing, false); err != nil {
 		return err
 	}
-	operator := buyerID
-	eventID := snowflake.GenID()
-	if err := tx.Exec("INSERT INTO instance.instance_events (id,instance_id,event_type,from_status,to_status,operator_type,operator_id,status,upstream_request,upstream_response,error_msg,created_at,processed_at,updated_at) VALUES (?,?, 'marketplace_transfer',?,?,1,?,2,JSON_OBJECT('sellerId',?,'buyerId',?,'upstreamWrite',false),JSON_OBJECT('localOwnershipChanged',true),'',?,?,?)", eventID, host.ID, host.Status, host.Status, operator, order.SellerID, buyerID, paidAt, paidAt, paidAt).Error; err != nil {
-		return err
-	}
+
 	settleAt := paidAt
 	refundEnd := paidAt
 	var settings Settings
@@ -168,7 +196,25 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 		return err
 	}
 	settleAt = paidAt.AddDate(0, 0, settings.SettleFreezeDays)
+	if order.SettlementMode == "balance" {
+		hours := settings.AutoConfirmHours
+		if hours < 1 {
+			hours = 24
+		}
+		settleAt = paidAt.Add(time.Duration(hours) * time.Hour)
+	}
 	refundEnd = paidAt.AddDate(0, 0, settings.RefundWindowDays)
+	if order.SettlementMode == "balance" {
+		refundEnd = settleAt
+	}
+	if order.SettlementMode == "balance" {
+		if err := tx.Table("order.orders").Where("id=? AND status=1", order.ID).Updates(map[string]any{"status": 2, "paid_at": paidAt, "updated_at": paidAt}).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("order.order_items").Where("order_id=?", order.ID).Updates(map[string]any{"delivery_status": 2, "instance_id": listing.ProductID}).Error; err != nil {
+			return err
+		}
+	}
 	if err := tx.Table(ordersTable).Where("id=? AND status='pending_pay'", order.ID).Updates(map[string]any{"status": "paid", "payment_method": method, "paid_at": paidAt, "settle_at": settleAt, "refund_window_end": refundEnd, "updated_at": paidAt}).Error; err != nil {
 		return err
 	}
@@ -181,41 +227,21 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 	return appendFlow(tx, order.SellerID, "seller_pending", "in", order.SellerIncome, wallet.Balance, order.ID, "卖家待结算", paidAt)
 }
 
-// CompensateFailedExternalPaymentTx converts a captured external payment into
-// local account credit when the ownership transfer cannot be committed. Callers
-// must roll back to a savepoint created before CompletePaidOrderTx first.
+// CompensateFailedExternalPaymentTx queues an original-channel refund after rollback.
 func CompensateFailedExternalPaymentTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, _ string) error {
-	var order Order
-	if err := tx.Table(ordersTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", orderID).First(&order).Error; err != nil {
-		return err
-	}
-	if order.BuyerID != buyerID || order.Status != "pending_pay" {
-		return ErrInvalid
-	}
-	amount, err := parsePositiveMoney(order.PayAmount)
-	if err != nil {
-		return err
-	}
-	if err := creditBilling(tx, buyerID, amount, orderID, paidAt); err != nil {
-		return err
-	}
-	var account struct{ Balance balance.Money }
-	if err := tx.Table("billing.accounts").Select("balance").Where("customer_id=?", buyerID).First(&account).Error; err != nil {
-		return err
-	}
-	if err := tx.Table(ordersTable).Where("id=? AND status='pending_pay'", orderID).Updates(map[string]any{"status": "cancelled", "payment_method": "local_refund", "updated_at": paidAt}).Error; err != nil {
-		return err
-	}
-	if err := tx.Table(listingsTable).Where("id=? AND status='locked'", order.ListingID).Updates(map[string]any{"status": "on_sale", "updated_at": paidAt}).Error; err != nil {
-		return err
-	}
-	return appendFlow(tx, buyerID, "refund_reversed", "in", order.PayAmount, account.Balance.String(), orderID, "第三方支付后过户失败，已退至账户余额", paidAt)
+	return queueFailedRefund(tx, orderID, buyerID, paidAt)
 }
 
 func (s *Service) AfterExternalPayment(ctx context.Context, orderID, buyerID int64) error {
 	var row Order
 	if err := s.db.WithContext(ctx).Table(ordersTable).Where("id=? AND buyer_id=?", orderID, buyerID).First(&row).Error; err != nil {
 		return err
+	}
+	if row.Status == "refund_pending" {
+		if s.refunder == nil {
+			return errors.New("原路退款服务暂不可用")
+		}
+		return s.refunder.RefundMarketplace(ctx, orderID)
 	}
 	s.notifyTrade(&row)
 	return nil
@@ -271,6 +297,9 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 		if !settings.RefundEnabled {
 			return errors.New("退款功能未开启")
 		}
+		if out.SettlementMode == "balance" && out.Status == "settled" {
+			return errors.New("订单已确认收货，请通过争议处理联系平台")
+		}
 		if out.Status != "paid" && out.Status != "settled" {
 			return ErrInvalid
 		}
@@ -313,17 +342,20 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 			return err
 		}
 		pay, _ := parsePositiveMoney(out.PayAmount)
-		if err := creditBilling(tx, out.BuyerID, pay, orderID, s.now()); err != nil {
+		if out.PaymentMethod == "balance" {
+			if err := creditBilling(tx, out.BuyerID, pay, orderID, s.now()); err != nil {
+				return err
+			}
+		}
+		if err := completeOwnership(tx, &out, &listing, true); err != nil {
 			return err
 		}
-		if err := tx.Table("instance.instances").Where("id=? AND customer_id=?", host.ID, out.BuyerID).Updates(map[string]any{"customer_id": out.SellerID, "updated_at": s.now()}).Error; err != nil {
-			return err
+		nextStatus := "refunded"
+		if out.PaymentMethod != "balance" {
+			nextStatus = "refund_pending"
 		}
-		operator := actorID
-		if err := tx.Exec("INSERT INTO instance.instance_events (id,instance_id,event_type,from_status,to_status,operator_type,operator_id,status,upstream_request,upstream_response,error_msg,created_at,processed_at,updated_at) VALUES (?,?, 'marketplace_refund_transfer',?,?,1,?,2,JSON_OBJECT('buyerId',?,'sellerId',?,'upstreamWrite',false),JSON_OBJECT('localOwnershipChanged',true),'',?,?,?)", snowflake.GenID(), host.ID, host.Status, host.Status, operator, out.BuyerID, out.SellerID, s.now(), s.now(), s.now()).Error; err != nil {
-			return err
-		}
-		if err := tx.Table(ordersTable).Where("id=?", out.ID).Updates(map[string]any{"status": "refunded", "updated_at": s.now()}).Error; err != nil {
+
+		if err := tx.Table(ordersTable).Where("id=?", out.ID).Updates(map[string]any{"status": nextStatus, "updated_at": s.now()}).Error; err != nil {
 			return err
 		}
 		if err := tx.Table(listingsTable).Where("id=?", listing.ID).Updates(map[string]any{"status": "refunded", "updated_at": s.now()}).Error; err != nil {
@@ -332,10 +364,18 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 		if err := appendFlow(tx, out.SellerID, "refund_reversed", "out", out.SellerIncome, formatMoney(balance), out.ID, "退款回滚", s.now()); err != nil {
 			return err
 		}
-		out.Status = "refunded"
+		out.Status = nextStatus
+		if nextStatus == "refunded" && out.SettlementMode == "balance" {
+			if err := tx.Table("order.orders").Where("id=?", out.ID).Update("status", 4).Error; err != nil {
+				return err
+			}
+		}
 		return nil
 	})
-	if err == nil {
+	if err == nil && out.Status == "refund_pending" && s.refunder != nil {
+		err = s.refunder.RefundMarketplace(ctx, out.ID)
+	}
+	if err == nil && out.Status == "refunded" {
 		s.notify("marketplace_refund", out.BuyerID, out.ID, map[string]string{"order_no": out.OrderNo})
 		s.notify("marketplace_refund", out.SellerID, out.ID, map[string]string{"order_no": out.OrderNo})
 	}
@@ -612,10 +652,8 @@ func (s *Service) Dashboard(ctx context.Context) (map[string]any, error) {
 }
 
 func (s *Service) RunMaintenance(ctx context.Context) error {
-	enabled, err := s.Enabled(ctx)
-	if err != nil || !enabled {
-		return err
-	}
+	refundErr := s.retryRefunds(ctx)
+	_ = refundErr // Failed original refunds remain queued for the next maintenance pass.
 	now := s.now()
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var expired []Order
@@ -623,6 +661,11 @@ func (s *Service) RunMaintenance(ctx context.Context) error {
 			return err
 		}
 		for _, o := range expired {
+			if o.SettlementMode == "balance" {
+				if err := tx.Table("order.orders").Where("id=? AND status=1", o.ID).Updates(map[string]any{"status": 3, "cancel_reason": "市场支付超时", "cancelled_at": now}).Error; err != nil {
+					return err
+				}
+			}
 			if err := tx.Table(ordersTable).Where("id=? AND status='pending_pay'", o.ID).Updates(map[string]any{"status": "cancelled", "updated_at": now}).Error; err != nil {
 				return err
 			}
@@ -650,14 +693,42 @@ func settleOrderTx(tx *gorm.DB, o *Order, now time.Time) error {
 	if err := tx.Table(walletTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", o.SellerID).First(&wallet).Error; err != nil {
 		return err
 	}
-	income, _ := parsePositiveMoney(o.SellerIncome)
-	balance, _ := parseUnsignedMoney(wallet.Balance)
+	income, err := parseUnsignedMoney(o.SellerIncome)
+	if err != nil {
+		return err
+	}
+	walletBalance, _ := parseUnsignedMoney(wallet.Balance)
 	frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
 	if frozen < income {
 		return errors.New("待结算资金不足")
 	}
-	after := balance + income
-	if err := changeWallet(tx, o.SellerID, "settled", income, o.ID, "marketplace", "交易结算"); err != nil {
+	after := walletBalance + income
+	walletType := "settled"
+	if o.SettlementMode == "balance" {
+		walletType = "settled_to_balance"
+	}
+	if err := changeWallet(tx, o.SellerID, walletType, income, o.ID, "marketplace", "交易结算"); err != nil {
+		return err
+	}
+	if o.SettlementMode == "balance" {
+		if income > 0 {
+			result, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: o.SellerID, Type: "marketplace_income", Amount: o.SellerIncome, RefType: "marketplace_sale", RefID: o.ID, Channel: "marketplace", RequestID: fmt.Sprintf("MS:%d", o.ID), Notes: "交易市场确认收货结算"})
+			if err != nil {
+				return err
+			}
+			after = int64(result.BalanceAfter)
+		} else {
+			var account balance.Account
+			if err := tx.Where("customer_id=?", o.SellerID).Take(&account).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			after = int64(account.Balance)
+		}
+		if err := tx.Table("order.orders").Where("id=? AND status=2", o.ID).Update("status", 6).Error; err != nil {
+			return err
+		}
+	}
+	if err := appendFlow(tx, 0, "platform_commission", "in", o.Fee, "0.00", o.ID, "市场佣金（四舍五入至分）", now); err != nil {
 		return err
 	}
 	if err := tx.Table(ordersTable).Where("id=? AND status='paid'", o.ID).Updates(map[string]any{"status": "settled", "updated_at": now}).Error; err != nil {
@@ -730,6 +801,9 @@ func (s *Service) notifyTrade(o *Order) {
 func MoneyToCents(v string) (int64, error) { return parsePositiveMoney(v) }
 
 func changeWallet(tx *gorm.DB, userID int64, typ string, amount, refID int64, refType, notes string, actors ...int64) error {
+	if amount == 0 {
+		return nil
+	}
 	actor := int64(0)
 	name := ""
 	if len(actors) > 0 && actors[0] > 0 {

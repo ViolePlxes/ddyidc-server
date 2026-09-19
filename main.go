@@ -28,6 +28,7 @@ import (
 	"ddyidc/internal/points"
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
+	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/logger"
@@ -328,7 +329,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := marketplaceSvc.EnsureSchema(context.Background()); err != nil {
 		panic("marketplace schema initialization failed: " + err.Error())
 	}
-	marketplaceEnabled, err := marketplaceSvc.Enabled(context.Background())
+	_, err = marketplaceSvc.Enabled(context.Background())
 	if err != nil {
 		panic("marketplace configuration failed: " + err.Error())
 	}
@@ -351,9 +352,8 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		*cronStarts = append(*cronStarts, cdnsellSvc.Start)
 	}
 	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
-	if marketplaceEnabled {
-		*cronStarts = append(*cronStarts, marketplaceSvc.StartMaintenance)
-	}
+	*cronStarts = append(*cronStarts, marketplaceSvc.StartMaintenance)
+	marketplaceSvc.SetRefunder(paymentSvc)
 	pointsEnabled, err := pointsSvc.Enabled(context.Background())
 	if err != nil {
 		panic("points configuration failed: " + err.Error())
@@ -374,6 +374,13 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := instanceSvc.EnsureSchema(context.Background()); err != nil {
 		panic("instance schema migration failed: " + err.Error())
 	}
+	if err := pushtransfer.EnsureSchema(db.G); err != nil {
+		panic("push transfer schema initialization failed: " + err.Error())
+	}
+	if err := pushtransfer.SeedNavigation(db.G); err != nil {
+		panic("push navigation migration failed: " + err.Error())
+	}
+	pushtransfer.RegisterHandlers(server, pushtransfer.New(db.G, cache.RDB), jwt)
 	instancehandler.RegisterHandlers(server, instanceSvc, jwt)
 	ticketSvc := ticketservice.NewService(ticketrepo.NewRepository(db.G))
 	ticketSvc.SetNotifier(notifyManager)

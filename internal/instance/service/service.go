@@ -474,6 +474,14 @@ func (s *Service) DiscardRemoteSession(session *remoteconsole.RemoteSession) {
 	}
 }
 
+func (s *Service) RemoteOwnership(ctx context.Context, instanceID, customerID int64) (int64, error) {
+	host, err := s.owned(ctx, customerID, instanceID)
+	if err != nil {
+		return 0, err
+	}
+	return host.OwnershipVersion, nil
+}
+
 func (s *Service) owned(ctx context.Context, customerID, instanceID int64) (*dom.Host, error) {
 	host, err := s.repo.FindByID(ctx, instanceID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {

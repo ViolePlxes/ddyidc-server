@@ -3,6 +3,7 @@ package marketplace_test
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/certification"
 	market "ddyidc/internal/marketplace"
 	payment "ddyidc/internal/payment/domain"
 	payrepo "ddyidc/internal/payment/repository"
@@ -25,7 +26,11 @@ func TestBalanceEngineLifecycle(t *testing.T) {
 		t.Skip("set DDYIDC_BALANCE_INTEGRATION=1 for real MySQL regression")
 	}
 	var c struct{ MySQL db.Config }
-	conf.MustLoad("../../etc/config.yaml", &c)
+	path := os.Getenv("DDYIDC_BALANCE_TEST_CONFIG")
+	if path == "" {
+		path = "../../etc/config.yaml"
+	}
+	conf.MustLoad(path, &c)
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local", c.MySQL.User, c.MySQL.Password, c.MySQL.Host, c.MySQL.Port, c.MySQL.Database)
 	database, e := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if e != nil {
@@ -45,11 +50,13 @@ func TestBalanceEngineLifecycle(t *testing.T) {
 	ctx := context.Background()
 	buyer, seller := snowflake.GenID(), snowflake.GenID()
 	for _, id := range []int64{buyer, seller} {
+		must(tx.Create(&certification.Record{ID: snowflake.GenID(), CustomerID: id, Type: 1, Name: "017 rollback-only identity", DocumentHash: fmt.Sprintf("%064d", id), Status: 2}).Error)
 		must(tx.Table("customer.customers").Create(map[string]any{"id": id, "tenant_id": 0, "username": fmt.Sprintf("wallet-test-%d", id), "password_hash": "test-only", "status": 1, "created_at": time.Now(), "updated_at": time.Now()}).Error)
 	}
 	_, e = balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyer, Type: "manual_credit", Amount: "1000.00", RefType: "customer", RefID: buyer, Channel: "admin_manual", RequestID: fmt.Sprintf("WTEST:%d", buyer), AdminID: 1, AdminName: "integration", Notes: "rollback-only integration funding"})
 	must(e)
 	service := market.NewService(tx, nil, nil)
+	must(tx.Table("system.system_configs").Where("`key`='marketplace.enabled'").Update("value", "true").Error)
 	must(tx.Table("system.marketplace_settings").Where("id>0").Updates(map[string]any{"enabled": true, "refund_enabled": true, "withdrawal_audit_enabled": false, "withdraw_fee_type": "fixed", "withdraw_fee_fixed": "0.00"}).Error)
 	makeOrder := func() *market.Order {
 		hostID := snowflake.GenID()

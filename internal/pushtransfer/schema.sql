@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS system.push_transfers (
+ id BIGINT NOT NULL PRIMARY KEY,
+ instance_id BIGINT NOT NULL,
+ from_customer_id BIGINT NOT NULL,
+ to_customer_id BIGINT NOT NULL,
+ source_order_id BIGINT NOT NULL DEFAULT 0,
+ market_order_id BIGINT NOT NULL DEFAULT 0,
+ request_key VARCHAR(100) NOT NULL,
+ source VARCHAR(32) NOT NULL,
+ status VARCHAR(24) NOT NULL,
+ operator_ip VARCHAR(64) NOT NULL DEFAULT '',
+ receiver_ip VARCHAR(64) NOT NULL DEFAULT '',
+ risk_flag VARCHAR(100) NOT NULL DEFAULT '',
+ created_at DATETIME(3) NOT NULL,
+ updated_at DATETIME(3) NOT NULL,
+ pending_instance BIGINT GENERATED ALWAYS AS (CASE WHEN status='pending' THEN instance_id ELSE NULL END) STORED,
+ UNIQUE KEY uk_push_request(request_key),
+ UNIQUE KEY uk_push_pending(pending_instance),
+ KEY idx_push_from(from_customer_id,created_at),
+ KEY idx_push_to(to_customer_id,status),
+ KEY idx_push_instance(instance_id,created_at),
+ KEY idx_push_market(market_order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

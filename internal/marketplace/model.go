@@ -23,6 +23,7 @@ const (
 )
 
 type Settings struct {
+	AutoConfirmHours        int             `json:"autoConfirmHours"`
 	ID                      int64           `gorm:"column:id;primaryKey" json:"id,string"`
 	Enabled                 bool            `gorm:"column:enabled" json:"enabled"`
 	Maintenance             bool            `gorm:"column:maintenance" json:"maintenance"`
@@ -57,6 +58,8 @@ type Settings struct {
 func (Settings) TableName() string { return settingsTable }
 
 type Listing struct {
+	SellerLabel          string          `gorm:"-" json:"sellerLabel,omitempty"`
+	RiskFlag             string          `json:"riskFlag,omitempty"`
 	ID                   int64           `gorm:"column:id;primaryKey" json:"id,string"`
 	ListingNo            string          `gorm:"column:listing_no" json:"listingNo"`
 	SellerID             int64           `gorm:"column:seller_id" json:"sellerId,string,omitempty"`
@@ -110,6 +113,8 @@ func (v *ListingPrice) BeforeCreate(*gorm.DB) error {
 }
 
 type Order struct {
+	SettlementMode  string     `json:"settlementMode"`
+	OperatorIP      string     `json:"-"`
 	ID              int64      `gorm:"column:id;primaryKey" json:"id,string"`
 	OrderNo         string     `gorm:"column:order_no" json:"orderNo"`
 	ListingID       int64      `gorm:"column:listing_id" json:"listingId,string"`

@@ -2,6 +2,15 @@ package marketplace
 
 import "testing"
 
+func TestCommissionRoundsHalfUpToCent(t *testing.T) {
+	for _, tc := range []struct{ amount, fee int64 }{{1, 0}, {9, 0}, {10, 1}, {11, 1}, {30, 2}, {10001, 500}} {
+		fee, pay, income, err := calculateFee(tc.amount, &Settings{FeeType: "ratio", FeeRate: "5.00", FeeBearer: "seller"})
+		if err != nil || fee != tc.fee || pay != tc.amount || income+fee != tc.amount {
+			t.Fatalf("amount=%d: fee=%d income=%d err=%v", tc.amount, fee, income, err)
+		}
+	}
+}
+
 func TestMoneyParsingIsExact(t *testing.T) {
 	tests := []struct {
 		input string

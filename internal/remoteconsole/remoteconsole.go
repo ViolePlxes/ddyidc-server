@@ -20,11 +20,12 @@ var (
 // URL is always a same-origin relative path. Upstream connection material is
 // kept in unexported fields and therefore cannot be serialized accidentally.
 type RemoteSession struct {
-	Type      string            `json:"type"`
-	URL       string            `json:"url"`
-	Token     string            `json:"token"`
-	ExpiresAt int64             `json:"expiresAt"`
-	Extra     map[string]string `json:"extra,omitempty"`
+	ownershipVersion int64
+	Type             string            `json:"type"`
+	URL              string            `json:"url"`
+	Token            string            `json:"token"`
+	ExpiresAt        int64             `json:"expiresAt"`
+	Extra            map[string]string `json:"extra,omitempty"`
 
 	instanceID int64
 	customerID int64

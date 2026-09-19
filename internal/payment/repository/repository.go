@@ -42,15 +42,17 @@ func (r *GormRepository) PrepareMarketplace(ctx context.Context, customerID, ord
 	var prepared *Prepared
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row struct {
-			ID          int64
-			OrderNo     string
-			BuyerID     int64
-			PayAmount   string
-			Status      string
-			ProductName string
+			ID             int64
+			OrderNo        string
+			BuyerID        int64
+			PayAmount      string
+			Status         string
+			SettlementMode string
+			LockExpiresAt  time.Time
+			ProductName    string
 		}
 		err := tx.Table("system.marketplace_orders AS o").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("o.id,o.order_no,o.buyer_id,o.pay_amount,o.status,l.product_name").
+			Select("o.id,o.order_no,o.buyer_id,o.pay_amount,o.status,o.settlement_mode,o.lock_expires_at,l.product_name").
 			Joins("JOIN system.marketplace_listings l ON l.id=o.listing_id").Where("o.id=?", orderID).First(&row).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrBizNotFound
@@ -61,7 +63,7 @@ func (r *GormRepository) PrepareMarketplace(ctx context.Context, customerID, ord
 		if row.BuyerID != customerID {
 			return ErrForbidden
 		}
-		if row.Status != "pending_pay" {
+		if row.Status != "pending_pay" || !row.LockExpiresAt.After(time.Now()) {
 			return ErrNotPayable
 		}
 		amount, err := marketplace.MoneyToCents(row.PayAmount)
@@ -70,6 +72,9 @@ func (r *GormRepository) PrepareMarketplace(ctx context.Context, customerID, ord
 		}
 		paymentNo := generatePaymentNo()
 		payment := &dom.Payment{PaymentNo: paymentNo, BizType: dom.BizMarketplace, BizID: row.ID, CustomerID: customerID, Channel: channel, OutTradeNo: paymentNo, Amount: row.PayAmount, AmountFen: amount, Currency: "CNY", Status: dom.StatusPending, ExpireAt: expireAt}
+		if row.SettlementMode == "balance" {
+			payment.OrderID = &row.ID
+		}
 		if err := r.insertOrReuse(tx, payment); err != nil {
 			return err
 		}
@@ -88,6 +93,13 @@ type GormRepository struct{ db *gorm.DB }
 func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: database} }
 
 func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID int64, channel string, expireAt time.Time) (*Prepared, error) {
+	var marketCount int64
+	if err := r.db.WithContext(ctx).Table("order.order_items").Where("order_id=? AND module_type='marketplace'", orderID).Count(&marketCount).Error; err != nil {
+		return nil, err
+	}
+	if marketCount > 0 {
+		return r.PrepareMarketplace(ctx, customerID, orderID, channel, expireAt)
+	}
 	var prepared *Prepared
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row struct {
@@ -234,6 +246,15 @@ func (r *GormRepository) FindByOutTradeNo(ctx context.Context, outTradeNo string
 }
 
 func (r *GormRepository) FindByBiz(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
+	if bizType == dom.BizOrder {
+		var n int64
+		if err := r.db.WithContext(ctx).Table("order.order_items").Where("order_id=? AND module_type='marketplace'", bizID).Count(&n).Error; err != nil {
+			return nil, err
+		}
+		if n > 0 {
+			bizType = dom.BizMarketplace
+		}
+	}
 	var payment dom.Payment
 	err := r.db.WithContext(ctx).Table(payment.TableName()).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).Order("created_at DESC, id DESC").First(&payment).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -249,7 +270,10 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		if err := tx.Table(completed.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("out_trade_no = ?", notification.OutTradeNo).First(&completed).Error; err != nil {
 			return err
 		}
-		if completed.Status == dom.StatusPaid {
+		if completed.Channel != notification.Channel || completed.AmountFen != notification.AmountFen || completed.Currency != notification.Currency {
+			return ErrInvalidState
+		}
+		if completed.Status == dom.StatusPaid || completed.Status == dom.StatusRefunded {
 			return nil
 		}
 		if completed.Status != dom.StatusPending {
@@ -294,7 +318,7 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 					return errors.Join(err, compensateErr)
 				}
 				result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, dom.StatusPending).Updates(map[string]any{
-					"status": dom.StatusRefunded, "transaction_id": notification.TransactionID,
+					"status": dom.StatusPaid, "transaction_id": notification.TransactionID,
 					"notify_raw": notification.SafeRaw, "paid_at": paidAt, "updated_at": paidAt,
 				})
 				if result.Error != nil || result.RowsAffected != 1 {
@@ -303,7 +327,8 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 					}
 					return ErrInvalidState
 				}
-				completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusRefunded, notification.TransactionID, notification.SafeRaw, &paidAt
+				completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusPaid, notification.TransactionID, notification.SafeRaw, &paidAt
+				transitioned = true
 				return nil
 			}
 		default:
@@ -340,6 +365,9 @@ func (r *GormRepository) Close(ctx context.Context, customerID int64, bizType do
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Table(payment.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).First(&payment).Error; err != nil {
 			return err
+		}
+		if payment.BizType == dom.BizMarketplace {
+			return ErrNotPayable
 		}
 		if payment.Status == dom.StatusClosed {
 			return nil
