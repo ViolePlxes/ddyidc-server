@@ -80,6 +80,21 @@ func TestRealDatabaseVideoEvents(t *testing.T) {
 	for _, p := range []string{"douyin", "xiaohongshu"} {
 		must(tx.Model(&Platform{}).Where("code=?", p).Update("credentials", "").Error)
 	}
+	must(s.Save(ctx, "douyin", ConfigInput{Enabled: true, Mode: "webhook"}))
+	incomplete, err := s.Platforms(ctx, true, "https://example.com")
+	must(err)
+	found := false
+	for _, p := range incomplete {
+		if p.Code == "douyin" {
+			found = true
+			if !p.Enabled || p.Ready || p.SetupMessage != "配置后可用" {
+				t.Fatal("incomplete platform must remain visible and not ready")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("enabled incomplete platform hidden")
+	}
 	config := ConfigInput{Enabled: true, Mode: "webhook", AppID: "test021-app", Secret: "test021-secret", OfficialID: "official021", CallbackURL: "https://example.com/api/v1/video/bind/callback/douyin"}
 	must(s.Save(ctx, "douyin", config))
 	var stored Platform

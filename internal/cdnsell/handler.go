@@ -83,14 +83,24 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
-	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes})
+	var accounts int64
+	if e := h.service.db.WithContext(r.Context()).Table(accountsTable).Where("status=1").Count(&accounts).Error; e != nil {
+		result(w, nil, e)
+		return
+	}
+	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes, "ready": accounts > 0})
 }
 func (h *Handler) adminStatus(w http.ResponseWriter, r *http.Request) {
 	if !h.admin(w, r) {
 		return
 	}
 	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
-	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes})
+	var accounts int64
+	if e := h.service.db.WithContext(r.Context()).Table(accountsTable).Where("status=1").Count(&accounts).Error; e != nil {
+		result(w, nil, e)
+		return
+	}
+	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes, "ready": accounts > 0})
 }
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	id, yes := h.user(w, r)

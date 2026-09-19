@@ -29,6 +29,8 @@ var names = map[string]string{"douyin": "抖音", "kuaishou": "快手", "bilibil
 var events = map[string]string{"douyin": points.EventDouyinFollow, "kuaishou": points.EventKuaishouFollow, "bilibili": points.EventBilibiliFollow, "xiaohongshu": points.EventXhsFollow}
 
 type Platform struct {
+	Ready            bool      `gorm:"-" json:"ready"`
+	SetupMessage     string    `gorm:"-" json:"setupMessage,omitempty"`
 	Code             string    `gorm:"primaryKey" json:"code"`
 	Name             string    `json:"name"`
 	Enabled          bool      `json:"enabled"`
@@ -199,9 +201,6 @@ func (s *Service) Save(ctx context.Context, code string, in ConfigInput) error {
 			c.Scope = "user_info"
 		}
 
-		if in.Enabled && in.Mode == "webhook" && (c.AppID == "" || c.Secret == "" || c.OfficialID == "" || in.CallbackURL == "") {
-			return errors.New("自动通道需配置应用、密钥、官方账号 open_id 与公网 HTTPS 回调地址")
-		}
 		data, e := json.Marshal(c)
 		if e != nil {
 			return e
@@ -233,6 +232,10 @@ func (s *Service) Platforms(ctx context.Context, admin bool, base string) ([]Pla
 		p.AppConfigured = c.AppID != ""
 		p.SecretConfigured = c.Secret != ""
 		p.Event = events[p.Code]
+		p.Ready = p.Mode == "manual" || (p.Mode == "webhook" && c.AppID != "" && c.Secret != "" && c.OfficialID != "" && validURL(p.CallbackURL))
+		if !p.Ready {
+			p.SetupMessage = "配置后可用"
+		}
 		if p.CallbackURL == "" {
 			p.CallbackURL = base + "/api/v1/video/bind/callback/" + p.Code
 		}
