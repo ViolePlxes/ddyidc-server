@@ -3,6 +3,7 @@ package marketplace
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/shared/distsync"
 	"errors"
 	"fmt"
 	"strconv"
@@ -673,7 +674,7 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = s.RunMaintenance(ctx)
+				distsync.Task(ctx, "marketplace_maintenance", time.Minute, s.RunMaintenance)
 			}
 		}
 	}()

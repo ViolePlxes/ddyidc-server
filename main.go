@@ -29,6 +29,7 @@ import (
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
 	"ddyidc/internal/remoteconsole"
+	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/logger"
 	"ddyidc/internal/shared/middleware"
 	systemrepo "ddyidc/internal/system/repository"
@@ -45,6 +46,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/zeromicro/go-zero/core/proc"
 	"net/http"
 	"time"
 
@@ -52,6 +54,8 @@ import (
 	"github.com/zeromicro/go-zero/rest"
 	"gorm.io/gorm"
 )
+
+var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
 var migrate = flag.Bool("migrate", false, "执行 sql/01_create_tables.sql（开发环境，会重建表）")
@@ -153,6 +157,7 @@ func main() {
 
 	var c struct {
 		rest.RestConf
+		Cron          *distsync.Config `json:",optional"`
 		MySQL         db.Config
 		Redis         cache.Config
 		Notify        notify.Config
@@ -229,11 +234,19 @@ func main() {
 	server.Use(middleware.Logger())
 
 	// 注册路由（各域 handler 在此注册）
-	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile)
-	notifyManager.StartExpiryScanner(context.Background())
-	balance.New(db.G).StartReconciliation(context.Background())
-	balance.New(db.G).StartNotifications(context.Background(), notifyManager)
-	updateManager.StartResultWatcher(context.Background())
+	var cronStarts []func(context.Context)
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts)
+	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, balance.New(db.G).StartReconciliation,
+		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
+	if !c.Cron.IsEnabled() || *noCron {
+		fmt.Println("定时任务已关闭（测试模式），仅提供 API 服务")
+	} else {
+		cronCtx, cancelCron := context.WithCancel(context.Background())
+		defer cancelCron()
+		// go-zero's shutdown hook runs before resource teardown.
+		proc.AddShutdownListener(cancelCron)
+		go distsync.NewLeader(cache.RDB).Run(cronCtx, cronStarts)
+	}
 
 	fmt.Printf("DDYIDC 服务启动，监听 %s:%d\n", c.Host, c.Port)
 	server.Start()
@@ -249,7 +262,7 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context)) {
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
@@ -309,7 +322,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
 	if groupbuyEnabled {
-		groupbuySvc.StartMaintenance(context.Background())
+		*cronStarts = append(*cronStarts, groupbuySvc.StartMaintenance)
 	}
 	marketplaceSvc := marketplace.NewService(db.G, cache.RDB, notifyManager)
 	if err := marketplaceSvc.EnsureSchema(context.Background()); err != nil {
@@ -335,11 +348,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
 	if cdnsellEnabled {
-		cdnsellSvc.Start(context.Background())
+		*cronStarts = append(*cronStarts, cdnsellSvc.Start)
 	}
 	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
 	if marketplaceEnabled {
-		marketplaceSvc.StartMaintenance(context.Background())
+		*cronStarts = append(*cronStarts, marketplaceSvc.StartMaintenance)
 	}
 	pointsEnabled, err := pointsSvc.Enabled(context.Background())
 	if err != nil {
@@ -347,7 +360,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	points.RegisterHandlers(server, pointsSvc, jwt)
 	if pointsEnabled {
-		pointsSvc.StartExpiryScanner(context.Background())
+		*cronStarts = append(*cronStarts, pointsSvc.StartExpiryScanner)
 	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
 	remoteRegistry := remoteconsole.NewRegistry()

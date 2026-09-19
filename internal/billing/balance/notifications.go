@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"log"
@@ -32,6 +33,9 @@ func (s *BalanceService) StartNotifications(ctx context.Context, n Notifier) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if !distsync.IsLeader(ctx) {
+					continue
+				}
 				err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 					var rows []notice
 					if err := tx.Clauses(clause.Locking{Strength: "UPDATE", Options: "SKIP LOCKED"}).Where("status='pending' AND next_attempt<=?", time.Now()).Order("id").Limit(10).Find(&rows).Error; err != nil {

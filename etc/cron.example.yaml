@@ -1,0 +1,4 @@
+# Merge into the deployment-specific config.yaml (never commit real credentials).
+# Command-line --no-cron takes precedence.
+Cron:
+  Enabled: true

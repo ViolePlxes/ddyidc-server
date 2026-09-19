@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,7 +170,9 @@ func (m *Manager) StartResultWatcher(ctx context.Context) {
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
 		for {
-			m.processHelperResults(ctx)
+			if distsync.IsLeader(ctx) {
+				m.processHelperResults(ctx)
+			}
 			select {
 			case <-ctx.Done():
 				return

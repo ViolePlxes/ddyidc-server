@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"fmt"
 	"log"
 	"time"
@@ -53,14 +54,17 @@ func (s *BalanceService) Reconcile(ctx context.Context) ([]ReconciliationMismatc
 func (s *BalanceService) StartReconciliation(ctx context.Context) {
 	go func() {
 		run := func() {
-			rows, err := s.Reconcile(ctx)
-			if err != nil {
-				log.Printf("billing reconciliation failed: %v", err)
-				return
-			}
-			for _, row := range rows {
-				log.Printf("BILLING_ALERT reconciliation scope=%s customer=%d balance=%s ledger=%s frozen=%s ledger_frozen=%s", row.Scope, row.CustomerID, row.Balance.String(), row.LedgerBalance.String(), row.FrozenBalance.String(), row.LedgerFrozen.String())
-			}
+			distsync.Task(ctx, "balance_reconcile", time.Minute, func(ctx context.Context) error {
+				rows, err := s.Reconcile(ctx)
+				if err != nil {
+					log.Printf("billing reconciliation failed: %v", err)
+					return err
+				}
+				for _, row := range rows {
+					log.Printf("BILLING_ALERT reconciliation scope=%s customer=%d balance=%s ledger=%s frozen=%s ledger_frozen=%s", row.Scope, row.CustomerID, row.Balance.String(), row.LedgerBalance.String(), row.FrozenBalance.String(), row.LedgerFrozen.String())
+				}
+				return nil
+			})
 		}
 		run()
 		ticker := time.NewTicker(24 * time.Hour)

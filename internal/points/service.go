@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/shared/distsync"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -896,7 +897,7 @@ func (s *Service) StartExpiryScanner(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_, _ = s.ExpireDue(context.Background())
+				distsync.Task(ctx, "points_expiry", time.Minute, func(ctx context.Context) error { _, err := s.ExpireDue(ctx); return err })
 			}
 		}
 	}()

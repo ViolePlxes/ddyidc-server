@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"errors"
 	"fmt"
 	"html"
@@ -475,9 +476,10 @@ func (m *Manager) ScanExpiring(ctx context.Context) (int, error) {
 
 func (m *Manager) StartExpiryScanner(ctx context.Context) {
 	go func() {
-		if _, err := m.ScanExpiring(ctx); err != nil {
-			logx.Errorf("initial expiry scan failed: %v", err)
+		run := func() {
+			distsync.Task(ctx, "notify_expiry", time.Minute, func(ctx context.Context) error { _, err := m.ScanExpiring(ctx); return err })
 		}
+		run()
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for {
@@ -485,9 +487,7 @@ func (m *Manager) StartExpiryScanner(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if _, err := m.ScanExpiring(ctx); err != nil {
-					logx.Errorf("expiry scan failed: %v", err)
-				}
+				run()
 			}
 		}
 	}()

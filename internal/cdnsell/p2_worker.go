@@ -2,6 +2,7 @@ package cdnsell
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -371,11 +372,19 @@ func (s *Service) startP2(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-worker.C:
-				_ = s.RunP2Tasks(ctx)
+				if distsync.IsLeader(ctx) {
+					_ = s.RunP2Tasks(ctx)
+				}
 			case <-syncTicker.C:
-				s.runTask(ctx, "domain_periodic_sync", s.scheduleDomainSync)
+				distsync.Task(ctx, "cdn_domain_periodic_sync", time.Minute, func(ctx context.Context) error {
+					s.runTask(ctx, "domain_periodic_sync", s.scheduleDomainSync)
+					return nil
+				})
 			case <-certTicker.C:
-				s.runTask(ctx, "certificate_expiry", s.RunCertificateExpiry)
+				distsync.Task(ctx, "cdn_certificate_expiry", time.Minute, func(ctx context.Context) error {
+					s.runTask(ctx, "certificate_expiry", s.RunCertificateExpiry)
+					return nil
+				})
 			}
 		}
 	}()

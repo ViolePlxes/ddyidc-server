@@ -2,6 +2,7 @@ package cdnsell
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -579,9 +580,9 @@ func (s *Service) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-usage.C:
-				s.runTask(ctx, "usage_sync", s.RunUsageSync)
+				distsync.Task(ctx, "cdn_usage_sync", time.Minute, func(ctx context.Context) error { s.runTask(ctx, "usage_sync", s.RunUsageSync); return nil })
 			case <-expiry.C:
-				s.runTask(ctx, "batch_expiry", s.RunExpiry)
+				distsync.Task(ctx, "cdn_batch_expiry", time.Minute, func(ctx context.Context) error { s.runTask(ctx, "batch_expiry", s.RunExpiry); return nil })
 			}
 		}
 	}()

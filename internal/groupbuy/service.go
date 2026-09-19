@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
+	"ddyidc/internal/shared/distsync"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -917,7 +918,7 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				_ = s.RunMaintenance(ctx)
+				distsync.Task(ctx, "groupbuy_maintenance", time.Minute, s.RunMaintenance)
 			}
 		}
 	}()
