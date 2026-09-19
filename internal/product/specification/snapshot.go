@@ -24,10 +24,11 @@ type Snapshot struct {
 func (Snapshot) TableName() string { return "product.product_spec_snapshots" }
 
 type View struct {
-	Spec          domain.ProductSpec `json:"spec"`
-	UpstreamStock any                `json:"upstreamStock"`
-	CapturedAt    *time.Time         `json:"capturedAt"`
-	Configured    bool               `json:"configured"`
+	Options       []contracts.ConfigOption `json:"configOptions,omitempty"`
+	Spec          domain.ProductSpec       `json:"spec"`
+	UpstreamStock any                      `json:"upstreamStock"`
+	CapturedAt    *time.Time               `json:"capturedAt"`
+	Configured    bool                     `json:"configured"`
 }
 
 func EnsureSchema(db *gorm.DB) error {
@@ -117,7 +118,7 @@ func Capture(detail *contracts.UpstreamProductDetail, page *contracts.OrderPage,
 			}
 		}
 	}
-	return View{Spec: spec, UpstreamStock: StockValue(detail.StockValue, detail.Stock)}
+	return View{Options: options, Spec: spec, UpstreamStock: StockValue(detail.StockValue, detail.Stock)}
 }
 
 func Save(db *gorm.DB, productID int64, view View) error {

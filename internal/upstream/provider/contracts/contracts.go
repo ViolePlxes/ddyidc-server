@@ -2,8 +2,11 @@ package contracts
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 )
+
+var ErrProductUnavailable = errors.New("上游商品已下架或不可代理")
 
 type Supplier struct {
 	ID, Name, Type, URL, Username, Token, Secret string

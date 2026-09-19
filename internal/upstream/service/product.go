@@ -313,47 +313,7 @@ func (s *Store) findProduct(key string) (model.UpstreamProduct, error) {
 	}
 	return v, e
 }
-func (s *Store) SyncProduct(key string) error {
-	v, e := s.findProduct(key)
-	if e != nil {
-		return e
-	}
-	p, e := s.ProviderFor(v.SupplierID)
-	if e != nil {
-		return e
-	}
-	d, e := p.GetProductDetail(v.UpstreamProductID)
-	if e != nil {
-		return e
-	}
-	supplier, e := s.GetSupplier(v.SupplierID)
-	if e != nil {
-		return e
-	}
-	var page *contracts.OrderPage
-	if optional, ok := p.(contracts.OptionalProvider); ok {
-		page, _ = optional.GetOrderPage(v.UpstreamProductID)
-	}
-	v.UpstreamPrice = d.Price
-	v.Price = CalculatePrice(d.Price, supplier.Rate, v.ProfitType, v.ProfitValue)
-	v.Cycle = d.Cycle
-	v.PayType = d.PayType
-	if s.isMemory() {
-		s.mu.Lock()
-		v.UpdatedAt = now()
-		s.products[key] = v
-		s.mu.Unlock()
-		return nil
-	}
-	return s.db.Transaction(func(tx *gorm.DB) error {
-		if v.Mode == "sync" {
-			if e := ensurePublishedLocalProduct(tx, &v, d, page); e != nil {
-				return e
-			}
-		}
-		return tx.Table(v.TableName()).Where("id = ?", key).Save(&v).Error
-	})
-}
+func (s *Store) SyncProduct(key string) error { _, err := s.SyncProductWithSummary(key); return err }
 
 func ensurePublishedLocalProduct(tx *gorm.DB, mapping *model.UpstreamProduct, detail *contracts.UpstreamProductDetail, pages ...*contracts.OrderPage) error {
 	var page *contracts.OrderPage

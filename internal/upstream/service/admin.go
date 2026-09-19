@@ -21,6 +21,7 @@ type ProductListQuery struct {
 	NeedManualSync            *bool
 }
 type AdminProductRow struct {
+	CheckedAt int64 `json:"checkedAt"`
 	model.UpstreamProduct
 	GroupName     string  `json:"groupName"`
 	ParentGroupID string  `json:"parentGroupId"`
@@ -70,14 +71,16 @@ func (s *Store) ListAdminProducts(q ProductListQuery) (ProductListResult, error)
 		q.PageSize = 10
 	}
 	dbq := s.db.Table("product.upstream_products AS up").
-		Select(`up.*,
+		Select(`up.*, COALESCE(checks.finished_at, UNIX_TIMESTAMP(snapshot.captured_at), up.created_at) AS checked_at,
 			CASE WHEN parent.id IS NOT NULL THEN CONCAT(parent.name, ' / ', pg.name)
 				WHEN pg.id IS NOT NULL THEN pg.name ELSE '未分组' END AS group_name,
 			CASE WHEN pg.parent_id > 0 THEN pg.parent_id ELSE 0 END AS parent_group_id,
 			up.upstream_price * COALESCE(s.rate, 1) AS cost`).
 		Joins("LEFT JOIN product.product_groups AS pg ON pg.id = up.product_group_id").
 		Joins("LEFT JOIN product.product_groups AS parent ON parent.id = pg.parent_id").
-		Joins("LEFT JOIN common.suppliers AS s ON s.id = up.supplier_id")
+		Joins("LEFT JOIN common.suppliers AS s ON s.id = up.supplier_id").
+		Joins("LEFT JOIN system.sync_tasks AS checks ON checks.id=up.id AND checks.type='product_check' AND checks.status='success'").
+		Joins("LEFT JOIN product.product_spec_snapshots AS snapshot ON snapshot.product_id=up.product_id")
 	if q.SupplierID != "" && q.SupplierID != "all" {
 		dbq = dbq.Where("up.supplier_id = ?", q.SupplierID)
 	}

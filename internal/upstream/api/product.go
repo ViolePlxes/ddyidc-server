@@ -75,8 +75,8 @@ func (h *Handler) updateProduct(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) syncProduct(w http.ResponseWriter, r *http.Request) {
 	key := productID(r)
-	e := h.Store.SyncProduct(key)
-	respond(w, map[string]string{"taskId": "sync-" + key, "status": "started"}, e)
+	summary, e := h.Store.SyncProductWithSummary(key)
+	respond(w, map[string]any{"status": "success", "summary": summary}, e)
 }
 func (h *Handler) batchDeleteProducts(w http.ResponseWriter, r *http.Request) {
 	var in struct {

@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"ddyidc/internal/upstream/metrics"
 	"ddyidc/internal/upstream/provider/contracts"
 )
 
@@ -250,6 +251,12 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	return product.toContract(id), nil
 }
 
+func (p *Provider) InvalidateProduct(id int) {
+	financeCache.Lock()
+	defer financeCache.Unlock()
+	delete(financeCache.products, p.tokenKey()+":product:"+strconv.Itoa(id))
+	delete(financeCache.pages, p.tokenKey()+":page:"+strconv.Itoa(id))
+}
 func (p *Provider) getFinanceProduct(id int) (financeProduct, error) {
 	cacheKey := p.tokenKey() + ":product:" + strconv.Itoa(id)
 	financeCache.Lock()
@@ -273,6 +280,9 @@ func (p *Provider) getFinanceProduct(id int) (financeProduct, error) {
 		return financeProduct{}, fmt.Errorf("decode upstream product detail: %w", err)
 	}
 	if payload.Status != http.StatusOK {
+		if payload.Message == "商品不存在" || payload.Message == "产品不存在" || payload.Message == "该商品不可代理" || payload.Message == "商品已下架" {
+			return financeProduct{}, contracts.ErrProductUnavailable
+		}
 		return financeProduct{}, upstreamError("product detail", payload.Message)
 	}
 	financeCache.Lock()
@@ -559,7 +569,13 @@ func configValues(raw json.RawMessage) []contracts.ConfigOptionValue {
 		if json.Unmarshal(raw, &groups) != nil {
 			return nil
 		}
-		for _, group := range groups {
+		keys := make([]string, 0, len(groups))
+		for key := range groups {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			group := groups[key]
 			var wrapped struct {
 				Child []json.RawMessage `json:"child"`
 			}
@@ -840,7 +856,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if jwt != "" {
 			req.Header.Set("Authorization", "Bearer "+jwt)
 		}
-		response, err := client.Do(req)
+		observed := *client
+		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID}
+		response, err := observed.Do(req)
 		if err != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)
 			lastErr = err
