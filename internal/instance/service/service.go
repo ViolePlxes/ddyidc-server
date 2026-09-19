@@ -385,8 +385,8 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	request, _ := json.Marshal(map[string]any{
 		"action": in.Action, "imageId": in.ImageID, "port": in.Port, "formatDataDisk": in.FormatDataDisk,
 	})
-	operatorID := customerID
-	event := &dom.Event{InstanceID: host.ID, EventType: in.Action, FromStatus: &host.Status, OperatorType: 1, OperatorID: &operatorID, Status: 1, UpstreamRequest: string(request), UpstreamResponse: "{}"}
+	operatorType, operatorID := actionActor(ctx, customerID)
+	event := &dom.Event{InstanceID: host.ID, EventType: in.Action, FromStatus: &host.Status, OperatorType: operatorType, OperatorID: &operatorID, Status: 1, UpstreamRequest: string(request), UpstreamResponse: "{}"}
 	if err := s.repo.CreateEvent(ctx, event); err != nil {
 		return nil, err
 	}
@@ -412,10 +412,10 @@ func (s *Service) createRemoteSession(ctx context.Context, host *dom.Host, custo
 	if s.remote == nil {
 		return nil, remoteconsole.ErrEngineUnavailable
 	}
-	operatorID := customerID
+	operatorType, operatorID := actionActor(ctx, customerID)
 	event := &dom.Event{
 		InstanceID: host.ID, EventType: "remote", FromStatus: &host.Status,
-		OperatorType: 1, OperatorID: &operatorID, Status: 1,
+		OperatorType: operatorType, OperatorID: &operatorID, Status: 1,
 		UpstreamRequest: `{"action":"remote"}`, UpstreamResponse: "{}",
 	}
 	if err := s.repo.CreateEvent(ctx, event); err != nil {

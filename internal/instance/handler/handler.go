@@ -25,6 +25,11 @@ type handler struct {
 func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
 	h := &handler{service: service, jwt: jwt}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.detail},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/images", Handler: h.images},
+		{Method: http.MethodPost, Path: "/admin/v1/customers/:customerId/instances/:instanceId/action", Handler: h.action},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/monitor", Handler: h.monitor},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/vnc/ws", Handler: h.vncWebSocket},
 		{Method: http.MethodGet, Path: "/api/v1/instances", Handler: h.legacyList},
 		{Method: http.MethodGet, Path: "/api/v1/user/instances", Handler: h.list},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId", Handler: h.detail},
@@ -161,6 +166,15 @@ func (h *handler) action(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	if result.Remote != nil && strings.HasPrefix(r.URL.Path, "/admin/v1/") {
+		remoteURL, parseErr := url.Parse(result.Remote.URL)
+		if parseErr != nil {
+			writeError(w, 500, "远程会话地址无效")
+			return
+		}
+		remoteURL.Path = "/admin/customers/" + strconv.FormatInt(customerID, 10) + "/instances/" + strconv.FormatInt(instanceID, 10) + "/vnc"
+		result.Remote.URL = remoteURL.String()
+	}
 	writeJSON(w, result)
 }
 
@@ -213,6 +227,19 @@ func (h *handler) claims(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	if err != nil || claims == nil {
 		writeError(w, http.StatusUnauthorized, "登录已失效，请重新登录")
 		return 0, false
+	}
+	if strings.HasPrefix(r.URL.Path, "/admin/v1/") {
+		if claims.Role != "admin" {
+			writeError(w, http.StatusForbidden, "需要管理员权限")
+			return 0, false
+		}
+		customerID, err := strconv.ParseInt(pathvar.Vars(r)["customerId"], 10, 64)
+		if err != nil || customerID <= 0 {
+			writeError(w, http.StatusBadRequest, "客户 ID 无效")
+			return 0, false
+		}
+		*r = *r.WithContext(svc.WithAdminActor(r.Context(), claims.UserID))
+		return customerID, true
 	}
 	if claims.Role != "customer" {
 		writeError(w, http.StatusForbidden, "没有访问权限")

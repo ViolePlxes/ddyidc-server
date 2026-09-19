@@ -227,7 +227,7 @@ func (h *handler) customerRecords(w http.ResponseWriter, r *http.Request) {
 	var selection, order string
 	switch kind {
 	case "products":
-		selection = "CAST(id AS CHAR) id,instance_no number,product_name name,status,COALESCE(primary_ip,'') ip,created_at,expires_at"
+		selection = "CAST(id AS CHAR) id,instance_no number,product_name name,status,COALESCE(primary_ip,'') ip,created_at,activated_at,expires_at"
 		order = "created_at DESC,id DESC"
 	case "orders":
 		selection = "CAST(o.id AS CHAR) id,o.order_no number,COALESCE(oi.product_name,'') name,o.status,o.pay_amount amount,o.created_at"
@@ -282,6 +282,7 @@ type customerRecord struct {
 	BalanceAfter  int64      `json:"balance_after"`
 	Remark        string     `json:"remark"`
 	CreatedAt     time.Time  `json:"created_at"`
+	ActivatedAt   *time.Time `json:"activated_at"`
 	ExpiresAt     *time.Time `json:"expires_at"`
 }
 
