@@ -40,6 +40,7 @@ import (
 	"ddyidc/internal/update"
 	upstreamapi "ddyidc/internal/upstream/api"
 	upstreamservice "ddyidc/internal/upstream/service"
+	"ddyidc/internal/videobind"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/cache"
 	cryptoutil "ddyidc/pkg/crypto"
@@ -359,6 +360,14 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("points configuration failed: " + err.Error())
 	}
 	points.RegisterHandlers(server, pointsSvc, jwt)
+	videoSvc := videobind.New(db.G, cache.RDB, snapshotKey)
+	if err := videoSvc.EnsureSchema(context.Background()); err != nil {
+		panic("video schema initialization failed")
+	}
+	videobind.RegisterHandlers(server, videoSvc, jwt)
+	if err := videobind.SeedNavigation(db.G); err != nil {
+		panic("video navigation initialization failed")
+	}
 	if pointsEnabled {
 		*cronStarts = append(*cronStarts, pointsSvc.StartExpiryScanner)
 	}

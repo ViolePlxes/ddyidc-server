@@ -28,6 +28,10 @@ const (
 )
 
 const (
+	EventDouyinFollow    = "douyin_follow"
+	EventKuaishouFollow  = "kuaishou_follow"
+	EventBilibiliFollow  = "bilibili_follow"
+	EventXhsFollow       = "xhs_follow"
 	EventRegister        = "register"
 	EventLogin           = "login"
 	EventSignin          = "signin"

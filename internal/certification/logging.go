@@ -13,7 +13,7 @@ import (
 func RequestLogger(next http.HandlerFunc) http.HandlerFunc {
 	other := framework.LogHandler(next)
 	return func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api/v1/transfers") || strings.HasPrefix(r.URL.Path, "/api/v1/certification/") || strings.HasPrefix(r.URL.Path, "/console/v1/certification/") || strings.HasPrefix(r.URL.Path, "/admin/v1/certifications") {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/video/") || strings.HasPrefix(r.URL.Path, "/admin/v1/video/") || strings.HasPrefix(r.URL.Path, "/api/v1/transfers") || strings.HasPrefix(r.URL.Path, "/api/v1/certification/") || strings.HasPrefix(r.URL.Path, "/console/v1/certification/") || strings.HasPrefix(r.URL.Path, "/admin/v1/certifications") {
 			start := time.Now()
 			defer func() {
 				logx.Infof("certification request method=%s elapsed_ms=%d", r.Method, time.Since(start).Milliseconds())
