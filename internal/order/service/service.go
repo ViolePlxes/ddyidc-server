@@ -539,6 +539,20 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 		instanceID = *item.InstanceID
 	}
 	if err := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		var lockedOrder dom.Order
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedOrder, orderID).Error; err != nil {
+			return err
+		}
+		if lockedOrder.Status != dom.OrderStatusPaid {
+			return errors.New("订单已不处于可交付状态")
+		}
+		var refundCount int64
+		if err := tx.Table("payment.original_refunds AS r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Where("p.biz_type='order' AND p.biz_id=?", orderID).Count(&refundCount).Error; err != nil {
+			return err
+		}
+		if refundCount != 0 {
+			return errors.New("订单正在退款或已退款，禁止交付")
+		}
 		result := tx.WithContext(ctx).Table("order.order_items").Where("id = ? AND delivery_status IN ?", item.ID, []int{0, 3}).Updates(map[string]any{"delivery_status": 1, "instance_id": instanceID})
 		if result.Error != nil {
 			return result.Error

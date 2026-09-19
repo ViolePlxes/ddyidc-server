@@ -59,6 +59,9 @@ type configRow struct {
 }
 
 func LoadConfig(ctx context.Context, database *gorm.DB, secretPaths ...string) (Config, error) {
+	return LoadConfigWithKey(ctx, database, nil, secretPaths...)
+}
+func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secretPaths ...string) (Config, error) {
 	var rows []configRow
 	if err := database.WithContext(ctx).Table("system.system_configs").Where("`key` LIKE ?", "payment.%").Find(&rows).Error; err != nil {
 		return Config{}, err
@@ -66,6 +69,9 @@ func LoadConfig(ctx context.Context, database *gorm.DB, secretPaths ...string) (
 	values := make(map[string]string, len(rows))
 	for _, row := range rows {
 		values[row.Key] = strings.TrimSpace(row.Value)
+	}
+	if err := protectWechatConfig(ctx, database, values, key); err != nil {
+		return Config{}, err
 	}
 	expireMinutes, err := strconv.Atoi(values["payment.expire_minutes"])
 	if err != nil || expireMinutes <= 0 || expireMinutes > 1440 {

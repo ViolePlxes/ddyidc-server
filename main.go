@@ -322,7 +322,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := paymentrepo.EnsureSchemaAndDefaults(context.Background(), db.G); err != nil {
 		panic("payment schema initialization failed: " + err.Error())
 	}
-	paymentConfig, err := paymentservice.LoadConfig(context.Background(), db.G, alipaySecretFile)
+	paymentConfig, err := paymentservice.LoadConfigWithKey(context.Background(), db.G, snapshotKey, alipaySecretFile)
 	if err != nil {
 		panic("payment config initialization failed: " + err.Error())
 	}

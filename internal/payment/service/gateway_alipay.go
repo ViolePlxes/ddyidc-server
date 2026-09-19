@@ -43,7 +43,11 @@ func buildAlipayClient(cfg AlipayConfig, returnURL string) (*alipay.Client, erro
 		return nil, err
 	}
 	isProd := strings.EqualFold(strings.TrimSpace(cfg.Gateway), "https://openapi.alipay.com/gateway.do")
-	client, err := alipay.NewClient(cfg.AppID, cfg.AppPrivateKey, isProd)
+	privateKey, err := normalizeAlipayPrivateKey(cfg.AppPrivateKey)
+	if err != nil {
+		return nil, err
+	}
+	client, err := alipay.NewClient(cfg.AppID, privateKey, isProd)
 	if err != nil {
 		return nil, errors.New("支付宝 SDK 初始化失败")
 	}
@@ -221,7 +225,12 @@ func (c *alipayChannel) ParseNotification(request *http.Request) (dom.VerifiedNo
 	if err != nil {
 		return dom.VerifiedNotification{}, errors.New("支付宝通知格式无效")
 	}
-	ok, err := alipay.VerifySign(c.config.AlipayPublicKey, body)
+	publicPEM, err := normalizeAlipayPublicKey(c.config.AlipayPublicKey)
+	if err != nil {
+		return dom.VerifiedNotification{}, err
+	}
+	block, _ := pem.Decode(publicPEM)
+	ok, err := alipay.VerifySign(base64.StdEncoding.EncodeToString(block.Bytes), body)
 	if err != nil || !ok {
 		return dom.VerifiedNotification{}, errors.New("支付宝通知验签失败")
 	}

@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+
 	"errors"
 	"fmt"
 	"strings"
@@ -28,6 +29,9 @@ var paymentDefaults = []struct{ key, value, description string }{
 }
 
 func EnsureSchemaAndDefaults(ctx context.Context, database *gorm.DB) error {
+	if err := database.WithContext(ctx).Exec("CREATE TABLE IF NOT EXISTS payment.original_refunds (payment_id BIGINT NOT NULL PRIMARY KEY, request_no VARCHAR(64) NOT NULL UNIQUE, amount DECIMAL(10,2) NOT NULL, admin_id BIGINT NOT NULL, operator_ip VARCHAR(64) NOT NULL, reason VARCHAR(256) NOT NULL, status VARCHAR(16) NOT NULL, created_at DATETIME(3) NULL, updated_at DATETIME(3) NULL, completed_at DATETIME(3) NULL) ENGINE=InnoDB").Error; err != nil {
+		return err
+	}
 	for _, item := range paymentDefaults {
 		if err := database.WithContext(ctx).Exec(
 			"INSERT IGNORE INTO system.system_configs (id, `key`, value, description) VALUES (?, ?, ?, ?)",

@@ -32,12 +32,12 @@ func newWechatChannel(ctx context.Context, cfg WechatConfig) (Channel, error) {
 	}
 	client, err := core.NewClient(ctx, option.WithWechatPayAutoAuthCipher(cfg.MchID, cfg.CertSerial, privateKey, cfg.APIV3Key))
 	if err != nil {
-		return nil, err
+		return nil, errors.New("微信支付网关请求失败")
 	}
 	visitor := downloader.MgrInstance().GetCertificateVisitor(cfg.MchID)
 	handler, err := wxnotify.NewRSANotifyHandler(cfg.APIV3Key, verifiers.NewSHA256WithRSAVerifier(visitor))
 	if err != nil {
-		return nil, err
+		return nil, errors.New("微信支付网关请求失败")
 	}
 	return &wechatChannel{config: cfg, api: native.NativeApiService{Client: client}, notify: handler}, nil
 }
@@ -56,7 +56,7 @@ func (c *wechatChannel) Create(ctx context.Context, payment *dom.Payment, subjec
 		Amount:      &native.Amount{Currency: core.String(payment.Currency), Total: core.Int64(payment.AmountFen)},
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.New("微信支付网关请求失败")
 	}
 	if resp == nil || resp.CodeUrl == nil || strings.TrimSpace(*resp.CodeUrl) == "" {
 		return nil, errors.New("微信支付未返回二维码链接")
@@ -66,13 +66,16 @@ func (c *wechatChannel) Create(ctx context.Context, payment *dom.Payment, subjec
 
 func (c *wechatChannel) Close(ctx context.Context, payment *dom.Payment) error {
 	_, err := c.api.CloseOrder(ctx, native.CloseOrderRequest{OutTradeNo: core.String(payment.OutTradeNo), Mchid: core.String(c.config.MchID)})
-	return err
+	if err != nil {
+		return errors.New("微信关闭支付请求失败")
+	}
+	return nil
 }
 
 func (c *wechatChannel) ParseNotification(request *http.Request) (dom.VerifiedNotification, error) {
 	var transaction payments.Transaction
 	if _, err := c.notify.ParseNotifyRequest(request.Context(), request, &transaction); err != nil {
-		return dom.VerifiedNotification{}, err
+		return dom.VerifiedNotification{}, errors.New("微信通知验签或解密失败")
 	}
 	if transaction.TradeState == nil || *transaction.TradeState != "SUCCESS" || transaction.OutTradeNo == nil || transaction.TransactionId == nil || transaction.Amount == nil || transaction.Amount.Total == nil {
 		return dom.VerifiedNotification{}, errors.New("微信通知不是完整的支付成功通知")

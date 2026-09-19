@@ -3,6 +3,7 @@ package payment
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -127,19 +128,34 @@ func (h *handler) closeOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) refund(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.customer(w, r); !ok {
+	if !h.admin(w, r) {
+		return
+	}
+	cookie, _ := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	claims, err := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if err != nil || claims == nil {
+		writeError(w, 401, 401, "登录已失效")
 		return
 	}
 	var input types.RefundRequest
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	writeError(w, http.StatusNotImplemented, 50100, "退款接口已预留，本期未联调")
+	id, err := strconv.ParseInt(input.PaymentID, 10, 64)
+	if err != nil || id <= 0 {
+		writeError(w, 400, 40000, "支付单号格式错误")
+		return
+	}
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		ip = r.RemoteAddr
+	}
+	result, err := h.service.Refund(r.Context(), id, claims.UserID, input.Amount, input.Reason, ip)
+	writeResult(w, result, err)
 }
-
 func (h *handler) wechatNotify(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.HandleNotification("wechat", r); err != nil {
-		logx.Errorf("wechat payment notification rejected: %v", err)
+		logx.Error("wechat payment notification rejected")
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"code": "FAIL", "message": "失败"})
