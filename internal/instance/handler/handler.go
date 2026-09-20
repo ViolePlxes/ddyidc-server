@@ -26,6 +26,8 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 	h := &handler{service: service, jwt: jwt}
 	server.AddRoutes(h.managementRoutes())
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/status", Handler: h.status},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/status", Handler: h.status},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/import-options", Handler: h.importOptions},
 		{Method: http.MethodPost, Path: "/admin/v1/customers/:customerId/instances/import", Handler: h.importInstance},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.detail},
@@ -300,4 +302,21 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
+}
+
+func (h *handler) status(w http.ResponseWriter, r *http.Request) {
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r)
+	if id == 0 {
+		return
+	}
+	result, err := h.service.Status(r.Context(), customer, id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, result)
 }

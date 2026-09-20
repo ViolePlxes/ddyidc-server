@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	dom "ddyidc/internal/instance/domain"
@@ -38,6 +39,7 @@ type Service struct {
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
 	db        *gorm.DB
+	polls     sync.Map
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
@@ -208,6 +210,8 @@ func (s *Service) LegacyList(ctx context.Context, customerID int64) ([]ListItem,
 }
 
 func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*DetailView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
@@ -241,7 +245,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.ExpiresAt = formatTime(*host.ExpiresAt)
 	}
 
-	upstream, warning := s.provider(host)
+	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {
 		result.Warning = warning
 		return result, nil
@@ -299,18 +303,21 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	}
 	if detail.OperatingSystem != "" {
 		result.OperatingSystem = detail.OperatingSystem
+		if result.CurrentImageName != detail.OperatingSystem {
+			result.CurrentImageID = ""
+		}
 		result.CurrentImageName = detail.OperatingSystem
 		result.CurrentImageGroup = imageGroupName(detail.OperatingSystem)
 	}
 	if detail.PowerStatus != "" {
 		result.PowerStatus = detail.PowerStatus
 	}
-	status := statusCode(detail.Status, host.Status)
+	status := statusCode(detail.PowerStatus, host.Status)
 	result.Status = status
 	now := time.Now()
 	updates := map[string]any{
 		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
-		"operating_system": result.OperatingSystem, "power_status": result.PowerStatus, "status": status, "last_synced_at": now,
+		"operating_system": result.OperatingSystem, "last_synced_at": now,
 	}
 	if s.db != nil {
 		_ = s.db.WithContext(ctx).Model(&dom.Host{}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", host.ID, customerID, host.OwnershipVersion, host.UpstreamInstanceID).Updates(updates).Error
@@ -321,6 +328,8 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 }
 
 func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*ImageListView, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
@@ -328,12 +337,23 @@ func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*Im
 	if s.providers == nil {
 		return nil, fmt.Errorf("%w: 该实例没有可用的镜像目录", ErrUnsupported)
 	}
-	page, err := s.providers.GetOrderPageByLocalProduct(strconv.FormatInt(host.ProductID, 10))
+	var page *contracts.OrderPage
+	if scoped, ok := s.providers.(interface {
+		GetInstanceOrderPage(context.Context, string) (*contracts.OrderPage, error)
+	}); ok {
+		page, err = scoped.GetInstanceOrderPage(ctx, strconv.FormatInt(host.ProductID, 10))
+	} else {
+		page, err = s.providers.GetOrderPageByLocalProduct(strconv.FormatInt(host.ProductID, 10))
+	}
 	if err != nil {
 		return nil, errors.New("读取商品镜像目录失败，请稍后重试")
 	}
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
 	currentID, currentName := snapshotImage(snapshot)
+	if host.OperatingSystem != "" {
+		currentName = cleanImageName(host.OperatingSystem)
+		currentID = ""
+	}
 	result := &ImageListView{CurrentImageID: currentID, CurrentImageName: currentName, CurrentImageGroup: imageGroupName(currentName), Groups: []ImageGroup{}}
 	groups := page.ImageGroups
 	if len(groups) == 0 && len(page.Images) > 0 {
@@ -343,7 +363,8 @@ func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*Im
 		view := ImageGroup{Name: group.Name, Child: make([]ImageItem, 0, len(group.Child))}
 		for _, image := range group.Child {
 			view.Child = append(view.Child, ImageItem{ID: strconv.Itoa(image.ID), Version: cleanImageName(image.Name), Pricing: image.Price})
-			if strconv.Itoa(image.ID) == currentID {
+			if (currentID != "" && strconv.Itoa(image.ID) == currentID) || (currentID == "" && strings.EqualFold(cleanImageName(image.Name), currentName)) {
+				result.CurrentImageID = strconv.Itoa(image.ID)
 				result.CurrentImageName = cleanImageName(image.Name)
 				result.CurrentImageGroup = group.Name
 			}
@@ -356,11 +377,13 @@ func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*Im
 }
 
 func (s *Service) Monitor(ctx context.Context, customerID, instanceID int64, start, end time.Time) (*contracts.InstanceMonitor, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
 	}
-	upstream, warning := s.provider(host)
+	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {
 		return &contracts.InstanceMonitor{Available: false, Message: warning}, nil
 	}
@@ -427,7 +450,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	if in.Action == "remote" {
 		return s.createRemoteSession(ctx, host, customerID)
 	}
-	upstream, warning := s.provider(host)
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
+	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, warning)
 	}
@@ -447,14 +472,20 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", message)
 		return nil, errors.New(message)
 	}
-	toStatus := statusAfterAction(in.Action, host.Status, result.Status)
+	power := normalizePower(result.Status)
+	if power == "" || power == "operating" {
+		if v := actionPower(in.Action); v != "" {
+			power = v
+		}
+	}
+	toStatus := statusCode(power, host.Status)
 	response, _ := json.Marshal(result)
 	_ = s.repo.FinishEvent(ctx, event.ID, 2, &toStatus, string(response), "")
-	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{"status": toStatus, "power_status": normalizePower(result.Status)})
+	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{"status": toStatus, "power_status": power})
 	if in.Action != "remote" && in.Action != "reset_password" {
-		go s.pollStatus(host.ID, host.UpstreamProviderID, host.UpstreamInstanceID)
+		s.startStatusPoll(host, customerID)
 	}
-	return &ActionView{Status: result.Status, Message: result.Message}, nil
+	return &ActionView{Status: power, Message: "操作已受理，正在同步实际状态"}, nil
 }
 
 func (s *Service) createRemoteSession(ctx context.Context, host *dom.Host, customerID int64) (*ActionView, error) {
@@ -485,11 +516,13 @@ func (s *Service) createRemoteSession(ctx context.Context, host *dom.Host, custo
 // CreateRemoteUpstream is called only by a server-side console provider. The
 // returned endpoint and password never cross an HTTP serialization boundary.
 func (s *Service) CreateRemoteUpstream(ctx context.Context, instanceID, customerID int64) (*remoteconsole.RemoteUpstream, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
 	}
-	upstream, warning := s.provider(host)
+	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {
 		return nil, remoteconsole.ErrUpstreamUnavailable
 	}
@@ -558,33 +591,6 @@ func (s *Service) provider(host *dom.Host) (contracts.InstanceProvider, string) 
 		return nil, "当前供应商未提供已验证的实例操作协议"
 	}
 	return instanceProvider, ""
-}
-
-func (s *Service) pollStatus(instanceID int64, supplierID *int64, upstreamID string) {
-	if supplierID == nil || s.providers == nil {
-		return
-	}
-	for attempt := 0; attempt < 3; attempt++ {
-		timer := time.NewTimer(5 * time.Second)
-		<-timer.C
-		resolved, err := s.providers.ProviderFor(strconv.FormatInt(*supplierID, 10))
-		if err != nil {
-			return
-		}
-		instanceProvider, ok := resolved.(contracts.InstanceProvider)
-		if !ok {
-			return
-		}
-		status, err := instanceProvider.GetInstanceStatus(parseHostID(upstreamID))
-		if err != nil {
-			continue
-		}
-		code := statusCode(status, 2)
-		_ = s.repo.UpdateFields(context.Background(), instanceID, map[string]any{"status": code, "power_status": normalizePower(status), "last_synced_at": time.Now()})
-		if code == 3 || code == 4 {
-			return
-		}
-	}
 }
 
 func listItem(host *dom.Host) ListItem {
@@ -677,40 +683,48 @@ func statusCode(value string, fallback uint8) uint8 {
 		return 3
 	case "stopped":
 		return 4
-	case "provisioning":
+	case "provisioning", "starting", "stopping", "rebooting", "reinstalling", "operating", "migrating":
 		return 2
+	case "expired":
+		return 5
+	case "deleted":
+		return 6
 	}
 	return fallback
 }
 
 func normalizePower(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "on", "running", "active", "1":
+	case "on", "running", "active", "waiting", "1":
 		return "running"
-	case "off", "stopped", "suspended", "0":
+	case "off", "stopped", "0":
 		return "stopped"
-	case "pending", "creating", "provisioning", "reinstalling":
+	case "start", "starting", "powering_on", "booting":
+		return "starting"
+	case "stop", "stopping", "powering_off", "shutting_down":
+		return "stopping"
+	case "reboot", "rebooting", "restarting":
+		return "rebooting"
+	case "reinstall", "reinstalling", "installing":
+		return "reinstalling"
+	case "pending", "creating", "provisioning":
 		return "provisioning"
+	case "task", "process", "operating":
+		return "operating"
+	case "cold_migrate", "hot_migrate", "migrating":
+		return "migrating"
+	case "fault", "error", "failed":
+		return "fault"
+	case "suspended":
+		return "suspended"
+	case "expired":
+		return "expired"
+	case "deleted", "terminated", "cancelled":
+		return "deleted"
+	case "":
+		return ""
 	default:
-		return strings.ToLower(strings.TrimSpace(value))
-	}
-}
-
-func statusAfterAction(action string, current uint8, upstream string) uint8 {
-	if upstream != "" {
-		if status := statusCode(upstream, 0); status != 0 {
-			return status
-		}
-	}
-	switch action {
-	case "start", "reboot":
-		return 3
-	case "stop":
-		return 4
-	case "reinstall":
-		return 2
-	default:
-		return current
+		return "unknown"
 	}
 }
 

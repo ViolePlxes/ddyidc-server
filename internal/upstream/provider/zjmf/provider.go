@@ -5,6 +5,7 @@ package zjmf
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -69,7 +70,10 @@ type cachedOrderPage struct {
 
 // Provider is stateless apart from an in-process JWT cache. Supplier
 // credentials are supplied by service.Store only after AES-GCM decryption.
-type Provider struct{ Supplier contracts.Supplier }
+type Provider struct {
+	Supplier        contracts.Supplier
+	instanceContext context.Context
+}
 
 func New(s contracts.Supplier) *Provider { return &Provider{Supplier: s} }
 
@@ -844,11 +848,22 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 	if method == http.MethodGet {
 		attempts = 2
 	}
+	scoped := p.instanceContext != nil
+	readOnly := method == http.MethodGet || (parsed.Path == "/provision/default" && url.Values(mustParseForm(bodyBytes)).Get("func") == "status")
+	if scoped && readOnly {
+		attempts = 3
+	}
+	ctx := context.Background()
+	if scoped {
+		ctx = p.instanceContext
+	}
 	for attempt := 0; attempt < attempts; attempt++ {
 		if isQKIDC {
-			waitForRequestSlot(parsed.Hostname(), 2*time.Second)
+			if err := waitForRequestSlotContext(ctx, parsed.Hostname(), 2*time.Second); err != nil {
+				return nil, 0, err
+			}
 		}
-		req, err := http.NewRequest(method, endpoint, bytes.NewReader(bodyBytes))
+		req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(bodyBytes))
 		if err != nil {
 			return nil, 0, err
 		}
@@ -861,14 +876,17 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			req.Header.Set("Authorization", "Bearer "+jwt)
 		}
 		observed := *client
+		if scoped {
+			observed.Timeout = 8 * time.Second
+		}
 		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID}
 		response, err := observed.Do(req)
 		if err != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)
 			lastErr = err
 			if attempt+1 < attempts {
-				if isQKIDC {
-					time.Sleep(30 * time.Second)
+				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
+					return nil, 0, err
 				}
 				continue
 			}
@@ -880,8 +898,8 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr, remoteAudit)
 			lastErr = readErr
 			if attempt+1 < attempts {
-				if isQKIDC {
-					time.Sleep(30 * time.Second)
+				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
+					return nil, 0, err
 				}
 				continue
 			}
@@ -889,10 +907,13 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		}
 		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil, remoteAudit)
 		retryable := response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
+		if scoped && (response.StatusCode == 403 || response.StatusCode == 429) {
+			return payload, response.StatusCode, fmt.Errorf("服务请求受限，请稍后再试")
+		}
 		if retryable && attempt+1 < attempts {
 			lastErr = fmt.Errorf("upstream HTTP status %d", response.StatusCode)
-			if isQKIDC {
-				time.Sleep(30 * time.Second)
+			if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
+				return nil, 0, err
 			}
 			continue
 		}
@@ -902,15 +923,6 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		return payload, response.StatusCode, nil
 	}
 	return nil, 0, fmt.Errorf("upstream request failed after retry: %w", lastErr)
-}
-
-func waitForRequestSlot(host string, minimum time.Duration) {
-	requestGates.Lock()
-	defer requestGates.Unlock()
-	if wait := requestGates.last[host].Add(minimum).Sub(time.Now()); wait > 0 {
-		time.Sleep(wait)
-	}
-	requestGates.last[host] = time.Now()
 }
 
 func writeAudit(endpoint, method string, attempt int, requestBody []byte, status int, responseBody []byte, requestErr error, remoteAction bool) {
@@ -1351,9 +1363,7 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	if err := parseInstanceSnapshot(data, hostData, hostID, result); err != nil {
 		return nil, err
 	}
-	if result.PowerStatus == "" {
-		result.PowerStatus = normalizePowerStatus(result.Status)
-	}
+
 	return result, nil
 }
 
@@ -1369,7 +1379,7 @@ func (p *Provider) GetInstanceStatus(hostID int64) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return normalizePowerStatus(firstMapString(data, "status", "power_status")), nil
+	return strings.ToLower(strings.TrimSpace(firstMapString(data, "status", "power_status"))), nil
 }
 
 func (p *Provider) ExecuteInstanceAction(hostID int64, input contracts.InstanceActionInput) (*contracts.InstanceActionResult, error) {
@@ -1657,22 +1667,7 @@ func parseInstanceIPs(primary string, values ...any) []contracts.InstanceIP {
 	return out
 }
 
-func normalizePowerStatus(value string) string {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "on", "active", "running", "waiting":
-		return "on"
-	case "off", "stopped", "suspended":
-		return "off"
-	case "task", "process", "operating", "cold_migrate", "hot_migrate":
-		return "operating"
-	case "pending", "provisioning":
-		return "pending"
-	case "":
-		return ""
-	default:
-		return "fault"
-	}
-}
+func normalizePowerStatus(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
 
 func findNestedValue(node any, keys ...string) any {
 	set := make(map[string]struct{}, len(keys))

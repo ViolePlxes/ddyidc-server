@@ -22,6 +22,8 @@ type EditInput struct {
 }
 
 func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) error {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	actor, admin := actionActor(ctx, customerID)
 	if actor != 2 || admin <= 0 {
 		return ErrForbidden
@@ -54,7 +56,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e != nil || target <= 0 {
 			return errors.New("上游实例 ID 必须为正整数")
 		}
-		p, warning := s.provider(h)
+		p, warning := s.providerContext(ctx, h)
 		if warning != "" {
 			return errors.New("供应商不可用")
 		}
@@ -155,11 +157,13 @@ type Credentials struct {
 }
 
 func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Credentials, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	h, e := s.owned(ctx, customerID, id)
 	if e != nil {
 		return nil, e
 	}
-	p, warning := s.provider(h)
+	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
 		return nil, ErrUnsupported
 	}
