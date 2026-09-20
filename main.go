@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"ddyidc/internal/adminread"
+	"ddyidc/internal/backup"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/cdnsell"
 	"ddyidc/internal/certification"
@@ -301,6 +302,15 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic(err)
 	}
 	navigation.Register(server, navigationSvc, jwt)
+	backupSvc := backup.New(db.G, snapshotKey, paths.Root)
+	if err := backupSvc.EnsureSchema(); err != nil {
+		panic("backup schema initialization failed")
+	}
+	if err := backupSvc.SeedNavigation(); err != nil {
+		panic("backup navigation initialization failed")
+	}
+	backup.Register(server, backupSvc, jwt)
+
 	certificationSvc := certification.New(db.G, cache.RDB, snapshotKey, paths.Join("storage/certification"))
 	if err := certificationSvc.EnsureSchema(context.Background()); err != nil {
 		panic("certification initialization failed: " + err.Error())

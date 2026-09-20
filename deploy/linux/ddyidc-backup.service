@@ -1,12 +1,20 @@
 [Unit]
-Description=DDYIDC consistent database backup
-After=mysql.service redis-server.service
+Description=DDYIDC business backup and restore worker
+After=mysql.service redis-server.service network-online.target
 
 [Service]
 Type=oneshot
 User=root
 Group=root
-ExecStart=/opt/ddyidc/deploy/backup.sh
+UMask=0077
+WorkingDirectory=/var/lib/ddyidc
+ExecStart=/opt/ddyidc/bin/ddyidc-backup-worker
+TimeoutStartSec=55min
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ddyidc
+ReadOnlyPaths=/etc/ddyidc /tmp /var/tmp
+Environment=TMPDIR=/var/lib/ddyidc/tmp HOME=/var/lib/ddyidc/home

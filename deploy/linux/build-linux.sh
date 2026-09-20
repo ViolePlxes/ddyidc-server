@@ -29,6 +29,7 @@ frontend_build_time="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 (cd "$server_root" && "$go_bin" vet ./...)
 (cd "$server_root" && "$go_bin" build -trimpath -ldflags "$server_ldflags" -o "$package_root/bin/ddyidc-server" .)
 (cd "$server_root" && "$go_bin" build -trimpath -o "$package_root/bin/ddyidc-update-helper" ./cmd/updatehelper)
+(cd "$server_root" && "$go_bin" build -trimpath -o "$package_root/bin/ddyidc-backup-worker" ./cmd/backupworker)
 
 (cd "$frontend_root" && \
   DDYIDC_VERSION="$frontend_version" \

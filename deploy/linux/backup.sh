@@ -7,6 +7,23 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+# Invoked only by the privileged fixed backup worker, which owns the flock.
+if [[ "${1:-}" == --business ]]; then
+  destination="${2:?missing business payload directory}"
+  case "$destination" in /var/lib/ddyidc/backups/jobs/*|/var/lib/ddyidc/backups/restore/*) ;; *) echo "invalid backup work directory" >&2; exit 1;; esac
+  resolved="$(realpath -m -- "$destination")"
+  [[ "$resolved" == "$destination" && ! -L "$destination" ]] || exit 1
+  install -d -m 0700 "$destination" "$destination/storage"
+  mysqldump --protocol=socket --user=root --all-databases \
+    --single-transaction --quick --routines --events --triggers --hex-blob \
+    --set-gtid-purged=OFF >"$destination/mysql.sql"
+  if [[ -d /var/lib/ddyidc/storage ]]; then
+    if find /var/lib/ddyidc/storage -type l -print -quit | grep -q .; then echo "storage symlinks rejected" >&2; exit 1; fi
+    cp -a /var/lib/ddyidc/storage/. "$destination/storage/"
+  fi
+  exit 0
+fi
+
 if [[ -r /etc/ddyidc/backup.env ]]; then
   # shellcheck disable=SC1091
   source /etc/ddyidc/backup.env
@@ -21,7 +38,7 @@ if [[ "$backup_root" != /* || "$backup_root" == / ]]; then
   exit 1
 fi
 
-install -d -m 0700 "$backup_root" "$backup_root/daily" "$backup_root/weekly" "$backup_root/monthly"
+install -d -m 0700 -o ddyidc -g ddyidc "$backup_root" "$backup_root/daily" "$backup_root/weekly" "$backup_root/monthly"
 exec 9>"$backup_root/.backup.lock"
 flock -n 9 || { echo "another backup is running" >&2; exit 0; }
 
@@ -79,17 +96,7 @@ find "$backup_root/monthly" -type f -mtime +370 -delete
 find /var/lib/ddyidc/update-results/archive -type f -mtime +180 -delete 2>/dev/null || true
 
 if [[ -n "${OBJECT_STORAGE_URI:-}" ]]; then
-  if ! command -v aws >/dev/null 2>&1; then
-    echo "OBJECT_STORAGE_URI is set but aws CLI is unavailable" >&2
-    exit 1
-  fi
-  endpoint_args=()
-  if [[ -n "${AWS_ENDPOINT_URL:-}" ]]; then
-    endpoint_args=(--endpoint-url "$AWS_ENDPOINT_URL")
-  fi
-  aws "${endpoint_args[@]}" s3 cp "$backup_root/daily/$archive" "${OBJECT_STORAGE_URI%/}/full/$archive" --only-show-errors
-  aws "${endpoint_args[@]}" s3 sync "$mysql_data_dir" "${OBJECT_STORAGE_URI%/}/binlog/" \
-    --exclude '*' --include 'binlog.*' --only-show-errors
+  echo "legacy OBJECT_STORAGE_URI upload is disabled; use admin business backup (MySQL + storage only)" >&2
 fi
 
 echo "backup completed: $backup_root/daily/$archive"

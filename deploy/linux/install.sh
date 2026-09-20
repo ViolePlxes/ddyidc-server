@@ -15,7 +15,7 @@ package_root="${PACKAGE_ROOT:-${script_dir}/package}"
 server_repository="${SERVER_REPOSITORY_URL:-https://github.com/ViolePlxes/ddyidc-server.git}"
 frontend_repository="${FRONTEND_REPOSITORY_URL:-https://github.com/ViolePlxes/ddyidc-web.git}"
 
-for file in "$package_root/bin/ddyidc-server" "$package_root/bin/ddyidc-update-helper" "$package_root/web/dist/index.html"; do
+for file in "$package_root/bin/ddyidc-server" "$package_root/bin/ddyidc-update-helper" "$package_root/bin/ddyidc-backup-worker" "$package_root/web/dist/index.html"; do
   [[ -f "$file" ]] || { echo "missing deployment artifact: $file" >&2; exit 1; }
 done
 (cd "$package_root" && sha256sum -c SHA256SUMS)
@@ -31,6 +31,9 @@ if ! id ddyidc >/dev/null 2>&1; then
 fi
 install -d -m 0750 -o ddyidc -g ddyidc /opt/ddyidc/bin /var/lib/ddyidc/update-results /var/lib/ddyidc/update/workspaces/frontend /var/lib/ddyidc/logs
 install -d -m 0755 -o root -g root /opt/ddyidc/deploy
+for backup_dir in "" daily weekly monthly jobs downloads restore results; do
+  install -d -m 0700 -o ddyidc -g ddyidc "/var/lib/ddyidc/backups/${backup_dir}"
+done
 install -d -m 0750 -o ddyidc -g ddyidc /var/lib/ddyidc /var/lib/ddyidc/run /var/lib/ddyidc/tmp /var/lib/ddyidc/home /var/lib/ddyidc/update/workspaces
 
 if [[ ! -d /var/lib/ddyidc/update/workspaces/backend/.git ]]; then
@@ -52,6 +55,7 @@ chmod 0755 /opt/ddyidc/deploy/*.sh
 
 install -m 0755 -o ddyidc -g ddyidc "$package_root/bin/ddyidc-server" /opt/ddyidc/bin/ddyidc-server
 install -m 0755 -o ddyidc -g ddyidc "$package_root/bin/ddyidc-update-helper" /opt/ddyidc/bin/ddyidc-update-helper
+install -m 0755 -o root -g root "$package_root/bin/ddyidc-backup-worker" /opt/ddyidc/bin/ddyidc-backup-worker
 install -d -m 0755 -o ddyidc -g ddyidc /var/lib/ddyidc/update/workspaces/frontend/dist
 rsync -a --delete "$package_root/web/dist/" /var/lib/ddyidc/update/workspaces/frontend/dist/
 chown -R ddyidc:ddyidc /var/lib/ddyidc/update/workspaces/frontend/dist
@@ -65,6 +69,8 @@ install -m 0644 /opt/ddyidc/deploy/ddyidc-disk-monitor.service /etc/systemd/syst
 install -m 0644 /opt/ddyidc/deploy/ddyidc-disk-monitor.timer /etc/systemd/system/ddyidc-disk-monitor.timer
 install -m 0440 /opt/ddyidc/deploy/ddyidc-update.sudoers /etc/sudoers.d/ddyidc-update
 visudo -cf /etc/sudoers.d/ddyidc-update
+install -m 0440 /opt/ddyidc/deploy/ddyidc-backup.sudoers /etc/sudoers.d/ddyidc-backup
+visudo -cf /etc/sudoers.d/ddyidc-backup
 install -m 0644 /opt/ddyidc/deploy/logrotate-ddyidc.conf /etc/logrotate.d/ddyidc
 if [[ ! -e /etc/ddyidc/backup.env ]]; then
   install -m 0600 /opt/ddyidc/deploy/backup.env.example /etc/ddyidc/backup.env

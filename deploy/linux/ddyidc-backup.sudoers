@@ -1,0 +1,1 @@
+ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block restart ddyidc-backup.service
