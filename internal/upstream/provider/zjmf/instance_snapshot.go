@@ -13,6 +13,18 @@ func parseInstanceSnapshot(data, host map[string]any, requested int64, result *c
 	if result.ID != "" && result.ID != strconv.FormatInt(requested, 10) {
 		return errors.New("upstream instance identity does not match")
 	}
+	result.Username = firstMapString(host, "username", "login_user")
+	result.Password = firstMapString(host, "password")
+	result.Port = firstMapString(host, "port", "ssh_port", "rdp_port")
+	if result.Port == "0" {
+		result.Port = ""
+	}
+	result.Remark = firstMapString(host, "remark", "notes")
+	result.UpstreamOrderID = firstMapString(host, "orderid", "order_id")
+	result.UpstreamOrderNo = firstMapString(host, "ordernum", "order_no")
+	result.InvoiceID = firstMapString(host, "invoice_id", "invoiceid")
+	result.FirstPayment = firstMapString(host, "firstpaymentamount")
+	result.RenewalAmount = firstMapString(host, "amount")
 	result.ProductID = firstMapString(host, "productid", "product_id", "pid")
 	result.BillingCycle = firstMapString(host, "billingcycle", "billing_cycle")
 	result.ActivatedAt = instanceTime(host["regdate"])

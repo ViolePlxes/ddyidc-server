@@ -104,7 +104,7 @@ func validate(r ChangeRequest) (Money, error) {
 	sign := 1
 	switch r.Type {
 	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income":
-	case "manual_debit", "freeze", "order_pay", "withdraw", "underpayment":
+	case "manual_debit", "freeze", "order_pay", "instance_renewal_pay", "withdraw", "underpayment":
 		sign = -1
 	default:
 		return 0, ErrInvalid
@@ -216,7 +216,7 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		switch r.Type {
 		case "recharge":
 			updates["total_recharge"] = account.TotalRecharge + amount
-		case "order_pay":
+		case "order_pay", "instance_renewal_pay":
 			updates["total_consume"] = account.TotalConsume - amount
 		case "refund":
 			updates["total_refund"] = account.TotalRefund + amount
@@ -274,6 +274,15 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		return nil
 	}
 	switch r.RefType {
+	case "instance_renewal":
+		if r.Channel != "instance_renewal" || r.Type != "instance_renewal_pay" {
+			return ErrBusiness
+		}
+		err := tx.Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("r.id=? AND r.customer_id=? AND r.state='unpaid' AND r.amount=? AND o.customer_id=r.customer_id AND o.status=1 AND o.pay_amount=?", r.RefID, r.CustomerID, (-amount).String(), int64(-amount)).Count(&count).Error
+		if err != nil {
+			return err
+		}
+
 	case "payment":
 		if r.Type != "recharge" || (r.Channel != "payment_callback" && r.Channel != "admin_manual") {
 			return ErrBusiness

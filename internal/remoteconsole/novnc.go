@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"io"
+	"log"
 	"net"
 	"net/url"
 	"strconv"
@@ -75,7 +76,16 @@ func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerI
 	if err != nil || upstream == nil || strings.TrimSpace(upstream.URL) == "" {
 		return nil, ErrUpstreamUnavailable
 	}
-	wsURL, err := upstreamWebSocketURL(upstream.URL, upstream.Password)
+	rawURL, password, err := unwrapNoVNC(upstream.URL, upstream.Password)
+	if err != nil {
+		return nil, ErrUpstreamUnavailable
+	}
+	socketPassword := ""
+	wrapped := rawURL != upstream.URL
+	if !wrapped {
+		socketPassword = upstream.Password
+	}
+	wsURL, err := upstreamWebSocketURL(rawURL, socketPassword)
 	if err != nil {
 		return nil, ErrUpstreamUnavailable
 	}
@@ -94,7 +104,8 @@ func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerI
 		customerID:       customerID,
 		engine:           p.Engine(),
 		upstream:         wsURL,
-		password:         upstream.Password,
+		password:         password,
+		rfbAuth:          wrapped,
 	}
 	if !p.valid(ctx, session) {
 		return nil, ErrSessionInvalid
@@ -153,10 +164,24 @@ func (p *NoVNCProvider) Proxy(ctx context.Context, session *RemoteSession, clien
 		_ = response.Body.Close()
 	}
 	if err != nil {
+		code := 0
+		if response != nil {
+			code = response.StatusCode
+		}
+		log.Printf("remote console instance=%d stage=socket status=%d error_type=%T", session.instanceID, code, err)
 		return ErrUpstreamUnavailable
 	}
 	defer upstream.Close()
-	if err := relay(ctx, clientConn, NewWebSocketConn(upstream)); err != nil {
+	socket := NewWebSocketConn(upstream)
+	stopClose := context.AfterFunc(ctx, func() { upstream.Close(); clientConn.Close() })
+	defer stopClose()
+	if session.rfbAuth {
+		if err := authenticateRFB(socket, clientConn, session.password); err != nil {
+			log.Printf("remote console instance=%d stage=rfb reason=%s", session.instanceID, err)
+			return ErrUpstreamUnavailable
+		}
+	}
+	if err := relay(ctx, clientConn, socket); err != nil {
 		return ErrUpstreamUnavailable
 	}
 	return nil

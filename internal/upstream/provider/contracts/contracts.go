@@ -189,6 +189,15 @@ type InstanceIP struct {
 }
 
 type InstanceDetail struct {
+	Username        string               `json:"username,omitempty"`
+	Password        string               `json:"-"`
+	Port            string               `json:"port,omitempty"`
+	Remark          string               `json:"remark,omitempty"`
+	UpstreamOrderID string               `json:"upstreamOrderId,omitempty"`
+	UpstreamOrderNo string               `json:"upstreamOrderNo,omitempty"`
+	InvoiceID       string               `json:"invoiceId,omitempty"`
+	FirstPayment    string               `json:"firstPayment,omitempty"`
+	RenewalAmount   string               `json:"renewalAmount,omitempty"`
 	ID              string               `json:"id,omitempty"`
 	ProductID       string               `json:"productId,omitempty"`
 	BillingCycle    string               `json:"billingCycle,omitempty"`
@@ -253,4 +262,17 @@ type InstanceProvider interface {
 	GetInstanceStatus(hostID int64) (string, error)
 	ExecuteInstanceAction(hostID int64, input InstanceActionInput) (*InstanceActionResult, error)
 	GetInstanceMonitor(hostID int64, start, end time.Time) (*InstanceMonitor, error)
+}
+
+// RenewalProvider separates quote, invoice creation and payment so uncertain writes are never repeated.
+type RenewalQuote struct {
+	Cycle    string `json:"cycle"`
+	Label    string `json:"label"`
+	Amount   string `json:"amount"`
+	Duration int64  `json:"duration"`
+}
+type RenewalProvider interface {
+	RenewalQuotes(int64) ([]RenewalQuote, error)
+	CreateRenewalInvoice(int64, string, int64) (string, error)
+	PayRenewalInvoice(string) error
 }

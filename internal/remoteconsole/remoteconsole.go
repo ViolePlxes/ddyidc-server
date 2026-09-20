@@ -32,6 +32,7 @@ type RemoteSession struct {
 	engine     string
 	upstream   string
 	password   string
+	rfbAuth    bool
 }
 
 type RemoteConsoleProvider interface {

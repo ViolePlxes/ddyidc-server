@@ -80,6 +80,7 @@ var repositories struct {
 }
 
 type paymentCoordinator struct {
+	instances     *instanceservice.Service
 	certification *certification.Service
 	orders        *orderservice.Service
 	marketplace   *marketplace.Service
@@ -133,6 +134,12 @@ func (h orderEventHooks) OnRechargePaid(ctx context.Context, rechargeID int64, r
 }
 
 func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
+	if c.instances != nil {
+		matched, err := c.instances.ProvisionRenewal(ctx, customerID, orderID, method)
+		if matched || err != nil {
+			return err
+		}
+	}
 	if c.certification != nil {
 		matched, err := c.certification.ProvisionPlatformOrder(ctx, customerID, orderID, method)
 		if matched || err != nil {
@@ -345,7 +352,13 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err != nil {
 		panic("payment channel initialization failed: " + err.Error())
 	}
-	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
+	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
+	instanceSvc.SetManagement(db.G)
+	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
+		panic("instance management schema failed: " + err.Error())
+	}
+	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance)
+	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
@@ -371,7 +384,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if pointsEnabled {
 		*cronStarts = append(*cronStarts, pointsSvc.StartExpiryScanner)
 	}
-	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
+
 	remoteRegistry := remoteconsole.NewRegistry()
 	if err := remoteRegistry.Register(remoteconsole.NewNoVNCProvider(instanceSvc)); err != nil {
 		panic("remote console provider initialization failed")

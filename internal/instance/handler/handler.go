@@ -24,9 +24,10 @@ type handler struct {
 
 func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
 	h := &handler{service: service, jwt: jwt}
+	server.AddRoutes(h.managementRoutes())
 	server.AddRoutes([]rest.Route{
-{Method:http.MethodGet,Path:"/admin/v1/customers/:customerId/instances/import-options",Handler:h.importOptions},
-{Method:http.MethodPost,Path:"/admin/v1/customers/:customerId/instances/import",Handler:h.importInstance},
+		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/import-options", Handler: h.importOptions},
+		{Method: http.MethodPost, Path: "/admin/v1/customers/:customerId/instances/import", Handler: h.importInstance},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.detail},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/images", Handler: h.images},
 		{Method: http.MethodPost, Path: "/admin/v1/customers/:customerId/instances/:instanceId/action", Handler: h.action},

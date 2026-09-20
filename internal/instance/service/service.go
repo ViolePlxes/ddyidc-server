@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	balance "ddyidc/internal/billing/balance"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,6 +37,7 @@ type Service struct {
 	repo      repo.Repository
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
+	db        *gorm.DB
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
@@ -89,6 +91,15 @@ type EventView struct {
 }
 
 type DetailView struct {
+	Username           string                         `json:"username,omitempty"`
+	Port               string                         `json:"port,omitempty"`
+	Remark             string                         `json:"remark,omitempty"`
+	UpstreamOrderID    string                         `json:"upstreamOrderId,omitempty"`
+	UpstreamOrderNo    string                         `json:"upstreamOrderNo,omitempty"`
+	InvoiceID          string                         `json:"invoiceId,omitempty"`
+	FirstPayment       string                         `json:"firstPayment,omitempty"`
+	RenewalAmount      string                         `json:"renewalAmount,omitempty"`
+	AutoRenew          bool                           `json:"autoRenew"`
 	ID                 string                         `json:"id"`
 	Name               string                         `json:"name"`
 	OrderID            string                         `json:"orderId"`
@@ -234,9 +245,40 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		return result, nil
 	}
 	detail, err := upstream.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
-	if err != nil {
+	if err != nil || detail == nil || detail.ID != host.UpstreamInstanceID {
 		result.Warning = "实例实时信息暂时不可用，请稍后重试"
 		return result, nil
+	}
+	result.Username, result.Port, result.Remark = detail.Username, detail.Port, detail.Remark
+	result.UpstreamOrderID, result.UpstreamOrderNo, result.InvoiceID = detail.UpstreamOrderID, detail.UpstreamOrderNo, detail.InvoiceID
+	result.FirstPayment = detail.FirstPayment
+	if s.db != nil {
+		if cost, e := balance.ParseMoney(detail.RenewalAmount); e == nil && cost > 0 {
+			var pricing struct {
+				Rate   string
+				Profit string
+				Kind   int
+			}
+			s.db.WithContext(ctx).Raw("SELECT s.rate,u.renew_profit_value profit,u.renew_profit_type kind FROM common.suppliers s JOIN product.upstream_products u ON u.supplier_id=s.id WHERE u.product_id=? AND s.id=?", host.ProductID, host.UpstreamProviderID).Scan(&pricing)
+			if amount, e := retailRenewal(cost, pricing.Rate, pricing.Profit, pricing.Kind); e == nil {
+				result.RenewalAmount = amount.String()
+			}
+		}
+	}
+	if detail.Password != "" {
+		result.PasswordMasked = "************"
+	}
+	if len(detail.Config) > 0 {
+		raw, _ := json.Marshal(snapshotFromUpstream(detail))
+		result.Config, _ = parseSnapshot(string(raw))
+	}
+	if detail.ExpiresAt != nil {
+		result.ExpiresAt = formatTime(*detail.ExpiresAt)
+	}
+	if s.db != nil {
+		var settings RenewalSettings
+		s.db.WithContext(ctx).Where("instance_id=? AND customer_id=?", host.ID, customerID).Take(&settings)
+		result.AutoRenew = settings.Enabled
 	}
 	result.Capabilities = detail.Capabilities
 	result.IPs = detail.IPs
@@ -263,11 +305,15 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	status := statusCode(detail.Status, host.Status)
 	result.Status = status
 	now := time.Now()
-	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{
+	updates := map[string]any{
 		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
-		"operating_system": result.OperatingSystem, "power_status": result.PowerStatus,
-		"status": status, "last_synced_at": now,
-	})
+		"operating_system": result.OperatingSystem, "power_status": result.PowerStatus, "status": status, "last_synced_at": now,
+	}
+	if s.db != nil {
+		_ = s.db.WithContext(ctx).Model(&dom.Host{}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", host.ID, customerID, host.OwnershipVersion, host.UpstreamInstanceID).Updates(updates).Error
+	} else {
+		_ = s.repo.UpdateFields(ctx, host.ID, updates)
+	}
 	return result, nil
 }
 
