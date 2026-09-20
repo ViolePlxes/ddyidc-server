@@ -93,6 +93,7 @@ type EventView struct {
 type DetailView struct {
 	Username           string                         `json:"username,omitempty"`
 	Port               string                         `json:"port,omitempty"`
+	PortIsDefault      bool                           `json:"portIsDefault,omitempty"`
 	Remark             string                         `json:"remark,omitempty"`
 	UpstreamOrderID    string                         `json:"upstreamOrderId,omitempty"`
 	UpstreamOrderNo    string                         `json:"upstreamOrderNo,omitempty"`
@@ -250,6 +251,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		return result, nil
 	}
 	result.Username, result.Port, result.Remark = detail.Username, detail.Port, detail.Remark
+	result.PortIsDefault = detail.PortIsDefault
 	result.UpstreamOrderID, result.UpstreamOrderNo, result.InvoiceID = detail.UpstreamOrderID, detail.UpstreamOrderNo, detail.InvoiceID
 	result.FirstPayment = detail.FirstPayment
 	if s.db != nil {
@@ -396,7 +398,7 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 			return nil, errors.New("镜像 ID 格式错误")
 		}
 		if strings.TrimSpace(in.Port) == "" {
-			in.Port = "22"
+			return nil, errors.New("请填写重装后的 SSH / RDP 端口")
 		}
 		port, portErr := strconv.Atoi(strings.TrimSpace(in.Port))
 		if portErr != nil || port < 1 || port > 65535 {

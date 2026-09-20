@@ -165,3 +165,15 @@ func TestRemoteActionResponseAndEventNeverExposeUpstreamMaterial(t *testing.T) {
 		t.Fatalf("foreign claim error = %v", err)
 	}
 }
+
+func TestReinstallRejectsMissingAndInvalidPortBeforeProviderCall(t *testing.T) {
+	for _, port := range []string{"", "0", "65536", "22.5", "ssh", "-1"} {
+		supplierID := int64(1)
+		resolver := &imageResolver{}
+		service := NewService(&ownershipRepo{host: &dom.Host{ID: 100, CustomerID: 200, ProductID: 300, UpstreamProviderID: &supplierID, UpstreamInstanceID: "53559"}}, resolver)
+		_, err := service.Action(context.Background(), 200, 100, ActionInput{Action: "reinstall", ImageID: "123", Port: port})
+		if err == nil || !strings.Contains(err.Error(), "端口") || resolver.providerCalls != 0 {
+			t.Fatalf("invalid port %q was not rejected before provider call", port)
+		}
+	}
+}

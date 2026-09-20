@@ -42,3 +42,50 @@ func TestQKIDC353ExplicitlyAllowed(t *testing.T) {
 		t.Fatal("unrelated product allowed")
 	}
 }
+
+func TestLoginPortPreservesFinanceDefaultAndExplicitOverrides(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		host map[string]any
+		data map[string]any
+		want string
+	}{
+		{"finance default", map[string]any{"port": float64(0)}, nil, "默认"},
+		{"explicit", map[string]any{"port": "2222"}, nil, "2222"},
+		{"zero does not mask alias", map[string]any{"port": 0, "ssh_port": "22022"}, nil, "22022"},
+		{"missing is not default", map[string]any{}, nil, ""},
+		{"invalid", map[string]any{"port": "65536"}, nil, ""},
+		{"custom field", map[string]any{"port": 0}, map[string]any{"custom_field_data": []any{map[string]any{"fieldname": "端口", "value": "10022"}}}, "10022"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := instanceLoginPort(tc.data, tc.host); got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+func TestReinstallCustomPortUsesV10FinanceParameters(t *testing.T) {
+	form := instanceActionForm(53559, "reinstall", contracts.InstanceActionInput{Action: "reinstall", ImageID: "123", Port: "22022"})
+	if form.Get("port") != "22022" || form.Get("os") != "123" || form.Get("format_data_disk") != "0" || form.Get("is_api") != "true" {
+		t.Fatal("reinstall parameters changed")
+	}
+}
+
+func TestExplicitFinanceDefaultResolvedOnlyForKnownOS(t *testing.T) {
+	for _, tc := range []struct {
+		os, port, want string
+		isDefault      bool
+	}{
+		{"Ubuntu-24.04", "0", "22", true}, {"Windows Server 2022", "0", "3389", true},
+		{"Unknown", "0", "默认", true}, {"Ubuntu-24.04", "22022", "22022", false},
+		{"Ubuntu-24.04", "", "", false},
+	} {
+		result := &contracts.InstanceDetail{OperatingSystem: tc.os}
+		if err := parseInstanceSnapshot(nil, map[string]any{"id": "53559", "port": tc.port}, 53559, result); err != nil {
+			t.Fatal(err)
+		}
+		if result.Port != tc.want || result.PortIsDefault != tc.isDefault {
+			t.Fatalf("incorrect port interpretation for %s", tc.os)
+		}
+	}
+}

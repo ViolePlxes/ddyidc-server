@@ -15,10 +15,7 @@ func parseInstanceSnapshot(data, host map[string]any, requested int64, result *c
 	}
 	result.Username = firstMapString(host, "username", "login_user")
 	result.Password = firstMapString(host, "password")
-	result.Port = firstMapString(host, "port", "ssh_port", "rdp_port")
-	if result.Port == "0" {
-		result.Port = ""
-	}
+	result.Port = instanceLoginPort(data, host)
 	result.Remark = firstMapString(host, "remark", "notes")
 	result.UpstreamOrderID = firstMapString(host, "orderid", "order_id")
 	result.UpstreamOrderNo = firstMapString(host, "ordernum", "order_no")
@@ -62,6 +59,21 @@ func parseInstanceSnapshot(data, host map[string]any, requested int64, result *c
 			result.OperatingSystem = value
 		}
 	}
+
+	if result.Port == "默认" {
+		result.PortIsDefault = true
+		osName := strings.ToLower(result.OperatingSystem)
+		if strings.Contains(osName, "windows") {
+			result.Port = "3389"
+		} else {
+			for _, family := range []string{"linux", "ubuntu", "debian", "centos", "rocky", "alma", "fedora", "red hat", "opensuse", "alpine"} {
+				if strings.Contains(osName, family) {
+					result.Port = "22"
+					break
+				}
+			}
+		}
+	}
 	return nil
 }
 func instanceTime(value any) *time.Time {
@@ -79,4 +91,44 @@ func instanceTime(value any) *time.Time {
 		}
 	}
 	return nil
+}
+
+// Finance v10 renders an explicit zero as "default", not as a missing port.
+// Prefer concrete values, including aliases/custom fields, before that sentinel.
+func instanceLoginPort(data, host map[string]any) string {
+	defaultPort := false
+	read := func(raw any) string {
+		value := strings.TrimSpace(scalarJSONValue(raw))
+		if value == "0" {
+			defaultPort = true
+			return ""
+		}
+		n, err := strconv.Atoi(value)
+		if err == nil && n >= 1 && n <= 65535 {
+			return strconv.Itoa(n)
+		}
+		return ""
+	}
+	for _, key := range []string{"port", "ssh_port", "rdp_port"} {
+		if value := read(host[key]); value != "" {
+			return value
+		}
+	}
+	fields, _ := data["custom_field_data"].([]any)
+	for _, field := range fields {
+		row, ok := field.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(firstMapString(row, "fieldname"))) {
+		case "port", "ssh_port", "rdp_port", "端口", "ssh端口", "ssh 端口", "远程端口":
+			if value := read(row["value"]); value != "" {
+				return value
+			}
+		}
+	}
+	if defaultPort {
+		return "默认"
+	}
+	return ""
 }

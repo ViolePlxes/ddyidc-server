@@ -192,6 +192,7 @@ type InstanceDetail struct {
 	Username        string               `json:"username,omitempty"`
 	Password        string               `json:"-"`
 	Port            string               `json:"port,omitempty"`
+	PortIsDefault   bool                 `json:"portIsDefault,omitempty"`
 	Remark          string               `json:"remark,omitempty"`
 	UpstreamOrderID string               `json:"upstreamOrderId,omitempty"`
 	UpstreamOrderNo string               `json:"upstreamOrderNo,omitempty"`

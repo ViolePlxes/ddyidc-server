@@ -148,9 +148,10 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 }
 
 type Credentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Port     string `json:"port"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Port          string `json:"port"`
+	PortIsDefault bool   `json:"portIsDefault,omitempty"`
 }
 
 func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Credentials, error) {
@@ -175,5 +176,5 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 	if e = s.repo.CreateEvent(ctx, &dom.Event{InstanceID: id, EventType: "credentials", OperatorType: actor, OperatorID: &operator, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: `{"viewed":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}); e != nil {
 		return nil, e
 	}
-	return &Credentials{Username: detail.Username, Password: detail.Password, Port: detail.Port}, nil
+	return &Credentials{Username: detail.Username, Password: detail.Password, Port: detail.Port, PortIsDefault: detail.PortIsDefault}, nil
 }
