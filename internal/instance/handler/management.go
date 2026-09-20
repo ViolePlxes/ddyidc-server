@@ -3,6 +3,7 @@ package instance
 import (
 	svc "ddyidc/internal/instance/service"
 	"encoding/json"
+	"errors"
 	"github.com/zeromicro/go-zero/rest"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ func (h *handler) managementRoutes() []rest.Route {
 	out := []rest.Route{}
 	for _, base := range []string{"/admin/v1/customers/:customerId/instances/:instanceId", "/api/v1/instance/:instanceId"} {
 		out = append(out,
+			rest.Route{Method: http.MethodPut, Path: base + "/remark", Handler: h.remark},
 			rest.Route{Method: http.MethodPost, Path: base + "/credentials", Handler: h.credentials},
 			rest.Route{Method: http.MethodGet, Path: base + "/renewal-options", Handler: h.renewalOptions},
 			rest.Route{Method: http.MethodPost, Path: base + "/renewals", Handler: h.createRenewal},
@@ -143,6 +145,33 @@ func (h *handler) autoRenew(w http.ResponseWriter, r *http.Request) {
 	}
 	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled); e != nil {
 		writeServiceError(w, e)
+		return
+	}
+	writeJSON(w, map[string]bool{"saved": true})
+}
+
+func (h *handler) remark(w http.ResponseWriter, r *http.Request) {
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r)
+	if id == 0 {
+		return
+	}
+	var in svc.RemarkInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil {
+		writeError(w, 400, "备注参数错误")
+		return
+	}
+	if err := h.service.SaveRemark(r.Context(), customer, id, in); err != nil {
+		if errors.Is(err, svc.ErrInvalidRemark) {
+			writeError(w, 400, err.Error())
+		} else {
+			writeServiceError(w, err)
+		}
 		return
 	}
 	writeJSON(w, map[string]bool{"saved": true})

@@ -55,6 +55,7 @@ type ListInput struct {
 }
 
 type ListItem struct {
+	Remark       string `json:"remark"`
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	ProductName  string `json:"productName"`
@@ -216,7 +217,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	config, snapshot := parseSnapshot(host.ConfigSnapshot)
 	events, _ := s.repo.ListEvents(ctx, host.ID, 50)
 	result := &DetailView{
-		ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo,
+		ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark,
 		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
@@ -250,7 +251,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.Warning = "实例实时信息暂时不可用，请稍后重试"
 		return result, nil
 	}
-	result.Username, result.Port, result.Remark = detail.Username, detail.Port, detail.Remark
+	result.Username, result.Port = detail.Username, detail.Port
 	result.PortIsDefault = detail.PortIsDefault
 	result.UpstreamOrderID, result.UpstreamOrderNo, result.InvoiceID = detail.UpstreamOrderID, detail.UpstreamOrderNo, detail.InvoiceID
 	result.FirstPayment = detail.FirstPayment
@@ -588,7 +589,7 @@ func (s *Service) pollStatus(instanceID int64, supplierID *int64, upstreamID str
 
 func listItem(host *dom.Host) ListItem {
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
-	result := ListItem{ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	result := ListItem{ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
 	if host.ExpiresAt != nil {
 		result.ExpiresAt = formatTime(*host.ExpiresAt)
 	}

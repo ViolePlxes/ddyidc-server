@@ -33,7 +33,7 @@ func (r *GormRepository) Create(c context.Context, v *dom.Host) error {
 	return r.db.WithContext(c).Table(hostTable).Create(v).Error
 }
 func (r *GormRepository) Update(c context.Context, v *dom.Host) error {
-	return r.db.WithContext(c).Table(hostTable).Omit("customer_id", "ownership_version").Save(v).Error
+	return r.db.WithContext(c).Table(hostTable).Omit("customer_id", "ownership_version", "remark").Save(v).Error
 }
 func (r *GormRepository) Delete(c context.Context, id int64) error {
 	return r.db.WithContext(c).Table(hostTable).Where("id = ?", id).Delete(&dom.Host{}).Error
@@ -79,6 +79,7 @@ func (r *GormRepository) EnsureSchema(c context.Context) error {
 	columns := []struct {
 		name, definition string
 	}{
+		{"remark", "varchar(1000) NOT NULL DEFAULT '' COMMENT '平台实例备注'"},
 		{"primary_ip", "varchar(45) DEFAULT NULL COMMENT '缓存主IP' AFTER upstream_instance_id"},
 		{"subnet_mask", "varchar(45) DEFAULT NULL COMMENT '缓存子网掩码' AFTER primary_ip"},
 		{"gateway", "varchar(45) DEFAULT NULL COMMENT '缓存网关' AFTER subnet_mask"},

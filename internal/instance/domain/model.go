@@ -9,6 +9,7 @@ import (
 // Host maps to instance.instances because the supplied SQL script has no
 // separate hosts/host_ips tables.
 type Host struct {
+	Remark             string         `gorm:"column:remark"`
 	OwnershipVersion   int64          `gorm:"column:ownership_version"`
 	ID                 int64          `gorm:"column:id;primaryKey"`
 	InstanceNo         string         `gorm:"column:instance_no"`
