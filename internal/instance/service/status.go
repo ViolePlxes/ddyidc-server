@@ -4,7 +4,6 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/upstream/provider/contracts"
-	"errors"
 	"time"
 )
 
@@ -90,46 +89,4 @@ func actionPower(action string) string {
 }
 func terminalPower(power string) bool {
 	return power == "running" || power == "stopped" || power == "fault" || power == "deleted" || power == "expired" || power == "suspended"
-}
-
-// One bounded observer per local instance. Requests themselves also have deadlines.
-func (s *Service) startStatusPoll(h *dom.Host, customerID int64) {
-	if _, loaded := s.polls.LoadOrStore(h.ID, true); loaded {
-		return
-	}
-	go func() {
-		defer s.polls.Delete(h.ID)
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
-		t := time.NewTicker(5 * time.Second)
-		defer t.Stop()
-		stable := 0
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-			}
-			current, err := s.owned(ctx, customerID, h.ID)
-			if err != nil || current.UpstreamInstanceID != h.UpstreamInstanceID || current.OwnershipVersion != h.OwnershipVersion {
-				return
-			}
-			v, err := s.Status(ctx, customerID, h.ID)
-			if errors.Is(err, ErrForbidden) || errors.Is(err, ErrNotFound) {
-				return
-			}
-			if err != nil || v == nil || v.Warning != "" {
-				continue
-			}
-			if terminalPower(v.PowerStatus) {
-				stable++
-			} else {
-				stable = 0
-			}
-			if stable >= 3 {
-				_, _ = s.Detail(ctx, customerID, h.ID)
-				return
-			}
-		}
-	}()
 }

@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	dom "ddyidc/internal/instance/domain"
@@ -39,7 +38,6 @@ type Service struct {
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
 	db        *gorm.DB
-	polls     sync.Map
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
@@ -482,9 +480,6 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	response, _ := json.Marshal(result)
 	_ = s.repo.FinishEvent(ctx, event.ID, 2, &toStatus, string(response), "")
 	_ = s.repo.UpdateFields(ctx, host.ID, map[string]any{"status": toStatus, "power_status": power})
-	if in.Action != "remote" && in.Action != "reset_password" {
-		s.startStatusPoll(host, customerID)
-	}
 	return &ActionView{Status: power, Message: "操作已受理，正在同步实际状态"}, nil
 }
 
