@@ -9,7 +9,7 @@ file /opt/ddyidc/bin/ddyidc-server /opt/ddyidc/bin/ddyidc-update-helper | grep -
 systemd-analyze verify /etc/systemd/system/ddyidc.service /etc/systemd/system/ddyidc-update-helper.service
 visudo -cf /etc/sudoers.d/ddyidc-update
 nginx -t
-test "$(stat -c '%a' /opt/ddyidc/server/etc/config.yaml)" = 600
+test "$(stat -c '%a' /etc/ddyidc/config.yaml)" = 600
 test "$(stat -c '%a' /etc/ddyidc/secrets/mysql-app-password)" = 600
 test "$(stat -c '%a' /etc/ddyidc/secrets/redis-password)" = 600
 ss -lnt | grep -E '127\.0\.0\.1:8080|127\.0\.0\.1:3306|127\.0\.0\.1:6379'

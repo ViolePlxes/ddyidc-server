@@ -2,24 +2,27 @@
 Description=DDYIDC API service
 Wants=network-online.target
 After=network-online.target mysql.service redis-server.service
-RequiresMountsFor=/opt/ddyidc /var/log/ddyidc
+RequiresMountsFor=/opt/ddyidc /var/lib/ddyidc/logs
 
 [Service]
 Type=simple
 User=ddyidc
 Group=ddyidc
-WorkingDirectory=/opt/ddyidc/server
+WorkingDirectory=/var/lib/ddyidc
+StateDirectory=ddyidc
+StateDirectoryMode=0751
+Environment=HOME=/var/lib/ddyidc/home TMPDIR=/var/lib/ddyidc/tmp XDG_CACHE_HOME=/var/lib/ddyidc/cache GOCACHE=/var/lib/ddyidc/cache/go-build GOMODCACHE=/var/lib/ddyidc/cache/go-mod NPM_CONFIG_CACHE=/var/lib/ddyidc/cache/npm
 UMask=0027
 ExecStartPre=/opt/ddyidc/deploy/wait-dependencies.sh
 ExecStartPre=/opt/ddyidc/deploy/disk-guard.sh --admit
-ExecStart=/opt/ddyidc/bin/ddyidc-server -f /opt/ddyidc/server/etc/config.yaml
+ExecStart=/opt/ddyidc/bin/ddyidc-server -f /etc/ddyidc/config.yaml
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=90s
 TimeoutStopSec=30s
 KillSignal=SIGTERM
 LimitNOFILE=65535
-PrivateTmp=true
+PrivateTmp=false
 ProtectHome=true
 ProtectSystem=strict
 ProtectKernelTunables=true
@@ -27,7 +30,8 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictRealtime=true
 LockPersonality=true
-ReadWritePaths=/opt/ddyidc /var/log/ddyidc
+ReadWritePaths=/var/lib/ddyidc
+ReadOnlyPaths=/etc/ddyidc /tmp /var/tmp
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ddyidc

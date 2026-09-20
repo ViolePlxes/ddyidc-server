@@ -2,18 +2,21 @@
 Description=DDYIDC atomic update helper
 Wants=network-online.target
 After=network-online.target
-ConditionPathExists=/opt/ddyidc/update-results/pending.plan.json
+ConditionPathExists=/var/lib/ddyidc/update-results/pending.plan.json
 
 [Service]
 Type=oneshot
 User=ddyidc
 Group=ddyidc
 UMask=0027
-WorkingDirectory=/opt/ddyidc/server
+WorkingDirectory=/var/lib/ddyidc
+StateDirectory=ddyidc
+StateDirectoryMode=0751
+Environment=HOME=/var/lib/ddyidc/home TMPDIR=/var/lib/ddyidc/tmp XDG_CACHE_HOME=/var/lib/ddyidc/cache GOCACHE=/var/lib/ddyidc/cache/go-build GOMODCACHE=/var/lib/ddyidc/cache/go-mod NPM_CONFIG_CACHE=/var/lib/ddyidc/cache/npm
 ExecStartPre=/opt/ddyidc/deploy/disk-guard.sh --admit
-ExecStart=/opt/ddyidc/bin/ddyidc-update-helper -plan /opt/ddyidc/update-results/pending.plan.json
+ExecStart=/opt/ddyidc/bin/ddyidc-update-helper -plan /var/lib/ddyidc/update-results/pending.plan.json
 TimeoutStartSec=15min
-PrivateTmp=true
+PrivateTmp=false
 ProtectHome=true
 ProtectSystem=strict
 ProtectKernelTunables=true
@@ -21,7 +24,8 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictRealtime=true
 LockPersonality=true
-ReadWritePaths=/opt/ddyidc /var/log/ddyidc
+ReadWritePaths=/var/lib/ddyidc /opt/ddyidc/bin
+ReadOnlyPaths=/etc/ddyidc /tmp /var/tmp
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ddyidc-update-helper

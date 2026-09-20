@@ -13,14 +13,14 @@ Update:
   HealthURL: "http://127.0.0.1:8080/health"
   VersionURL: "http://127.0.0.1:8080/api/v1/system/version"
   SmokeURL: "http://127.0.0.1:8080/api/v1/products"
-  ResultDir: "/opt/ddyidc/update-results"
+  ResultDir: "/var/lib/ddyidc/update-results"
   Backend:
-    Workspace: "/opt/ddyidc/server"
+    Workspace: "/var/lib/ddyidc/update/workspaces/backend"
     Branch: "main"
     Executable: "/opt/ddyidc/bin/ddyidc-server"
-    ConfigFile: "/opt/ddyidc/server/etc/config.yaml"
+    ConfigFile: "/etc/ddyidc/config.yaml"
     HelperPath: "/opt/ddyidc/bin/ddyidc-update-helper"
   Frontend:
-    Workspace: "/opt/ddyidc/web-react"
+    Workspace: "/var/lib/ddyidc/update/workspaces/frontend"
     Branch: "main"
     StaticURL: "http://127.0.0.1:8081/"

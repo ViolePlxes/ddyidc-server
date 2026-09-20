@@ -15,6 +15,8 @@ RUN apk --no-cache add ca-certificates tzdata \
     && adduser -S -G ddyidc ddyidc
 COPY --from=builder /app/ddyidc-server .
 COPY --from=builder /app/ddyidc-update-helper .
+RUN mkdir -p /var/lib/ddyidc && chown ddyidc:ddyidc /var/lib/ddyidc
+VOLUME ["/var/lib/ddyidc"]
 USER ddyidc
 EXPOSE 8080
 ENTRYPOINT ["./ddyidc-server"]

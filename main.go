@@ -33,6 +33,7 @@ import (
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/logger"
 	"ddyidc/internal/shared/middleware"
+	"ddyidc/internal/shared/runtimepaths"
 	systemrepo "ddyidc/internal/system/repository"
 	tickethandler "ddyidc/internal/ticket/handler"
 	ticketrepo "ddyidc/internal/ticket/repository"
@@ -166,7 +167,8 @@ func main() {
 
 	var c struct {
 		rest.RestConf
-		Cron          *distsync.Config `json:",optional"`
+		Runtime       runtimepaths.Config `json:",optional"`
+		Cron          *distsync.Config    `json:",optional"`
 		MySQL         db.Config
 		Redis         cache.Config
 		Notify        notify.Config
@@ -183,8 +185,18 @@ func main() {
 	}
 	conf.MustLoad(*configFile, &c)
 
-	// 初始化日志
-	logger.Init(c.Mode)
+	paths, err := runtimepaths.Resolve(c.Runtime)
+	if err != nil {
+		panic(err)
+	}
+	if err = paths.Prepare(); err != nil {
+		panic(err)
+	}
+	if err = c.Update.UseDataDirectory(paths); err != nil {
+		panic(err)
+	}
+	c.Log.Path = paths.Join("logs")
+	logger.Init(c.Log)
 
 	// 初始化数据库
 	db.MustInit(c.MySQL)
@@ -244,7 +256,7 @@ func main() {
 
 	// 注册路由（各域 handler 在此注册）
 	var cronStarts []func(context.Context)
-	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts)
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
 	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, balance.New(db.G).StartReconciliation,
 		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
 	if !c.Cron.IsEnabled() || *noCron {
@@ -271,7 +283,7 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context)) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context), paths runtimepaths.Paths) {
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
@@ -289,7 +301,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic(err)
 	}
 	navigation.Register(server, navigationSvc, jwt)
-	certificationSvc := certification.New(db.G, cache.RDB, snapshotKey, "storage/certification")
+	certificationSvc := certification.New(db.G, cache.RDB, snapshotKey, paths.Join("storage/certification"))
 	if err := certificationSvc.EnsureSchema(context.Background()); err != nil {
 		panic("certification initialization failed: " + err.Error())
 	}
@@ -409,7 +421,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := ticketSvc.EnsureSchema(context.Background()); err != nil {
 		panic("ticket schema migration failed: " + err.Error())
 	}
-	tickethandler.RegisterHandlers(server, ticketSvc, jwt)
+	tickethandler.RegisterHandlers(server, ticketSvc, jwt, paths.Join("storage/ticket-attachments"))
 
 	producthandler.RegisterPublicHandlers(server, repositories.Product, upstreamservice.Default)
 	// System route registration remains separate until its transport contract

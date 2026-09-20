@@ -1,6 +1,7 @@
 package update
 
 import (
+	"ddyidc/internal/shared/runtimepaths"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -72,22 +73,22 @@ func (c Config) normalized() Config {
 		c.SmokeURL = "http://127.0.0.1:8080/api/v1/products"
 	}
 	if strings.TrimSpace(c.ResultDir) == "" {
-		c.ResultDir = "/opt/ddyidc/update-results"
+		c.ResultDir = "/var/lib/ddyidc/update-results"
 	}
 	if strings.TrimSpace(c.Backend.Workspace) == "" {
-		c.Backend.Workspace = "/opt/ddyidc/server"
+		c.Backend.Workspace = "/var/lib/ddyidc/update/workspaces/backend"
 	}
 	if strings.TrimSpace(c.Backend.Executable) == "" {
 		c.Backend.Executable = "/opt/ddyidc/bin/ddyidc-server"
 	}
 	if strings.TrimSpace(c.Backend.ConfigFile) == "" {
-		c.Backend.ConfigFile = "/opt/ddyidc/server/etc/config.yaml"
+		c.Backend.ConfigFile = "/etc/ddyidc/config.yaml"
 	}
 	if strings.TrimSpace(c.Backend.HelperPath) == "" {
 		c.Backend.HelperPath = "/opt/ddyidc/bin/ddyidc-update-helper"
 	}
 	if strings.TrimSpace(c.Frontend.Workspace) == "" {
-		c.Frontend.Workspace = "/opt/ddyidc/web-react"
+		c.Frontend.Workspace = "/var/lib/ddyidc/update/workspaces/frontend"
 	}
 	if strings.TrimSpace(c.Frontend.StaticURL) == "" {
 		c.Frontend.StaticURL = "http://127.0.0.1:8081/"
@@ -159,4 +160,23 @@ func (c Config) target(name string) (TargetConfig, error) {
 	default:
 		return TargetConfig{}, errors.New("不支持的更新目标")
 	}
+}
+
+// UseDataDirectory rejects legacy writable paths instead of silently losing old data.
+func (c *Config) UseDataDirectory(p runtimepaths.Paths) error {
+	if c.ResultDir == "" {
+		c.ResultDir = p.Join("update-results")
+	}
+	if c.Backend.Workspace == "" {
+		c.Backend.Workspace = p.Join("update/workspaces/backend")
+	}
+	if c.Frontend.Workspace == "" {
+		c.Frontend.Workspace = p.Join("update/workspaces/frontend")
+	}
+	for _, path := range []string{c.ResultDir, c.Backend.Workspace, c.Frontend.Workspace} {
+		if err := p.Within(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }

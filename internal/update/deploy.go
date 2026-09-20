@@ -62,7 +62,11 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "*.sql"); diffErr == nil && strings.TrimSpace(output) != "" {
 		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；更新不会自动执行迁移，请在更新完成后人工评审并迁移")
 	}
-	newExecutable := target.Executable + ".new"
+	newExecutable := filepath.Join(m.config.ResultDir, "staging", formatID(task.ID)+".new")
+	if err = m.files.MkdirAll(filepath.Dir(newExecutable)); err != nil {
+		m.fail(context.Background(), task, logValue, err, "not_required")
+		return
+	}
 	rollbackBeforeSwitch := func(cause error) {
 		_ = m.files.RemoveAll(newExecutable)
 		rollback := "success"
@@ -81,12 +85,12 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		rollbackBeforeSwitch(fmt.Errorf("后端构建失败: %w (%s)", buildErr, output))
 		return
 	}
-	m.progress(ctx, task, 58, logValue, "构建外部更新助手")
-	if output, helperErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-o", target.HelperPath, "./cmd/updatehelper"}, buildEnv); helperErr != nil {
-		rollbackBeforeSwitch(fmt.Errorf("更新助手构建失败: %w (%s)", helperErr, output))
+	// The trusted helper is installed by deployment, never rebuilt by the API service.
+	if _, helperErr := os.Stat(target.HelperPath); helperErr != nil {
+		rollbackBeforeSwitch(fmt.Errorf("更新助手未安装: %w", helperErr))
 		return
 	}
-	backup := target.Executable + "~"
+	backup := filepath.Join(m.config.ResultDir, "backups", formatID(task.ID)+".previous")
 	m.progress(ctx, task, 70, logValue, "更新产物已验证，准备由 systemd 更新助手执行原子切换")
 
 	taskID := formatID(task.ID)

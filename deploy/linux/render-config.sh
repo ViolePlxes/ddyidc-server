@@ -9,7 +9,7 @@ fi
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 template="${CONFIG_TEMPLATE:-${script_dir}/config.production.yaml.example}"
-destination="${CONFIG_DESTINATION:-/opt/ddyidc/server/etc/config.yaml}"
+destination="${CONFIG_DESTINATION:-/etc/ddyidc/config.yaml}"
 secret_dir="/etc/ddyidc/secrets"
 mkdir -p "$secret_dir" "$(dirname "$destination")"
 

@@ -5,14 +5,14 @@ mode="${1:---check}"
 warning_threshold=70
 alert_threshold=80
 block_threshold=85
-state_dir=/run/ddyidc
+state_dir=/var/lib/ddyidc/run
 marker="$state_dir/disk-blocked"
 mkdir -p "$state_dir"
 
 declare -A seen=()
 highest=0
 highest_mount=""
-for path in /opt/ddyidc /var/lib/mysql /var/lib/redis /var/log/ddyidc; do
+for path in /opt/ddyidc /var/lib/mysql /var/lib/redis /var/lib/ddyidc/logs; do
   [[ -e "$path" ]] || continue
   read -r _ _ _ _ percent mountpoint < <(df -P "$path" | awk 'NR==2 {print $1,$2,$3,$4,$5,$6}')
   [[ -n "${seen[$mountpoint]:-}" ]] && continue

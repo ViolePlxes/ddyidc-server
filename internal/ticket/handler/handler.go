@@ -28,9 +28,13 @@ type handler struct {
 	storageRoot string
 }
 
-func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
-	root, _ := filepath.Abs(filepath.Join("storage", "ticket-attachments"))
-	_ = os.MkdirAll(root, 0750)
+func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager, root string) {
+	if !filepath.IsAbs(root) {
+		panic("ticket storage must be absolute")
+	}
+	if err := os.MkdirAll(root, 0750); err != nil {
+		panic(err)
+	}
 	h := &handler{service: service, jwt: jwt, storageRoot: root}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/tickets", Handler: h.userList},
@@ -630,14 +634,19 @@ func (h *handler) orderPrereplies(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.admin(w, r); !ok {
 		return
 	}
-	var input struct { IDs []string `json:"ids"` }
+	var input struct {
+		IDs []string `json:"ids"`
+	}
 	if !decode(w, r, &input) {
 		return
 	}
 	ids := make([]int64, 0, len(input.IDs))
 	for _, raw := range input.IDs {
 		id, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || id <= 0 { writeError(w, http.StatusBadRequest, "预设回复 ID 格式错误"); return }
+		if err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "预设回复 ID 格式错误")
+			return
+		}
 		ids = append(ids, id)
 	}
 	if err := h.service.OrderPrereplies(r.Context(), ids); err != nil {
@@ -727,6 +736,7 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request, prefix string) 
 		writeError(w, http.StatusRequestEntityTooLarge, "附件总大小不能超过 50MB")
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	headers := r.MultipartForm.File["attachments"]
 	if len(headers) == 0 {
 		headers = r.MultipartForm.File["files"]

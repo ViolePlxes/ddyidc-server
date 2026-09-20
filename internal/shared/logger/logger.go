@@ -5,14 +5,7 @@ import (
 )
 
 // Init 初始化日志
-func Init(mode string) {
-	logx.MustSetup(logx.LogConf{
-		Level:     "info",
-		Mode:      mode,
-		KeepDays:  7,
-		StackCooldownMillis: 100,
-	})
-}
+func Init(config logx.LogConf) { logx.MustSetup(config) }
 
 // Info 信息日志
 func Info(msg string, fields ...logx.LogField) {

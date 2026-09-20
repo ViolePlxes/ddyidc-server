@@ -95,3 +95,46 @@ func assertTestFile(t *testing.T, path, expected string) {
 		t.Fatalf("unexpected file %s: %q, %v", path, data, err)
 	}
 }
+
+func TestCrossDirectoryReplacePreservesBackup(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	data := filepath.Join(root, "data")
+	if err := os.MkdirAll(bin, 0750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(data, 0750); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(bin, "server")
+	candidate := filepath.Join(data, "candidate")
+	backup := filepath.Join(data, "backups", "previous")
+	if err := os.WriteFile(current, []byte("old"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(candidate, []byte("new"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := atomicReplace(candidate, current, backup); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(backup); string(b) != "old" {
+		t.Fatal("backup lost")
+	}
+	if err := restoreBackup(current, backup); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(current); string(b) != "old" {
+		t.Fatal("rollback failed")
+	}
+	files, _ := os.ReadDir(bin)
+	if len(files) != 1 {
+		t.Fatal("deployment temporary files leaked")
+	}
+	if err := atomicReplace(filepath.Join(data, "missing"), current, backup); err == nil {
+		t.Fatal("missing candidate accepted")
+	}
+	if b, _ := os.ReadFile(current); string(b) != "old" {
+		t.Fatal("failed deployment changed program")
+	}
+}

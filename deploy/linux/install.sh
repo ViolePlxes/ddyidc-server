@@ -22,23 +22,26 @@ done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y nginx git sudo rsync curl jq openssl logrotate util-linux
+apt-get install -y nginx git sudo rsync python3-yaml curl jq openssl logrotate util-linux
 if [[ ! -L /etc/nginx/sites-enabled/ddyidc ]]; then
   systemctl stop nginx 2>/dev/null || true
 fi
 if ! id ddyidc >/dev/null 2>&1; then
-  useradd --system --home-dir /opt/ddyidc --create-home --shell /usr/sbin/nologin ddyidc
+  useradd --system --home-dir /var/lib/ddyidc/home --create-home --shell /usr/sbin/nologin ddyidc
 fi
-install -d -m 0750 -o ddyidc -g ddyidc /opt/ddyidc/bin /opt/ddyidc/update-results /opt/ddyidc/web-react /var/log/ddyidc
+install -d -m 0750 -o ddyidc -g ddyidc /opt/ddyidc/bin /var/lib/ddyidc/update-results /var/lib/ddyidc/update/workspaces/frontend /var/lib/ddyidc/logs
 install -d -m 0755 -o root -g root /opt/ddyidc/deploy
+install -d -m 0750 -o ddyidc -g ddyidc /var/lib/ddyidc /var/lib/ddyidc/run /var/lib/ddyidc/tmp /var/lib/ddyidc/home /var/lib/ddyidc/update/workspaces
 
-if [[ ! -d /opt/ddyidc/server/.git ]]; then
-  sudo -u ddyidc git clone --branch main "$server_repository" /opt/ddyidc/server
+if [[ ! -d /var/lib/ddyidc/update/workspaces/backend/.git ]]; then
+  sudo -u ddyidc git clone --branch main "$server_repository" /var/lib/ddyidc/update/workspaces/backend
 fi
-if [[ ! -d /opt/ddyidc/web-react/.git ]]; then
-  sudo -u ddyidc git clone --branch main "$frontend_repository" /opt/ddyidc/web-react
+if [[ ! -d /var/lib/ddyidc/update/workspaces/frontend/.git ]]; then
+  sudo -u ddyidc git clone --branch main "$frontend_repository" /var/lib/ddyidc/update/workspaces/frontend
 fi
-chown -R ddyidc:ddyidc /opt/ddyidc/server /opt/ddyidc/web-react
+chown -R ddyidc:ddyidc /var/lib/ddyidc/update/workspaces/backend /var/lib/ddyidc/update/workspaces/frontend
+chmod 0751 /var/lib/ddyidc /var/lib/ddyidc/update /var/lib/ddyidc/update/workspaces
+chmod 0755 /var/lib/ddyidc/update/workspaces/frontend
 
 if [[ "$script_dir" != /opt/ddyidc/deploy ]]; then
   rsync -a --exclude package/ "$script_dir/" /opt/ddyidc/deploy/
@@ -49,9 +52,9 @@ chmod 0755 /opt/ddyidc/deploy/*.sh
 
 install -m 0755 -o ddyidc -g ddyidc "$package_root/bin/ddyidc-server" /opt/ddyidc/bin/ddyidc-server
 install -m 0755 -o ddyidc -g ddyidc "$package_root/bin/ddyidc-update-helper" /opt/ddyidc/bin/ddyidc-update-helper
-install -d -m 0755 -o ddyidc -g ddyidc /opt/ddyidc/web-react/dist
-rsync -a --delete "$package_root/web/dist/" /opt/ddyidc/web-react/dist/
-chown -R ddyidc:ddyidc /opt/ddyidc/web-react/dist
+install -d -m 0755 -o ddyidc -g ddyidc /var/lib/ddyidc/update/workspaces/frontend/dist
+rsync -a --delete "$package_root/web/dist/" /var/lib/ddyidc/update/workspaces/frontend/dist/
+chown -R ddyidc:ddyidc /var/lib/ddyidc/update/workspaces/frontend/dist
 
 /opt/ddyidc/deploy/render-config.sh
 install -m 0644 /opt/ddyidc/deploy/ddyidc.service /etc/systemd/system/ddyidc.service

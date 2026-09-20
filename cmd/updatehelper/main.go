@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"ddyidc/internal/update"
-	"golang.org/x/sys/unix"
+	"io"
 )
 
 const defaultMinFreeMB = 10 * 1024
@@ -95,7 +95,7 @@ func execute(plan update.HelperPlan) update.HelperResult {
 	if err = atomicReplace(plan.NewExecutable, plan.CurrentExecutable, plan.BackupExecutable); err != nil {
 		return rollback(plan, append(logLines, "原子替换运行文件失败"), err)
 	}
-	logLines = append(logLines, "新后端已原子切换，旧版本保留为 ddyidc-server~")
+	logLines = append(logLines, "新后端已原子切换，旧版本保留在数据目录")
 	if err = systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "start", plan.ServiceName); err != nil {
 		return rollback(plan, logLines, fmt.Errorf("启动新后端服务失败: %w", err))
 	}
@@ -166,41 +166,62 @@ func systemctl(ctx context.Context, sudoPath, executable, action, service string
 	return nil
 }
 
+// Only the deployment helper can write the program mount. Candidates and backups
+// live on the data mount, which may be a different filesystem.
 func atomicReplace(source, destination, backup string) error {
-	if filepath.Dir(source) != filepath.Dir(destination) || filepath.Dir(backup) != filepath.Dir(destination) {
-		return errors.New("新文件、运行文件与备份必须位于同一目录")
+	if source == destination || backup == destination || backup == source {
+		return errors.New("update paths must be distinct")
 	}
 	if _, err := os.Stat(source); err != nil {
-		return fmt.Errorf("新后端文件不可用: %w", err)
+		return err
 	}
-	if _, err := os.Stat(destination); err != nil {
-		return fmt.Errorf("当前后端文件不可用: %w", err)
+	if err := durableCopy(destination, backup); err != nil {
+		return err
 	}
-	if err := os.Remove(backup); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("清理旧备份: %w", err)
-	}
-	if err := unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE); err != nil {
-		return fmt.Errorf("交换新旧后端文件: %w", err)
-	}
-	if err := os.Rename(source, backup); err != nil {
-		_ = unix.Renameat2(unix.AT_FDCWD, source, unix.AT_FDCWD, destination, unix.RENAME_EXCHANGE)
-		return fmt.Errorf("发布后端备份: %w", err)
-	}
-	return syncDirectory(filepath.Dir(destination))
+	return durableCopy(source, destination)
 }
-
 func restoreBackup(destination, backup string) error {
-	if _, err := os.Stat(backup); err != nil {
-		return fmt.Errorf("备份文件不可用: %w", err)
+	if err := durableCopy(backup, destination); err != nil {
+		return err
 	}
-	if _, err := os.Stat(destination); err != nil {
-		return fmt.Errorf("失败版本不可用: %w", err)
+	return os.Remove(backup)
+}
+func durableCopy(source, destination string) error {
+	input, err := os.Open(source)
+	if err != nil {
+		return err
 	}
-	if err := unix.Renameat2(unix.AT_FDCWD, destination, unix.AT_FDCWD, backup, unix.RENAME_EXCHANGE); err != nil {
-		return fmt.Errorf("原子恢复后端: %w", err)
+	defer input.Close()
+	info, err := input.Stat()
+	if err != nil {
+		return err
 	}
-	if err := os.Remove(backup); err != nil {
-		return fmt.Errorf("清理失败版本: %w", err)
+	if !info.Mode().IsRegular() {
+		return errors.New("executable is not a regular file")
+	}
+	if err = os.MkdirAll(filepath.Dir(destination), 0750); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".deploy-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temporary.Name())
+	defer temporary.Close()
+	if _, err = io.Copy(temporary, input); err != nil {
+		return err
+	}
+	if err = temporary.Chmod(info.Mode().Perm()); err != nil {
+		return err
+	}
+	if err = temporary.Sync(); err != nil {
+		return err
+	}
+	if err = temporary.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(temporary.Name(), destination); err != nil {
+		return err
 	}
 	return syncDirectory(filepath.Dir(destination))
 }

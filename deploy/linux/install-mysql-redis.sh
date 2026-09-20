@@ -11,7 +11,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y ca-certificates curl gpg lsb-release mysql-server openssl
 if ! id ddyidc >/dev/null 2>&1; then
-  useradd --system --home-dir /opt/ddyidc --create-home --shell /usr/sbin/nologin ddyidc
+  useradd --system --home-dir /var/lib/ddyidc/home --create-home --shell /usr/sbin/nologin ddyidc
 fi
 
 redis_major=0

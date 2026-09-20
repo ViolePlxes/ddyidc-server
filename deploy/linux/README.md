@@ -5,21 +5,47 @@ This directory is the production deployment kit for Ubuntu 22.04 LTS amd64. The 
 ## Layout
 
 ```text
-/opt/ddyidc/
-├── bin/ddyidc-server
-├── bin/ddyidc-update-helper
-├── server/                    # backend Git workspace
-├── web-react/                 # frontend Git workspace
-│   ├── dist/
-│   └── dist.old/
-├── update-results/archive/    # update records retained for 180 days
-└── deploy/                    # this deployment kit
-/etc/ddyidc/secrets/           # generated secrets, mode 0600
-/var/log/ddyidc/               # application logs
-/var/backups/ddyidc/           # daily/weekly/monthly backups
-/var/lib/mysql/                # MySQL data (distribution default)
-/var/lib/redis/                # Redis RDB/AOF (distribution default)
+/opt/ddyidc/bin/               # replaceable executable files (API read-only)
+/opt/ddyidc/deploy/            # deployment scripts (API read-only)
+/etc/ddyidc/config.yaml        # configuration (mode 0600, API read-only)
+/etc/ddyidc/secrets/           # credentials (API read-only)
+/var/lib/ddyidc/
+  storage/                    # ticket attachments and encrypted certification uploads
+  logs/                       # application logs, optional upstream audit log
+  tmp/ home/ cache/           # multipart temp files, tool home, Go/npm caches
+  run/                        # disk admission marker (PID managed by systemd)
+  update/workspaces/          # backend and frontend mutable Git/build workspaces
+  update-results/             # plans, staging binaries, backups, archived results
+  backups/                    # SQL, Redis, attachments, configuration archives
+  migrations/                 # verified original data and migration manifests
+/var/lib/mysql/               # separately managed MySQL service data
+/var/lib/redis/               # separately managed Redis service data
 ```
+
+The API mount namespace permits writes only below `/var/lib/ddyidc`. System
+journald remains managed by systemd outside the program tree. The dedicated
+update helper may replace executables during deployment; the API cannot modify
+the program or rebuild that trusted helper. For another data root, change
+`Runtime.DataDir`, every Update writable path and the service/script paths
+together. Symlink escapes and legacy writable paths outside the root fail startup.
+
+## Existing installation migration
+
+Install `python3-yaml` and `rsync`. Stop the API, update helper and backup timer/
+service before migrating. Back up service units and the executable separately.
+Run `migrate-runtime.py --config OLD_CONFIG --old-working-directory OLD_CWD` as
+root. It copies and SHA-256 verifies runtime files, refuses conflicting files,
+preserves existing worktrees, and moves originals into the private migration
+archive. Configuration contents are never printed. Install the new units and
+scripts, update any local drop-in config paths, then restart and verify health,
+uploads, static serving and read-only program mounts. Retain migration archives
+until acceptance. Re-running with the new config/data working directory is safe.
+
+For rollback stop the API, restore the backed-up executable/units/config and move
+`original-N` directories back according to `migration.json`. Do not merge new
+post-migration uploads over old data without reconciling them first. Database
+files are not relocated; migrate them with native MySQL/Redis backup and restore.
+
 
 ## Build the delivery package
 
@@ -65,11 +91,11 @@ On a prepared database, set `START_SERVICE=1` when running `install.sh` to start
 
 ## Automatic update flow
 
-The backend builds only `linux/amd64`, writes `/opt/ddyidc/update-results/pending.plan.json`, and queues the fixed `ddyidc-update-helper.service` through one exact sudoers command. The oneshot helper also runs as the low-privilege `ddyidc` account; sudoers permits only the fixed main-service start/stop/restart commands:
+The backend builds only `linux/amd64`, writes `/var/lib/ddyidc/update-results/pending.plan.json`, and queues the fixed `ddyidc-update-helper.service` through one exact sudoers command. The oneshot helper also runs as the low-privilege `ddyidc` account; sudoers permits only the fixed main-service start/stop/restart commands:
 
 1. checks that the binary volume has at least 10 GiB free and is below the 85% admission threshold;
 2. stops `ddyidc.service`;
-3. exchanges `ddyidc-server.new` and `ddyidc-server` atomically with Linux `renameat2`, then keeps the old file as `ddyidc-server~`;
+3. copies a data-directory candidate to a short-lived deployment file, fsyncs and atomically renames it into place; keeps the old binary in `update-results/backups/` (works across filesystems);
 4. starts the service and verifies `/health`, the expected commit, and the product smoke endpoint;
 5. atomically restores the old binary and Git commit if any check fails.
 
@@ -92,7 +118,7 @@ Quarterly restore drill:
 ```bash
 sudo systemctl stop ddyidc.service
 sudo mkdir -p /var/tmp/ddyidc-restore
-sudo tar -xzf /var/backups/ddyidc/daily/ddyidc-TIMESTAMP.tar.gz -C /var/tmp/ddyidc-restore
+sudo tar -xzf /var/lib/ddyidc/backups/daily/ddyidc-TIMESTAMP.tar.gz -C /var/tmp/ddyidc-restore
 sudo mysql --protocol=socket --user=root < /var/tmp/ddyidc-restore/mysql.sql
 sudo systemctl stop redis-server
 sudo cp /var/tmp/ddyidc-restore/redis.rdb /var/lib/redis/dump.rdb

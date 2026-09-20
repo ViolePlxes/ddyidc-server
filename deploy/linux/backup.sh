@@ -12,7 +12,7 @@ if [[ -r /etc/ddyidc/backup.env ]]; then
   source /etc/ddyidc/backup.env
 fi
 
-backup_root="${BACKUP_ROOT:-/var/backups/ddyidc}"
+backup_root="${BACKUP_ROOT:-/var/lib/ddyidc/backups}"
 mysql_data_dir="${MYSQL_DATA_DIR:-/var/lib/mysql}"
 redis_data_dir="${REDIS_DATA_DIR:-/var/lib/redis}"
 redis_password_file="${REDIS_PASSWORD_FILE:-/etc/ddyidc/secrets/redis-password}"
@@ -57,6 +57,10 @@ if [[ -d "$mysql_data_dir" ]]; then
     | tar --null -T - -czf "$work_dir/mysql-binlog.tar.gz" --absolute-names 2>/dev/null || true
 fi
 
+# Attachments are not reproducible from SQL. Preserve encrypted files and configuration.
+if [[ -d /var/lib/ddyidc/storage ]]; then cp -a /var/lib/ddyidc/storage "$work_dir/storage"; fi
+if [[ -d /etc/ddyidc ]]; then cp -a /etc/ddyidc "$work_dir/configuration"; fi
+
 tar -C "$work_dir" -czf "$backup_root/daily/$archive" .
 chmod 0600 "$backup_root/daily/$archive"
 
@@ -72,7 +76,7 @@ fi
 find "$backup_root/daily" -type f -mtime +7 -delete
 find "$backup_root/weekly" -type f -mtime +28 -delete
 find "$backup_root/monthly" -type f -mtime +370 -delete
-find /opt/ddyidc/update-results/archive -type f -mtime +180 -delete 2>/dev/null || true
+find /var/lib/ddyidc/update-results/archive -type f -mtime +180 -delete 2>/dev/null || true
 
 if [[ -n "${OBJECT_STORAGE_URI:-}" ]]; then
   if ! command -v aws >/dev/null 2>&1; then
