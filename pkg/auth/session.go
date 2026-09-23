@@ -36,10 +36,11 @@ type SecurityConfig struct {
 }
 
 type SessionRecord struct {
-	UserID   int64  `json:"userId"`
-	Account  string `json:"account"`
-	Role     string `json:"role"`
-	IssuedAt int64  `json:"issuedAt"`
+	SessionID string `json:"sessionId"`
+	UserID    int64  `json:"userId"`
+	Account   string `json:"account"`
+	Role      string `json:"role"`
+	IssuedAt  int64  `json:"issuedAt"`
 }
 
 func DefaultSecurityConfig() SecurityConfig {
@@ -153,7 +154,7 @@ func (m *Manager) IssueSession(ctx context.Context, kind SessionKind, userID int
 	if err != nil || claims.IssuedAt == nil {
 		return "", errors.New("generated token has no issued time")
 	}
-	record := SessionRecord{UserID: userID, Account: account, Role: role, IssuedAt: claims.IssuedAt.Unix()}
+	record := SessionRecord{SessionID: claims.ID, UserID: userID, Account: account, Role: role, IssuedAt: claims.IssuedAt.Unix()}
 	encoded, err := json.Marshal(record)
 	if err != nil {
 		return "", err
@@ -168,7 +169,7 @@ func (m *Manager) IssueSession(ctx context.Context, kind SessionKind, userID int
 }
 
 func (m *Manager) validateSession(ctx context.Context, kind SessionKind, claims *Claims) error {
-	if cache.RDB == nil || claims == nil || claims.IssuedAt == nil {
+	if cache.RDB == nil || claims == nil || claims.IssuedAt == nil || claims.ID == "" {
 		return errors.New("invalid session")
 	}
 	if !roleMatchesKind(kind, claims.Role) {
@@ -179,7 +180,7 @@ func (m *Manager) validateSession(ctx context.Context, kind SessionKind, claims 
 		return errors.New("session not found")
 	}
 	var record SessionRecord
-	if json.Unmarshal(raw, &record) != nil || record.UserID != claims.UserID || record.Account != claims.Username || record.Role != claims.Role || record.IssuedAt != claims.IssuedAt.Unix() {
+	if json.Unmarshal(raw, &record) != nil || record.SessionID != claims.ID || record.UserID != claims.UserID || record.Account != claims.Username || record.Role != claims.Role || record.IssuedAt != claims.IssuedAt.Unix() {
 		return errors.New("session mismatch")
 	}
 	return nil

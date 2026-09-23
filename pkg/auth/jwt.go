@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 // Claims JWT 载荷
@@ -24,6 +25,7 @@ type Manager struct {
 	refreshSecret []byte
 	refreshExpire time.Duration
 	security      SecurityConfig
+	clock         func() time.Time
 }
 
 // NewManager 创建JWT管理器
@@ -39,13 +41,22 @@ func NewManager(accessSecret, refreshSecret string, accessExpire, refreshExpire 
 
 // GenerateAccessToken 生成访问令牌
 func (m *Manager) GenerateAccessToken(userID int64, username, role string) (string, error) {
+	id, err := uuid.NewRandom()
+	if err != nil {
+		return "", errors.New("cannot generate session identity")
+	}
+	now := time.Now()
+	if m.clock != nil {
+		now = m.clock()
+	}
 	claims := Claims{
 		UserID:   userID,
 		Username: username,
 		Role:     role,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(m.accessExpire)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ID:        id.String(),
+			ExpiresAt: jwt.NewNumericDate(now.Add(m.accessExpire)),
+			IssuedAt:  jwt.NewNumericDate(now),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)

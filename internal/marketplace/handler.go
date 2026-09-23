@@ -2,9 +2,9 @@ package marketplace
 
 import (
 	"context"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -656,13 +656,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
 }
 
-func requestIP(r *http.Request) string {
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	if ip == "" {
-		return r.RemoteAddr
-	}
-	return ip
-}
+func requestIP(r *http.Request) string { return clientip.FromRequest(r) }
 func (h *Handler) confirmReceipt(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.claims(w, r, "customer")
 	if !ok {

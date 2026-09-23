@@ -68,7 +68,7 @@ func TestCronDefaults(t *testing.T) {
 		}
 	}
 }
-func TestElectionOwnershipAndFailOpenRecovery(t *testing.T) {
+func TestElectionOwnershipAndFailClosedRecovery(t *testing.T) {
 	client, stop, start := redisForTest(t)
 	ctx := context.Background()
 	a, b := NewLeader(client), NewLeader(client)
@@ -81,8 +81,8 @@ func TestElectionOwnershipAndFailOpenRecovery(t *testing.T) {
 	}
 	stop()
 	b.renew(ctx)
-	if !b.IsLeader() || !b.degraded.Load() {
-		t.Fatal("Redis error must fail open")
+	if b.IsLeader() || !b.degraded.Load() {
+		t.Fatal("Redis error must fail closed")
 	}
 	start()
 	a.renew(ctx)
@@ -177,14 +177,33 @@ func TestUnboundAndCanceledContextsCannotStartTasks(t *testing.T) {
 		t.Fatal("unbound task ran")
 	}
 }
-func TestTaskRedisFailureAllowsExecution(t *testing.T) {
+func TestTaskRedisFailureRejectsExecution(t *testing.T) {
 	client, stop, _ := redisForTest(t)
 	l := NewLeader(client)
 	l.Elect(context.Background())
 	ctx := context.WithValue(context.Background(), contextKey{}, l)
 	stop()
 	called := false
-	if err := WithLock(ctx, "outage", time.Second, func(context.Context) error { called = true; return nil }); err != nil || !called {
-		t.Fatal("task must fail open during Redis outage")
+	if err := WithLock(ctx, "outage", time.Second, func(context.Context) error { called = true; return nil }); !errors.Is(err, ErrUnavailable) || called {
+		t.Fatal("task must fail closed during Redis outage")
+	}
+}
+
+func TestRedisOutageCancelsRunningTask(t *testing.T) {
+	client, stop, _ := redisForTest(t)
+	l := NewLeader(client)
+	l.Elect(context.Background())
+	ctx := context.WithValue(context.Background(), contextKey{}, l)
+	err := WithLock(ctx, "outage-running", time.Second, func(task context.Context) error {
+		stop()
+		select {
+		case <-task.Done():
+			return nil
+		case <-time.After(2 * time.Second):
+			return errors.New("Redis outage did not cancel task")
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

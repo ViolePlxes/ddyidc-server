@@ -3,11 +3,11 @@ package backup
 import (
 	"context"
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -60,7 +60,7 @@ func (h *handler) actor(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	}
 	return claims.UserID, true
 }
-func ip(r *http.Request) string { host, _, _ := net.SplitHostPort(r.RemoteAddr); return host }
+func ip(r *http.Request) string { return clientip.FromRequest(r) }
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	decoder := json.NewDecoder(r.Body)

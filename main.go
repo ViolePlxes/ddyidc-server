@@ -45,6 +45,7 @@ import (
 	"ddyidc/internal/videobind"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/cache"
+	"ddyidc/pkg/clientip"
 	cryptoutil "ddyidc/pkg/crypto"
 	"ddyidc/pkg/db"
 	"encoding/json"
@@ -170,6 +171,7 @@ func main() {
 		rest.RestConf
 		Runtime       runtimepaths.Config `json:",optional"`
 		Cron          *distsync.Config    `json:",optional"`
+		Network       clientip.Config     `json:",optional"`
 		MySQL         db.Config
 		Redis         cache.Config
 		Notify        notify.Config
@@ -185,6 +187,10 @@ func main() {
 		}
 	}
 	conf.MustLoad(*configFile, &c)
+	clientIPs, err := clientip.New(c.Network)
+	if err != nil {
+		panic(err)
+	}
 
 	paths, err := runtimepaths.Resolve(c.Runtime)
 	if err != nil {
@@ -245,15 +251,16 @@ func main() {
 	// 创建服务
 	c.RestConf.Middlewares.Log = false // Certification requests must never enter the body-copying logger.
 	server := rest.MustNewServer(c.RestConf)
+	server.Use(clientIPs.Middleware)
 	server.Use(certification.RequestLogger)
 	defer server.Stop()
 
 	// 全局中间件
 	server.Use(middleware.CORS())
-	server.Use(middleware.CookieSession(authManager))
 	server.Use(middleware.RequestID())
-	server.Use(middleware.RedactSensitiveHeaders())
 	server.Use(middleware.Logger())
+	server.Use(middleware.RedactSensitiveHeaders())
+	server.Use(middleware.CookieSession(authManager))
 
 	// 注册路由（各域 handler 在此注册）
 	var cronStarts []func(context.Context)

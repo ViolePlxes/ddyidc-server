@@ -2,10 +2,10 @@ package instance
 
 import (
 	svc "ddyidc/internal/instance/service"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"github.com/zeromicro/go-zero/rest"
-	"net"
 	"net/http"
 	"strconv"
 )
@@ -120,7 +120,7 @@ func (h *handler) payRenewal(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "订单 ID 无效")
 		return
 	}
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	ip := clientip.FromRequest(r)
 	if e = h.service.PayRenewalBalance(r.Context(), customer, id, oid, ip); e != nil {
 		writeServiceError(w, e)
 		return

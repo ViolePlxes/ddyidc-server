@@ -61,7 +61,7 @@ func Init(c Config) error {
 		return fmt.Errorf("check primary schema %q: %w", c.Database, lookupErr)
 	}
 	g, err := gorm.Open(mysql.Open(dsn(c, c.Database)), &gorm.Config{
-		Logger:         logger.Default.LogMode(logger.Info),
+		Logger:         safeLogger{level: logger.Warn},
 		NamingStrategy: schema.NamingStrategy{SingularTable: false},
 	})
 	if err != nil {

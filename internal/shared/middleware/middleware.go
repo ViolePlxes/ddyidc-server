@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
 	"ddyidc/pkg/auth"
 	"encoding/json"
+	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -121,10 +124,8 @@ func isSensitiveHeader(name string) bool {
 func RequestID() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			requestID := r.Header.Get("X-Request-ID")
-			if requestID == "" {
-				requestID = uuid.New().String()
-			}
+			// Server-generated IDs cannot contain attacker-controlled secrets or newlines.
+			requestID := uuid.New().String()
 			ctx := context.WithValue(r.Context(), "request_id", requestID)
 			w.Header().Set("X-Request-ID", requestID)
 			next(w, r.WithContext(ctx))
@@ -137,9 +138,50 @@ func Logger() func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-			next(w, r)
-			// TODO: 记录请求日志（方法、路径、状态码、耗时）
-			_ = start
+			writer := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			defer func() {
+				entry, _ := json.Marshal(map[string]any{"event": "http_request", "method": r.Method, "path": r.URL.Path, "status": writer.status, "duration_ms": time.Since(start).Milliseconds(), "request_id": w.Header().Get("X-Request-ID")})
+				log.Print(string(entry))
+			}()
+			next(writer, r)
 		}
 	}
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *statusWriter) WriteHeader(code int) {
+	if w.wrote {
+		return
+	}
+	w.status = code
+	if code >= 200 || code == http.StatusSwitchingProtocols {
+		w.wrote = true
+	}
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+func (w *statusWriter) Flush() {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
+}
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	c, r, e := http.NewResponseController(w.ResponseWriter).Hijack()
+	if e == nil {
+		w.status = http.StatusSwitchingProtocols
+		w.wrote = true
+	}
+	return c, r, e
 }

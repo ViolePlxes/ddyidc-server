@@ -4,6 +4,12 @@ Port: 8080
 Mode: pro
 Timeout: 120000
 
+# Only the local reverse proxy can supply the client forwarding chain.
+Network:
+  TrustedProxies:
+    - 127.0.0.1/32
+    - ::1/128
+
 MySQL:
   Host: 127.0.0.1
   Port: 3306

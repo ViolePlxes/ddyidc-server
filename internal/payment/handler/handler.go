@@ -1,9 +1,9 @@
 package payment
 
 import (
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -146,10 +146,7 @@ func (h *handler) refund(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, 40000, "支付单号格式错误")
 		return
 	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
+	ip := clientip.FromRequest(r)
 	result, err := h.service.Refund(r.Context(), id, claims.UserID, input.Amount, input.Reason, ip)
 	writeResult(w, result, err)
 }

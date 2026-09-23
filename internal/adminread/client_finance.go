@@ -2,11 +2,11 @@ package adminread
 
 import (
 	"crypto/sha256"
+	"ddyidc/pkg/clientip"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -33,13 +33,7 @@ type balanceInput struct {
 	ConfirmLarge      bool     `json:"confirm_large"`
 }
 
-func requestIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil {
-		return host
-	}
-	return r.RemoteAddr
-}
+func requestIP(r *http.Request) string { return clientip.FromRequest(r) }
 func (h *handler) balanceActor(r *http.Request) (int64, string, error) {
 	claims, err := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	if err != nil || claims.Role != "admin" {

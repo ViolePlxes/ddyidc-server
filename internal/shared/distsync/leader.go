@@ -47,7 +47,7 @@ func (l *Leader) set(ok, degraded bool) {
 	old := l.leader.Swap(ok)
 	wasDegraded := l.degraded.Swap(degraded)
 	if degraded && !wasDegraded {
-		log.Print("CRON Redis不可用，降级放行；多实例可能重复执行")
+		log.Print("CRON Redis不可用，暂停任务领取，等待互斥恢复")
 	}
 	if !degraded && wasDegraded {
 		log.Print("CRON Redis已恢复，重新启用分布式互斥")
@@ -69,8 +69,8 @@ func (l *Leader) Elect(ctx context.Context) bool {
 	start := time.Now()
 	ok, err := l.client.SetNX(call, LeaderKey, l.token, time.Duration(l.ttl.Load())).Result()
 	if err != nil && ctx.Err() == nil {
-		l.set(true, true)
-		return true
+		l.set(false, true)
+		return false
 	}
 	if ok {
 		l.until.Store(start.Add(time.Duration(l.ttl.Load())).UnixNano())
@@ -79,7 +79,7 @@ func (l *Leader) Elect(ctx context.Context) bool {
 	return ok
 }
 func (l *Leader) IsLeader() bool {
-	return l.leader.Load() && (l.degraded.Load() || time.Now().UnixNano() < l.until.Load())
+	return l.leader.Load() && !l.degraded.Load() && time.Now().UnixNano() < l.until.Load()
 }
 func (l *Leader) renew(ctx context.Context) {
 	call, cancel := context.WithTimeout(ctx, time.Second)
@@ -87,7 +87,7 @@ func (l *Leader) renew(ctx context.Context) {
 	start := time.Now()
 	n, err := l.client.Eval(call, renewScript, []string{LeaderKey}, l.token, time.Duration(l.ttl.Load()).Milliseconds()).Int64()
 	if err != nil && ctx.Err() == nil {
-		l.set(true, true)
+		l.set(false, true)
 		return
 	}
 	if n == 1 {

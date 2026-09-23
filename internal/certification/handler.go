@@ -2,6 +2,7 @@ package certification
 
 import (
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,7 +10,6 @@ import (
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"gorm.io/gorm"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -49,13 +49,7 @@ func reply(w http.ResponseWriter, code int, data any, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": map[bool]int{true: 0, false: 1}[code < 400], "data": data, "message": message})
 }
 func fail(w http.ResponseWriter, code int, message string) { reply(w, code, nil, message) }
-func ip(r *http.Request) string {
-	v, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return v
-}
+func ip(r *http.Request) string                            { return clientip.FromRequest(r) }
 func originOK(r *http.Request) bool {
 	origin := r.Header.Get("Origin")
 	if origin == "" {

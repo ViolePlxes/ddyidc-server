@@ -9,6 +9,7 @@ import (
 )
 
 var ErrBusy = errors.New("distributed task busy")
+var ErrUnavailable = errors.New("distributed task coordination unavailable")
 
 func WithLock(ctx context.Context, key string, ttl time.Duration, fn func(context.Context) error) error {
 	if !IsLeader(ctx) {
@@ -32,8 +33,8 @@ func WithLock(ctx context.Context, key string, ttl time.Duration, fn func(contex
 		return ctx.Err()
 	}
 	if err != nil {
-		log.Printf("CRON task=%s Redis不可用，降级放行", key)
-		return fn(ctx)
+		log.Printf("CRON task=%s Redis不可用，拒绝启动", key)
+		return ErrUnavailable
 	}
 	if !acquired {
 		return ErrBusy
@@ -64,7 +65,7 @@ func WithLock(ctx context.Context, key string, ttl time.Duration, fn func(contex
 				call, cancel := context.WithTimeout(taskCtx, time.Second)
 				n, e := l.client.Eval(call, renewScript, []string{key}, owner, ttl.Milliseconds()).Int64()
 				cancel()
-				if e == nil && n == 0 {
+				if e != nil || n != 1 {
 					stop()
 					return
 				}

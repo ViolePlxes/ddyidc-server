@@ -4,10 +4,10 @@ package customer
 import (
 	"context"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -309,13 +309,7 @@ func findSalesUser(account string) (*salesUser, error) {
 	return &sales, nil
 }
 
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err == nil && host != "" {
-		return host
-	}
-	return r.RemoteAddr
-}
+func clientIP(r *http.Request) string { return clientip.FromRequest(r) }
 
 func (h *authHandler) findAccount(r *http.Request, account string) (*domain.Customer, error) {
 	if customer, err := h.customers.FindByUsername(r.Context(), account); err == nil {

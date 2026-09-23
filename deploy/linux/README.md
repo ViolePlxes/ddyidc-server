@@ -49,7 +49,7 @@ files are not relocated; migrate them with native MySQL/Redis backup and restore
 
 ## Build the delivery package
 
-Run on Linux, WSL2, or a Linux CI runner with Go 1.22+ and Node 20:
+Run on Linux, WSL2, or a Linux CI runner with Go 1.27.1 and Node 20:
 
 ```bash
 cd /path/to/ddyidc-server

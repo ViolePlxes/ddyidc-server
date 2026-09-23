@@ -3,13 +3,13 @@ package videobind
 import (
 	"context"
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -56,7 +56,7 @@ func RegisterHandlers(server *rest.Server, s *Service, jwt *auth.Manager) {
 				}
 				user = claims.UserID
 			}
-			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+			ip := clientip.FromRequest(r)
 			params := pathvar.Vars(r)
 			platform := params["platform"]
 			id, _ := strconv.ParseInt(params["id"], 10, 64)

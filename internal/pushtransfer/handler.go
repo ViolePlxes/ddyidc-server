@@ -2,11 +2,11 @@ package pushtransfer
 
 import (
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
-	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -42,10 +42,7 @@ func RegisterHandlers(server *rest.Server, s *Service, jwt *auth.Manager) {
 				json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": "请使用对应账号登录"})
 				return
 			}
-			ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-			if ip == "" {
-				ip = r.RemoteAddr
-			}
+			ip := clientip.FromRequest(r)
 			decode := func(v any) bool {
 				d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 				d.DisallowUnknownFields()
