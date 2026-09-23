@@ -20,3 +20,5 @@ done
 mysqladmin --no-defaults --socket="$root/mysql.sock" -uroot ping >/dev/null
 export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
 go test -race -v ./internal/order/service -run '^TestCancelOrderMySQL$' -count=1
+go test -race -v ./pkg/auth -run '^TestAccountVersionMySQL$' -count=1
+go test -race -v ./internal/ticket/repository -run '^TestOwnedUploadsMySQL$' -count=1

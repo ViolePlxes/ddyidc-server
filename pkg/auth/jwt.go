@@ -8,18 +8,25 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // Claims JWT 载荷
 type Claims struct {
-	UserID   int64  `json:"user_id"`
-	Username string `json:"username"`
-	Role     string `json:"role"`
+	AuthVersion    uint64 `json:"auth_version,omitempty"`
+	ActorID        int64  `json:"actor_id,omitempty"`
+	ActorVersion   uint64 `json:"actor_version,omitempty"`
+	ActorSessionID string `json:"actor_session_id,omitempty"`
+	UserID         int64  `json:"user_id"`
+	Username       string `json:"username"`
+	Role           string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 // Manager JWT 管理器
 type Manager struct {
+	accounts      *gorm.DB
+	accountState  func(context.Context, SessionKind, int64) (uint64, error)
 	accessSecret  []byte
 	accessExpire  time.Duration
 	refreshSecret []byte
@@ -41,6 +48,10 @@ func NewManager(accessSecret, refreshSecret string, accessExpire, refreshExpire 
 
 // GenerateAccessToken 生成访问令牌
 func (m *Manager) GenerateAccessToken(userID int64, username, role string) (string, error) {
+	return m.generateVersionedToken(userID, username, role, 0, nil)
+}
+
+func (m *Manager) generateVersionedToken(userID int64, username, role string, version uint64, actor *Claims) (string, error) {
 	id, err := uuid.NewRandom()
 	if err != nil {
 		return "", errors.New("cannot generate session identity")
@@ -50,14 +61,21 @@ func (m *Manager) GenerateAccessToken(userID int64, username, role string) (stri
 		now = m.clock()
 	}
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Role:     role,
+		AuthVersion: version,
+		UserID:      userID,
+		Username:    username,
+		Role:        role,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        id.String(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(m.accessExpire)),
 			IssuedAt:  jwt.NewNumericDate(now),
 		},
+	}
+	if actor != nil {
+		claims.ActorID, claims.ActorVersion, claims.ActorSessionID = actor.UserID, actor.AuthVersion, actor.ID
+		if actor.ExpiresAt != nil && actor.ExpiresAt.Before(claims.ExpiresAt.Time) {
+			claims.ExpiresAt = actor.ExpiresAt
+		}
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(m.accessSecret)

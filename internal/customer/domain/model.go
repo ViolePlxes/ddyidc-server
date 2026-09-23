@@ -7,6 +7,7 @@ import (
 )
 
 type Customer struct {
+	AuthVersion  uint64         `gorm:"column:auth_version;default:1"`
 	ID           int64          `gorm:"column:id;primaryKey"`
 	TenantID     int64          `gorm:"column:tenant_id"`
 	Username     string         `gorm:"column:username"`

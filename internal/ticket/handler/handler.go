@@ -1,6 +1,8 @@
 package ticket
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +16,7 @@ import (
 	"strings"
 
 	dom "ddyidc/internal/ticket/domain"
+	repo "ddyidc/internal/ticket/repository"
 	svc "ddyidc/internal/ticket/service"
 	types "ddyidc/internal/ticket/types"
 	"ddyidc/pkg/auth"
@@ -719,18 +722,20 @@ func (h *handler) updateNote(w http.ResponseWriter, r *http.Request) {
 var allowedExtensions = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true, ".pdf": true, ".txt": true, ".log": true, ".zip": true}
 
 func (h *handler) userUpload(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.user(w, r); !ok {
+	id, ok := h.user(w, r)
+	if !ok {
 		return
 	}
-	h.upload(w, r, "/api/v1/tickets")
+	h.upload(w, r, "/api/v1/tickets", dom.ActorClient, id)
 }
 func (h *handler) adminUpload(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.admin(w, r); !ok {
+	id, ok := h.admin(w, r)
+	if !ok {
 		return
 	}
-	h.upload(w, r, "/admin/v1/tickets")
+	h.upload(w, r, "/admin/v1/tickets", dom.ActorAdmin, id)
 }
-func (h *handler) upload(w http.ResponseWriter, r *http.Request, prefix string) {
+func (h *handler) upload(w http.ResponseWriter, r *http.Request, prefix, ownerType string, ownerID int64) {
 	r.Body = http.MaxBytesReader(w, r.Body, 52<<20)
 	if err := r.ParseMultipartForm(52 << 20); err != nil {
 		writeError(w, http.StatusRequestEntityTooLarge, "附件总大小不能超过 50MB")
@@ -747,8 +752,11 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request, prefix string) 
 	}
 	items := make([]dom.Attachment, 0, len(headers))
 	for _, header := range headers {
-		item, err := h.saveUpload(header, prefix)
+		item, err := h.saveUpload(r, header, prefix, ownerType, ownerID)
 		if err != nil {
+			for _, saved := range items {
+				h.service.DiscardUpload(r.Context(), saved.ID, h.storageRoot)
+			}
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
 			return
 		}
@@ -756,10 +764,10 @@ func (h *handler) upload(w http.ResponseWriter, r *http.Request, prefix string) 
 	}
 	writeJSON(w, map[string]any{"list": items})
 }
-func (h *handler) saveUpload(header *multipart.FileHeader, prefix string) (dom.Attachment, error) {
+func (h *handler) saveUpload(r *http.Request, header *multipart.FileHeader, prefix, ownerType string, ownerID int64) (dom.Attachment, error) {
 	name := filepath.Base(strings.TrimSpace(header.Filename))
 	ext := strings.ToLower(filepath.Ext(name))
-	if name == "" || !allowedExtensions[ext] {
+	if name == "" || len([]rune(name)) > 255 || !allowedExtensions[ext] {
 		return dom.Attachment{}, errors.New("仅支持图片、PDF、文本、日志和 ZIP 附件")
 	}
 	if header.Size <= 0 || header.Size > 10<<20 {
@@ -770,20 +778,52 @@ func (h *handler) saveUpload(header *multipart.FileHeader, prefix string) (dom.A
 		return dom.Attachment{}, err
 	}
 	defer source.Close()
+	head := make([]byte, 512)
+	n, readErr := source.Read(head)
+	if readErr != nil && readErr != io.EOF {
+		return dom.Attachment{}, errors.New("附件读取失败")
+	}
+	contentType := http.DetectContentType(head[:n])
+	if !validUploadMIME(ext, contentType) {
+		return dom.Attachment{}, errors.New("附件内容与文件类型不匹配")
+	}
+	if _, err = source.Seek(0, io.SeekStart); err != nil {
+		return dom.Attachment{}, err
+	}
 	id := uuid.NewString()
+	if err = h.service.ReserveUpload(r.Context(), &repo.Upload{ID: id, OwnerType: ownerType, OwnerID: ownerID, Name: name, Size: header.Size, ContentType: contentType}); err != nil {
+		return dom.Attachment{}, err
+	}
+	complete := false
+	defer func() {
+		if !complete {
+			h.service.DiscardUpload(r.Context(), id, h.storageRoot)
+		}
+	}()
 	targetPath := filepath.Join(h.storageRoot, id)
 	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0640)
 	if err != nil {
 		return dom.Attachment{}, err
 	}
-	written, copyErr := io.Copy(target, io.LimitReader(source, (10<<20)+1))
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(target, hash), io.LimitReader(source, (10<<20)+1))
 	closeErr := target.Close()
 	if copyErr != nil || closeErr != nil || written > 10<<20 {
 		_ = os.Remove(targetPath)
 		return dom.Attachment{}, errors.New("附件保存失败或超过 10MB")
 	}
-	contentType := header.Header.Get("Content-Type")
+	if err = h.service.CompleteUpload(r.Context(), id, hex.EncodeToString(hash.Sum(nil)), written); err != nil {
+		return dom.Attachment{}, err
+	}
+	complete = true
 	return dom.Attachment{ID: id, Name: name, Size: written, ContentType: contentType, URL: prefix + "/attachments/" + id}, nil
+}
+func validUploadMIME(ext, contentType string) bool {
+	if ext == ".txt" || ext == ".log" {
+		return strings.HasPrefix(contentType, "text/plain")
+	}
+	expected := map[string]string{".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".pdf": "application/pdf", ".zip": "application/zip"}
+	return expected[ext] != "" && expected[ext] == contentType
 }
 func (h *handler) userDownload(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.user(w, r)
@@ -818,6 +858,8 @@ func (h *handler) download(w http.ResponseWriter, r *http.Request, actorType str
 		return
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(item.Name)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
 	if item.ContentType != "" {
 		w.Header().Set("Content-Type", item.ContentType)
 	}

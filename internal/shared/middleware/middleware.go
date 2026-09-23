@@ -49,11 +49,13 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 				return
 			}
 			r.Header.Del("Authorization")
+			var sessionClaims *auth.Claims
 			kind, protected := sessionKindForRequest(r.URL.Path)
 			if kind != "" {
 				cookie, err := r.Cookie(manager.CookieName(kind))
 				if err == nil && cookie.Value != "" {
-					if _, parseErr := manager.ParseAccessTokenFor(r.Context(), kind, cookie.Value); parseErr == nil {
+					if claims, parseErr := manager.ParseAccessTokenFor(r.Context(), kind, cookie.Value); parseErr == nil {
+						sessionClaims = claims
 						r.Header.Set("Authorization", "Bearer "+cookie.Value)
 					} else {
 						manager.ClearSessionCookie(w, kind)
@@ -64,6 +66,33 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 				w.Header().Set("Content-Type", "application/json; charset=utf-8")
 				w.WriteHeader(http.StatusUnauthorized)
 				_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": "登录已失效，请重新登录"})
+				return
+			}
+			if sessionClaims != nil && !manager.ValidateCSRF(r, kind, sessionClaims) {
+				w.Header().Set("Content-Type", "application/json; charset=utf-8")
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": "请求安全校验失败，请刷新页面后重试"})
+				return
+			}
+			if sessionClaims != nil && sessionClaims.ActorID != 0 {
+				finish, err := manager.BeginImpersonationAudit(r.Context(), sessionClaims, w.Header().Get("X-Request-ID"), r.Method, r.URL.Path)
+				if err != nil {
+					http.Error(w, "代登录审计暂时不可用，请稍后重试", http.StatusServiceUnavailable)
+					return
+				}
+				writer := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+				completed := false
+				defer func() {
+					status := writer.status
+					if !completed {
+						status = 0
+					}
+					if err := finish(status); err != nil {
+						log.Printf("impersonation_audit_completion_failed actor=%d subject=%d request_id=%s", sessionClaims.ActorID, sessionClaims.UserID, w.Header().Get("X-Request-ID"))
+					}
+				}()
+				next(writer, r)
+				completed = true
 				return
 			}
 			next(w, r)

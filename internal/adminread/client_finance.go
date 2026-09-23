@@ -304,7 +304,12 @@ func (h *handler) clientLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "用户不存在或已停用")
 		return
 	}
-	token, e := h.auth.IssueSession(r.Context(), auth.SessionUser, id, customer.Username, "customer")
+	actorClaims, e := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if e != nil {
+		writeError(w, 403, "管理员会话无效")
+		return
+	}
+	token, e := h.auth.IssueImpersonationSession(r.Context(), id, customer.Username, actorClaims)
 	if e != nil {
 		writeError(w, 500, "创建用户会话失败")
 		return
@@ -325,7 +330,7 @@ func (h *handler) clientLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.auth.SetSessionCookie(w, auth.SessionUser, token)
-	writeJSON(w, map[string]any{"jwt": token, "redirect": "/console"})
+	writeJSON(w, map[string]any{"redirect": "/console"})
 }
 func auditCustomer(tx *gorm.DB, id, actor int64, name, action, fields, ip string) error {
 	return tx.Table("customer.admin_customer_audits").Create(map[string]any{"id": snowflake.GenID(), "customer_id": id, "admin_id": actor, "admin_name": name, "action": action, "fields": fields, "operator_ip": ip, "created_at": time.Now()}).Error

@@ -439,6 +439,9 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("ticket schema migration failed: " + err.Error())
 	}
 	tickethandler.RegisterHandlers(server, ticketSvc, jwt, paths.Join("storage/ticket-attachments"))
+	*cronStarts = append(*cronStarts, func(ctx context.Context) {
+		ticketSvc.StartUploadMaintenance(ctx, paths.Join("storage/ticket-attachments"))
+	})
 
 	producthandler.RegisterPublicHandlers(server, repositories.Product, upstreamservice.Default)
 	// System route registration remains separate until its transport contract

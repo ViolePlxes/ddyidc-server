@@ -50,6 +50,7 @@ type authHandler struct {
 // credentials live in the system schema while customer accounts remain in the
 // customer schema.
 type administrator struct {
+	AuthVersion  uint64  `gorm:"column:auth_version"`
 	ID           int64   `gorm:"column:id"`
 	Username     string  `gorm:"column:username"`
 	PasswordHash string  `gorm:"column:password_hash"`
@@ -60,6 +61,7 @@ type administrator struct {
 }
 
 type salesUser struct {
+	AuthVersion  uint64  `gorm:"column:auth_version"`
 	ID           int64   `gorm:"column:id"`
 	StaffNo      string  `gorm:"column:staff_no"`
 	Username     string  `gorm:"column:username"`
@@ -163,7 +165,7 @@ func (h *authHandler) adminLogin(w http.ResponseWriter, r *http.Request) {
 	if admin.Phone != nil {
 		user["mobile"] = *admin.Phone
 	}
-	h.writeSessionLogin(w, r, auth.SessionAdmin, admin.ID, admin.Username, "admin", user, false)
+	h.writeSessionLogin(w, r, auth.SessionAdmin, admin.ID, admin.Username, "admin", user, false, admin.AuthVersion)
 }
 
 func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
@@ -192,7 +194,7 @@ func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
 	if sales.Phone != nil {
 		user["mobile"] = *sales.Phone
 	}
-	h.writeSessionLogin(w, r, auth.SessionSales, sales.ID, sales.Username, "sales", user, false)
+	h.writeSessionLogin(w, r, auth.SessionSales, sales.ID, sales.Username, "sales", user, false, sales.AuthVersion)
 }
 
 func decodeLoginCredentials(w http.ResponseWriter, r *http.Request) (string, string, bool) {
@@ -252,11 +254,11 @@ func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request,
 	if customer.Phone != nil {
 		user["mobile"] = *customer.Phone
 	}
-	h.writeSessionLogin(w, r, auth.SessionUser, customer.ID, customer.Username, "customer", user, customer.Phone == nil || *customer.Phone == "")
+	h.writeSessionLogin(w, r, auth.SessionUser, customer.ID, customer.Username, "customer", user, customer.Phone == nil || *customer.Phone == "", customer.AuthVersion)
 }
 
-func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, kind auth.SessionKind, userID int64, account, role string, user map[string]any, needBindMobile bool) {
-	token, err := h.jwt.IssueSession(r.Context(), kind, userID, account, role)
+func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, kind auth.SessionKind, userID int64, account, role string, user map[string]any, needBindMobile bool, version uint64) {
+	token, err := h.jwt.IssueSession(r.Context(), kind, userID, account, role, version)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "创建登录会话失败")
 		return

@@ -64,6 +64,15 @@ func (r *Repository) CreateTicket(tx *gorm.DB, ticket *dom.Ticket, reply *dom.Re
 	if err := tx.Table(ticket.TableName()).Create(ticket).Error; err != nil {
 		return err
 	}
+	canonical, err := r.bindUploads(tx, ticket.AttachmentJSON, dom.ActorClient, ticket.ClientID, ticket.ID)
+	if err != nil {
+		return err
+	}
+	ticket.AttachmentJSON = canonical
+	reply.AttachmentJSON = canonical
+	if err := tx.Table(ticket.TableName()).Where("id=?", ticket.ID).Update("attachment", canonical).Error; err != nil {
+		return err
+	}
 	reply.TicketID = ticket.ID
 	if err := tx.Table(reply.TableName()).Create(reply).Error; err != nil {
 		return err
@@ -197,6 +206,11 @@ func (r *Repository) MarkRead(ctx context.Context, ticketID int64, actorType str
 
 func (r *Repository) CreateReply(ctx context.Context, reply *dom.Reply, ticketFields map[string]any, log *dom.Log, note *dom.Note) error {
 	return r.Transaction(ctx, func(tx *gorm.DB) error {
+		canonical, err := r.bindUploads(tx, reply.AttachmentJSON, reply.Type, reply.RelID, reply.TicketID)
+		if err != nil {
+			return err
+		}
+		reply.AttachmentJSON = canonical
 		if err := tx.Table(reply.TableName()).Create(reply).Error; err != nil {
 			return err
 		}

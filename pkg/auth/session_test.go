@@ -42,6 +42,7 @@ func TestSameSecondReissueCannotReviveRevokedSession(t *testing.T) {
 	isolatedSessionRedis(t)
 	ctx := context.Background()
 	m := NewManager("test-only-access", "test-only-refresh", 3600, 3600)
+	m.accountState = func(context.Context, SessionKind, int64) (uint64, error) { return 0, nil }
 	fixed := time.Now().Truncate(time.Second)
 	m.clock = func() time.Time { return fixed }
 	for _, pair := range []struct {
@@ -75,6 +76,7 @@ func TestConcurrentSessionIssueHasSingleWinner(t *testing.T) {
 	isolatedSessionRedis(t)
 	ctx := context.Background()
 	m := NewManager("test-only-access", "test-only-refresh", 3600, 3600)
+	m.accountState = func(context.Context, SessionKind, int64) (uint64, error) { return 0, nil }
 	fixed := time.Now().Truncate(time.Second)
 	m.clock = func() time.Time { return fixed }
 	tokens := make([]string, 32)
@@ -114,6 +116,7 @@ func TestLegacyRecordAndExpiredTokenAreRejected(t *testing.T) {
 	isolatedSessionRedis(t)
 	ctx := context.Background()
 	m := NewManager("test-only-access", "test-only-refresh", 3600, 3600)
+	m.accountState = func(context.Context, SessionKind, int64) (uint64, error) { return 0, nil }
 	token, err := m.IssueSession(ctx, SessionUser, 42, "test", "customer")
 	if err != nil {
 		t.Fatal(err)
