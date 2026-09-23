@@ -16,7 +16,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install isolated test prerequisites
-        run: sudo apt-get update && sudo apt-get install -y redis-server nginx openssl
+        run: sudo apt-get update && sudo apt-get install -y redis-server nginx openssl mysql-server
       - name: Build, race and protocol regression
         run: |
           go test -json ./... > go-test.jsonl
@@ -25,6 +25,7 @@ jobs:
           go build ./...
           go build -trimpath -o /tmp/ddyidc-server .
           python3 deploy/linux/tests/test_nginx_proxy.py
+          bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
       - name: Source and artifact vulnerability checks
         run: |
@@ -42,3 +43,4 @@ jobs:
             go-test.jsonl
             source-vulns.json
             binary-vulns.json
+            order-transactions.log

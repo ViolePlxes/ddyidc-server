@@ -10,6 +10,7 @@ import (
 
 	dom "ddyidc/internal/marketing/domain"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Repository 数据访问接口
@@ -518,16 +519,33 @@ func (r *GormRepository) ReleaseUserCouponTx(c context.Context, tx *gorm.DB, ord
 	if tx == nil {
 		return errors.New("释放优惠券需要事务")
 	}
-	res := tx.WithContext(c).Exec(
-		"UPDATE marketing.user_coupons SET status = 0, order_id = NULL, used_at = NULL WHERE order_id = ? AND status = 1", orderID)
-	if res.Error != nil {
-		return res.Error
+	// Capture and lock the association before clearing order_id. A repeated
+	// release sees no used rows and cannot decrement the aggregate twice.
+	var bound []dom.UserCoupon
+	if err := tx.WithContext(c).Table(dom.UserCoupon{}.TableName()).
+		Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("order_id = ? AND status = 1", orderID).Order("coupon_id, id").Find(&bound).Error; err != nil {
+		return err
 	}
-	if res.RowsAffected == 0 {
-		return nil
+	for _, coupon := range bound {
+		res := tx.WithContext(c).Exec(
+			"UPDATE marketing.user_coupons SET status = 0, order_id = NULL, used_at = NULL WHERE id = ? AND order_id = ? AND status = 1", coupon.ID, orderID)
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("优惠券状态已变更")
+		}
+		counter := tx.WithContext(c).Exec(
+			"UPDATE marketing.coupons SET used_count = used_count - 1 WHERE id = ? AND used_count > 0", coupon.CouponID)
+		if counter.Error != nil {
+			return counter.Error
+		}
+		if counter.RowsAffected != 1 {
+			return errors.New("优惠券核销统计不一致，请联系管理员")
+		}
 	}
-	return tx.WithContext(c).Exec(
-		"UPDATE marketing.coupons SET used_count = GREATEST(used_count - 1, 0) WHERE id = (SELECT coupon_id FROM marketing.user_coupons WHERE order_id = ? LIMIT 1)", orderID).Error
+	return nil
 }
 
 func (r *GormRepository) ExpireOverdueCoupons(c context.Context) error {

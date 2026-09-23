@@ -307,13 +307,8 @@ func (s *Service) ChargeCouponForOrder(ctx context.Context, tx *gorm.DB, userID,
 }
 
 // ReleaseCouponForOrder 订单取消时归还优惠券。
-func (s *Service) ReleaseCouponForOrder(ctx context.Context, orderID int64) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.repo.ReleaseUserCouponTx(ctx, tx, orderID); err != nil {
-			return err
-		}
-		return nil
-	})
+func (s *Service) ReleaseCouponForOrder(ctx context.Context, tx *gorm.DB, orderID int64) error {
+	return s.repo.ReleaseUserCouponTx(ctx, tx, orderID)
 }
 
 // computeDiscount 服务端金额计算：全部以分为单位。

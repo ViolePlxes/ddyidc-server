@@ -116,8 +116,8 @@ type orderEventHooks struct {
 func (h orderEventHooks) ChargeCoupon(ctx context.Context, tx *gorm.DB, userID, userCouponID, orderID, amountCents int64) (int64, error) {
 	return h.marketing.ChargeCoupon(ctx, tx, userID, userCouponID, orderID, amountCents)
 }
-func (h orderEventHooks) ReleaseCoupon(ctx context.Context, orderID int64) error {
-	return h.marketing.ReleaseCoupon(ctx, orderID)
+func (h orderEventHooks) ReleaseCoupon(ctx context.Context, tx *gorm.DB, orderID int64) error {
+	return h.marketing.ReleaseCoupon(ctx, tx, orderID)
 }
 func (h orderEventHooks) OnOrderPaid(ctx context.Context, orderID int64, orderNo string, customerID, payCents int64) error {
 	if err := h.marketing.OnOrderPaid(ctx, orderID, orderNo, customerID, payCents); err != nil {

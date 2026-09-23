@@ -30,6 +30,7 @@ type Repository interface {
 	Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 	CreateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.Order) error
 	UpdateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.Order) error
+	CancelPendingOrderTx(ctx context.Context, tx *gorm.DB, customerID, orderID int64) error
 	CreateItemTx(ctx context.Context, tx *gorm.DB, v *dom.OrderItem) error
 
 	// 商品定价（公共目录同源：product.products LEFT JOIN upstream_products）
@@ -178,6 +179,25 @@ func (r *GormRepository) CreateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.
 
 func (r *GormRepository) UpdateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.Order) error {
 	return tx.WithContext(ctx).Table(orderTable).Save(v).Error
+}
+
+// CancelPendingOrderTx arbitrates cancellation against payment using the same
+// order row. Never save a previously read order over a concurrent paid state.
+func (r *GormRepository) CancelPendingOrderTx(ctx context.Context, tx *gorm.DB, customerID, orderID int64) error {
+	if tx == nil {
+		return errors.New("取消订单需要事务")
+	}
+	now := time.Now()
+	result := tx.WithContext(ctx).Table(orderTable).
+		Where("id = ? AND customer_id = ? AND status = ?", orderID, customerID, dom.OrderStatusPending).
+		Updates(map[string]any{"status": dom.OrderStatusCancelled, "cancelled_at": now, "updated_at": now})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("订单不存在或已不处于待支付状态")
+	}
+	return nil
 }
 
 func (r *GormRepository) CreateItemTx(ctx context.Context, tx *gorm.DB, v *dom.OrderItem) error {

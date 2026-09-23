@@ -39,7 +39,7 @@ type MarketingHooks interface {
 	// OnRechargePaid fires distribution rewards after a recharge succeeds.
 	OnRechargePaid(ctx context.Context, rechargeID int64, rechargeNo string, customerID, amountCents int64) error
 	// ReleaseCoupon returns the coupon bound to a cancelled order.
-	ReleaseCoupon(ctx context.Context, orderID int64) error
+	ReleaseCoupon(ctx context.Context, tx *gorm.DB, orderID int64) error
 }
 
 // OrderRepository is the narrow repository contract the service depends on.
@@ -47,6 +47,7 @@ type OrderRepository interface {
 	Transaction(ctx context.Context, fn func(tx *gorm.DB) error) error
 	CreateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.Order) error
 	UpdateOrderTx(ctx context.Context, tx *gorm.DB, v *dom.Order) error
+	CancelPendingOrderTx(ctx context.Context, tx *gorm.DB, customerID, orderID int64) error
 	CreateItemTx(ctx context.Context, tx *gorm.DB, v *dom.OrderItem) error
 	FindByID(ctx context.Context, id int64) (*dom.Order, error)
 	List(ctx context.Context, page, limit int, filters map[string]any) ([]*dom.Order, int64, error)
@@ -637,24 +638,11 @@ func generateInstanceNo() string {
 
 // CancelOrder 取消未支付订单并归还优惠券。
 func (s *Service) CancelOrder(ctx context.Context, customerID, orderID int64) error {
-	orderRow, err := s.repo.FindByID(ctx, orderID)
-	if err != nil {
-		return fmt.Errorf("查询订单失败: %w", err)
-	}
-	if orderRow == nil || orderRow.CustomerID != customerID {
-		return errors.New("订单不存在")
-	}
-	if orderRow.Status != dom.OrderStatusPending {
-		return errors.New("仅待支付订单可以取消")
-	}
-	now := time.Now()
-	orderRow.Status = dom.OrderStatusCancelled
-	orderRow.CancelledAt = &now
 	return s.repo.Transaction(ctx, func(tx *gorm.DB) error {
-		if e := s.repo.UpdateOrderTx(ctx, tx, orderRow); e != nil {
+		if e := s.repo.CancelPendingOrderTx(ctx, tx, customerID, orderID); e != nil {
 			return e
 		}
-		return s.hooks.ReleaseCoupon(ctx, orderRow.ID)
+		return s.hooks.ReleaseCoupon(ctx, tx, orderID)
 	})
 }
 

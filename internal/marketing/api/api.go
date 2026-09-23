@@ -56,6 +56,6 @@ func (h *OrderHooks) OnRechargePaid(ctx context.Context, rechargeID int64, recha
 }
 
 // ReleaseCoupon 订单取消 → 归还优惠券。
-func (h *OrderHooks) ReleaseCoupon(ctx context.Context, orderID int64) error {
-	return h.service.ReleaseCouponForOrder(ctx, orderID)
+func (h *OrderHooks) ReleaseCoupon(ctx context.Context, tx *gorm.DB, orderID int64) error {
+	return h.service.ReleaseCouponForOrder(ctx, tx, orderID)
 }
