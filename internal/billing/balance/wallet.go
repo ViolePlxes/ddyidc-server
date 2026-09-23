@@ -103,7 +103,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		if err = tx.Table("system.marketplace_wallet").Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", r.CustomerID).Take(&wallet).Error; err != nil {
 			return err
 		}
-		err = tx.Table("system.marketplace_flows").Clauses(clause.Locking{Strength: "UPDATE"}).Where("flow_no=?", r.RequestID).Take(&old).Error
+		err = tx.Table("system.marketplace_flows").Clauses(clause.Locking{Strength: "SHARE"}).Where("flow_no=?", r.RequestID).Take(&old).Error
 		if err == nil {
 			if old.RequestHash != hash {
 				return ErrReplay

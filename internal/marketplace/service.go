@@ -4,6 +4,7 @@ import (
 	"context"
 	"ddyidc/internal/certification"
 	"ddyidc/internal/pushtransfer"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -45,6 +46,9 @@ func NewService(database *gorm.DB, redisClient *redis.Client, notifier Notifier)
 }
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
 		return fmt.Errorf("初始化交易市场表失败: %w", err)
 	}
@@ -698,7 +702,7 @@ func normalizePage(page, size int) (int, int) {
 	return page, size
 }
 func (s *Service) newNo(prefix string) string {
-	return prefix + s.nowFormat() + fmt.Sprintf("%06d", snowflake.GenID()%1000000)
+	return prefix + fmt.Sprintf("%d", snowflake.GenID())
 }
 func (s *Service) nowFormat() string { return s.now().Format("20060102150405") }
 

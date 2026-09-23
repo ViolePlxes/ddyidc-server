@@ -2,6 +2,7 @@ package specification
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -32,6 +33,9 @@ type View struct {
 }
 
 func EnsureSchema(db *gorm.DB) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	return db.Exec(`CREATE TABLE IF NOT EXISTS product.product_spec_snapshots (
  product_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,data JSON NOT NULL,captured_at DATETIME NOT NULL
  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`).Error

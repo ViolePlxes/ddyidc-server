@@ -40,7 +40,7 @@ func RandToken(n int) string {
 
 // GenerateOrderNo produces a readable business number: prefix + date + snowflake tail.
 func GenerateOrderNo(prefix string) string {
-	return prefix + time.Now().Format("20060102") + strconv.FormatInt(NewID()%1000000, 10)
+	return prefix + strconv.FormatInt(NewID(), 10)
 }
 
 // MaskMobile hides the middle four digits: 138****8000.

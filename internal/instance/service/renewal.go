@@ -5,6 +5,7 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/upstream/provider/contracts"
 	_ "embed"
@@ -53,6 +54,9 @@ type Renewal struct {
 
 func (Renewal) TableName() string { return "instance.instance_renewals" }
 func (s *Service) EnsureManagementSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if s.db == nil {
 		return ErrUnsupported
 	}

@@ -3,6 +3,7 @@ package pushtransfer
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -58,6 +59,9 @@ type Service struct {
 func New(db *gorm.DB, r redis.UniversalClient) *Service { return &Service{db: db, redis: r} }
 
 func EnsureSchema(db *gorm.DB) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := db.Exec(schema).Error; err != nil {
 		return err
 	}

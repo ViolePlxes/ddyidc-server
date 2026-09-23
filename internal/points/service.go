@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/shared/distsync"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -47,6 +48,9 @@ func NewService(database *gorm.DB, redisClient *redis.Client) *Service {
 	return &Service{db: database, redis: redisClient, now: time.Now, random: mathrand.New(mathrand.NewSource(time.Now().UnixNano()))}
 }
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	return s.db.WithContext(ctx).Exec(schemaSQL).Error
 }
 func (s *Service) Enabled(ctx context.Context) (bool, error) {
@@ -609,7 +613,7 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 			}
 		}
 		total := goods.PointsCost * int64(quantity)
-		out = Order{ID: snowflake.GenID(), OrderNo: "PM" + s.now().Format("20060102150405") + fmt.Sprintf("%06d", snowflake.GenID()%1000000), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
+		out = Order{ID: snowflake.GenID(), OrderNo: fmt.Sprintf("PM%d", snowflake.GenID()), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
 		cfg := jsonObject(goods.Config)
 		if goods.Type == "physical" {
 			out.Status = "pending"

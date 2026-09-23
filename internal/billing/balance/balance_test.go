@@ -3,7 +3,7 @@ package billing
 import "testing"
 
 func TestChangeValidation(t *testing.T) {
-	base := ChangeRequest{CustomerID: 1, Type: "manual_credit", Amount: "1.00", RefType: "customer", RefID: 1, Channel: "admin_manual", RequestID: "validation", AdminID: 1, AdminName: "admin", Notes: "reason"}
+	base := ChangeRequest{CustomerID: 1, Type: "manual_credit", Amount: "1.00", RefType: "customer", RefID: 1, Channel: "admin_manual", RequestID: "validation", AdminID: 1, AdminName: "admin", Notes: "reason", OperatorIP: "127.0.0.1"}
 	if _, err := validate(base); err != nil {
 		t.Fatal(err)
 	}
@@ -18,6 +18,8 @@ func TestChangeValidation(t *testing.T) {
 		{"missing channel", func(r *ChangeRequest) { r.Channel = "" }},
 		{"missing request", func(r *ChangeRequest) { r.RequestID = "" }},
 		{"missing actor", func(r *ChangeRequest) { r.AdminID = 0 }},
+		{"missing IP", func(r *ChangeRequest) { r.OperatorIP = "" }},
+		{"invalid IP", func(r *ChangeRequest) { r.OperatorIP = "forged" }},
 		{"missing reason", func(r *ChangeRequest) { r.Notes = " " }},
 		{"negative credit", func(r *ChangeRequest) { r.Amount = "-1.00" }},
 		{"positive debit", func(r *ChangeRequest) { r.Type = "manual_debit" }},

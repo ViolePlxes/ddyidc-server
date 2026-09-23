@@ -6,6 +6,7 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
 	"ddyidc/internal/shared/distsync"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
@@ -52,6 +53,9 @@ func NewService(database *gorm.DB, orders OrderService, notifier Notifier) *Serv
 }
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
 		return fmt.Errorf("初始化拼团表失败: %w", err)
 	}

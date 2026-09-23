@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/upstream/model"
 	"ddyidc/internal/upstream/provider/contracts"
 	"fmt"
@@ -18,6 +19,9 @@ type CatalogPage struct {
 }
 
 func (s *Store) EnsureSyncSchema() error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if s.isMemory() {
 		return nil
 	}

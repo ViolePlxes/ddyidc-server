@@ -2,6 +2,7 @@ package certification
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	crypt "ddyidc/pkg/crypto"
 	"errors"
@@ -11,6 +12,9 @@ import (
 )
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := os.MkdirAll(s.root, 0700); err != nil {
 		return err
 	}

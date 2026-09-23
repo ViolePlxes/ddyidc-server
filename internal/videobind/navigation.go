@@ -1,6 +1,7 @@
 package videobind
 
 import (
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	"fmt"
 	"gorm.io/gorm"
@@ -10,6 +11,9 @@ import (
 
 // One-time append only: never replace an administrator's configured navigation.
 func SeedNavigation(db *gorm.DB) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Exec("INSERT IGNORE INTO system.system_configs (id,`key`,value,description) VALUES (?,'videobind.navigation_seeded','true','021 导航迁移标记')", snowflake.GenID())
 		if result.Error != nil {

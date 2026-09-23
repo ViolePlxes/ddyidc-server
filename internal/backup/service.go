@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"ddyidc/internal/shared/runtimepaths"
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	"encoding/json"
 	"errors"
@@ -71,12 +72,18 @@ func New(db *gorm.DB, key []byte, root string) *Service {
 	return &Service{db: db, key: key, Root: root}
 }
 func (s *Service) EnsureSchema() error {
-	if e := s.db.AutoMigrate(&Job{}, &Control{}, &Audit{}); e != nil {
-		return e
+	if !schemamode.MigrationsEnabled() {
+		return nil
 	}
+	// Tables are owned by versioned SQL migrations.
 	if e := s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&Control{ID: 1}).Error; e != nil {
 		return e
 	}
+	return nil
+}
+
+// PreparePaths is runtime filesystem setup, independent of database migrations.
+func (s *Service) PreparePaths() error {
 	for _, p := range []string{"backups", "backups/daily", "backups/weekly", "backups/monthly", "backups/jobs", "backups/downloads", "backups/restore", "backups/results"} {
 		path := filepath.Join(s.Root, p)
 		if e := (runtimepaths.Paths{Root: s.Root}).Within(path); e != nil {
@@ -89,6 +96,9 @@ func (s *Service) EnsureSchema() error {
 	return nil
 }
 func (s *Service) SeedNavigation() error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		result := tx.Exec("INSERT IGNORE INTO system.system_configs(id,`key`,value,description) VALUES(?,'backup.navigation_seeded','true','备份导航迁移')", snowflake.GenID())
 		if result.Error != nil {

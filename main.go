@@ -34,7 +34,10 @@ import (
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/logger"
 	"ddyidc/internal/shared/middleware"
+	"ddyidc/internal/shared/migrations"
 	"ddyidc/internal/shared/runtimepaths"
+	schemamode "ddyidc/internal/shared/schema"
+	"ddyidc/internal/shared/snowflake"
 	systemrepo "ddyidc/internal/system/repository"
 	tickethandler "ddyidc/internal/ticket/handler"
 	ticketrepo "ddyidc/internal/ticket/repository"
@@ -63,7 +66,8 @@ import (
 var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
-var migrate = flag.Bool("migrate", false, "执行 sql/01_create_tables.sql（开发环境，会重建表）")
+var migrate = flag.Bool("migrate", false, "执行离线版本迁移后退出；使用独立迁移账号配置")
+var retryDirty = flag.Bool("retry-dirty-migration", false, "检查失败迁移的部分结果后显式重试")
 
 var (
 	version   = "dev"
@@ -196,25 +200,43 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err = paths.Prepare(); err != nil {
-		panic(err)
-	}
-	if err = c.Update.UseDataDirectory(paths); err != nil {
-		panic(err)
-	}
-	c.Log.Path = paths.Join("logs")
-	logger.Init(c.Log)
+	if !*migrate {
+		if err = paths.Prepare(); err != nil {
+			panic(err)
+		}
+		if err = c.Update.UseDataDirectory(paths); err != nil {
+			panic(err)
+		}
+		c.Log.Path = paths.Join("logs")
+		logger.Init(c.Log)
 
+	}
 	// 初始化数据库
+	c.MySQL.Migration = *migrate
 	db.MustInit(c.MySQL)
 	defer db.Close()
-	if *migrate {
-		if err := db.ApplySQLFile("../sql/01_create_tables.sql"); err != nil {
-			panic("database migration failed: " + err.Error())
-		}
+	migrationSteps, err := migrations.Steps()
+	if err != nil {
+		panic(err)
 	}
-	if err := db.SeedDevelopmentData(); err != nil {
-		panic("database seed failed: " + err.Error())
+	if *migrate {
+		schemamode.EnableMigrations()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		defer cancel()
+		if err := migrations.Apply(ctx, db.DB, migrationSteps, *retryDirty, func(ctx context.Context) error { return seedModules(ctx, []byte(c.Crypto.AESKey), paths.Root) }); err != nil {
+			panic(err)
+		}
+		fmt.Println("Offline migrations complete; API and scheduled jobs were not started")
+		return
+	}
+	if *retryDirty {
+		panic("retry-dirty-migration requires migrate")
+	}
+	if err := migrations.Verify(context.Background(), db.DB, migrationSteps); err != nil {
+		panic(err)
+	}
+	if err := snowflake.Configure(context.Background(), db.DB); err != nil {
+		panic(err)
 	}
 	if err := cryptoutil.ValidateKey([]byte(c.Crypto.AESKey)); err != nil {
 		panic("invalid Crypto.AESKey: AES-GCM requires a 16, 24, or 32 byte key")
@@ -310,6 +332,9 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	navigation.Register(server, navigationSvc, jwt)
 	backupSvc := backup.New(db.G, snapshotKey, paths.Root)
+	if err := backupSvc.PreparePaths(); err != nil {
+		panic("backup runtime paths unavailable")
+	}
 	if err := backupSvc.EnsureSchema(); err != nil {
 		panic("backup schema initialization failed")
 	}

@@ -5,6 +5,7 @@ package order
 
 import (
 	"context"
+	"crypto/rand"
 	"ddyidc/internal/certification"
 
 	"encoding/json"
@@ -118,7 +119,11 @@ func buildConfigSnapshot(input *CreateOrderInput, key []byte) (string, error) {
 	}
 	hostname := strings.TrimSpace(input.Hostname)
 	if hostname == "" {
-		hostname = fmt.Sprintf("ser%d", snowflake.GenID())
+		var entropy [12]byte
+		if _, err := rand.Read(entropy[:]); err != nil {
+			return "", errors.New("主机名生成失败，请重试")
+		}
+		hostname = fmt.Sprintf("ser%x", entropy[:])
 		input.Hostname = hostname
 	}
 	if !hostnamePattern.MatchString(hostname) {
@@ -633,7 +638,7 @@ func cycleForMonths(months int) string {
 }
 
 func generateInstanceNo() string {
-	return "INS" + time.Now().Format("20060102") + fmt.Sprintf("%08d", snowflake.GenID()%100000000)
+	return fmt.Sprintf("INS%d", snowflake.GenID())
 }
 
 // CancelOrder 取消未支付订单并归还优惠券。
@@ -753,11 +758,11 @@ func payTypeCode(method string) uint8 {
 }
 
 func generateOrderNo() string {
-	return "DDY" + time.Now().Format("20060102") + fmt.Sprintf("%06d", snowflake.GenID()%1000000)
+	return fmt.Sprintf("DDY%d", snowflake.GenID())
 }
 
 func generateRechargeNo() string {
-	return "RCH" + time.Now().Format("20060102") + fmt.Sprintf("%06d", snowflake.GenID()%1000000)
+	return fmt.Sprintf("RCH%d", snowflake.GenID())
 }
 
 func orderToView(v *dom.Order) *OrderView {

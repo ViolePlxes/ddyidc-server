@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,6 +18,9 @@ type Repository struct{ db *gorm.DB }
 func NewRepository(database *gorm.DB) *Repository { return &Repository{db: database} }
 
 func (r *Repository) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	statements := []string{
 		`CREATE TABLE IF NOT EXISTS system.notification_templates (
             id bigint unsigned NOT NULL,
@@ -56,7 +60,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 type templateSeed struct{ scene, channel, title, content string }
 
 var defaultTemplates = []templateSeed{
- {"balance_freeze", ChannelBoth, "余额冻结通知", "您的余额已冻结 {{amount}} 元，原因：{{reason}}。"},
+	{"balance_freeze", ChannelBoth, "余额冻结通知", "您的余额已冻结 {{amount}} 元，原因：{{reason}}。"},
 	{"register", ChannelBoth, "注册验证码", "您的注册验证码为 {{code}}，{{minutes}} 分钟内有效。"},
 	{"login", ChannelBoth, "登录验证码", "您的登录验证码为 {{code}}，{{minutes}} 分钟内有效。"},
 	{"reset", ChannelBoth, "重置密码验证码", "您的重置密码验证码为 {{code}}，{{minutes}} 分钟内有效。"},

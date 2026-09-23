@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -94,7 +95,7 @@ func validate(r ChangeRequest) (Money, error) {
 		return 0, ErrInvalid
 	}
 	manual := r.Channel == "admin_manual"
-	if manual && (r.AdminID <= 0 || strings.TrimSpace(r.AdminName) == "" || strings.TrimSpace(r.Notes) == "") {
+	if manual && (r.AdminID <= 0 || strings.TrimSpace(r.AdminName) == "" || strings.TrimSpace(r.Notes) == "" || net.ParseIP(r.OperatorIP) == nil) {
 		return 0, ErrInvalid
 	}
 	amount, err := ParseMoney(r.Amount)
@@ -155,12 +156,21 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		if !errors.Is(found, gorm.ErrRecordNotFound) {
 			return found
 		}
+		// Serialize account creation as well as updates. INSERT IGNORE on an
+		// existing account otherwise takes shared locks that deadlock when many
+		// requests upgrade them to the account's exclusive lock.
+		var owner struct{ ID int64 }
+		if err := tx.Table("customer.customers").Select("id").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND deleted_at IS NULL", r.CustomerID).Take(&owner).Error; err != nil {
+			return ErrBusiness
+		}
 		if err := verifyBusiness(tx, r, amount); err != nil {
 			return err
 		}
 		now := time.Now()
 		account := Account{ID: snowflake.GenID(), CustomerID: r.CustomerID, CreatedAt: now, UpdatedAt: now}
-		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&account).Error; err != nil {
+		// MySQL's ON DUPLICATE KEY UPDATE id=id fires the UPDATE guard even
+		// for an unchanged existing account. INSERT IGNORE has no update path.
+		if err := tx.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&account).Error; err != nil {
 			return err
 		}
 		account = Account{}
@@ -168,7 +178,9 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 			return err
 		}
 		// A locking read sees a competing committed retry under REPEATABLE READ.
-		found = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("tx_no=?", r.RequestID).Take(&previous).Error
+		// A shared current read sees committed retries without granting the
+		// runtime UPDATE rights on the append-only ledger (MySQL >= 8.0.29).
+		found = tx.Clauses(clause.Locking{Strength: "SHARE"}).Where("tx_no=?", r.RequestID).Take(&previous).Error
 		if found == nil {
 			if previous.RequestHash != hash {
 				return ErrReplay

@@ -5,6 +5,7 @@ package marketing
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	"fmt"
 	"strconv"
 	"strings"
@@ -87,6 +88,9 @@ func NewService(database *gorm.DB, repository repo.Repository) *Service {
 
 // EnsureDefaults 幂等写入营销配置默认值与全局可见性规则（启动时调用）。
 func (s *Service) EnsureDefaults(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	existing, err := s.repo.ListConfigsByPrefix(ctx, "marketing.")
 	if err != nil {
 		return fmt.Errorf("读取营销配置失败: %w", err)

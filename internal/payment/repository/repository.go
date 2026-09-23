@@ -395,5 +395,5 @@ func channelPayType(channel string) uint8 {
 }
 
 func generatePaymentNo() string {
-	return "PAY" + time.Now().Format("20060102") + fmt.Sprintf("%010d", snowflake.GenID()%10000000000)
+	return fmt.Sprintf("PAY%d", snowflake.GenID())
 }

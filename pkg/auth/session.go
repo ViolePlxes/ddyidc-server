@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/pkg/cache"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
@@ -84,6 +85,9 @@ func (m *Manager) LoadSecurityConfig(ctx context.Context, database *gorm.DB) err
 		"security.passkey_enabled":   "false",
 	}
 	for key, value := range defaults {
+		if !schemamode.MigrationsEnabled() {
+			continue
+		}
 		if err := database.WithContext(ctx).Exec(
 			"INSERT IGNORE INTO system.system_configs (id, `key`, value, description) VALUES (?, ?, ?, ?)",
 			time.Now().UnixNano(), key, value, "安全请求模型配置",

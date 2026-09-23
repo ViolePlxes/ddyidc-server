@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	dom "ddyidc/internal/ticket/domain"
 	"errors"
 	"fmt"
@@ -17,6 +18,9 @@ type Repository struct{ db *gorm.DB }
 func NewRepository(database *gorm.DB) *Repository { return &Repository{db: database} }
 
 func (r *Repository) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	statements := []string{
 		"CREATE SCHEMA IF NOT EXISTS ticket DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_status (id bigint unsigned NOT NULL, name varchar(32) NOT NULL, color varchar(16) NOT NULL, status tinyint(1) NOT NULL DEFAULT 0, is_default tinyint(1) NOT NULL DEFAULT 0, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(id), KEY idx_default(is_default)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,

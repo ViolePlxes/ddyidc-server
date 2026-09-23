@@ -4,6 +4,7 @@ import (
 	"context"
 	"ddyidc/internal/backup"
 	"ddyidc/internal/shared/runtimepaths"
+	"ddyidc/internal/shared/snowflake"
 	"ddyidc/pkg/cache"
 	"ddyidc/pkg/db"
 	"fmt"
@@ -39,10 +40,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer db.Close()
+	if e = snowflake.Configure(context.Background(), db.DB); e != nil {
+		fmt.Fprintln(os.Stderr, "backup ID allocator unavailable")
+		os.Exit(1)
+	}
 	cache.MustInit(c.Redis)
 	defer cache.RDB.Close()
 	service := backup.New(db.G.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}), []byte(c.Crypto.AESKey), paths.Root)
-	if e = service.EnsureSchema(); e != nil {
+	if e = service.PreparePaths(); e != nil {
 		fmt.Fprintln(os.Stderr, "backup schema unavailable")
 		os.Exit(1)
 	}

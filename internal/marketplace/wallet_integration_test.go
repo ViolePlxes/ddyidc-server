@@ -53,7 +53,7 @@ func TestBalanceEngineLifecycle(t *testing.T) {
 		must(tx.Create(&certification.Record{ID: snowflake.GenID(), CustomerID: id, Type: 1, Name: "017 rollback-only identity", DocumentHash: fmt.Sprintf("%064d", id), Status: 2}).Error)
 		must(tx.Table("customer.customers").Create(map[string]any{"id": id, "tenant_id": 0, "username": fmt.Sprintf("wallet-test-%d", id), "password_hash": "test-only", "status": 1, "created_at": time.Now(), "updated_at": time.Now()}).Error)
 	}
-	_, e = balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyer, Type: "manual_credit", Amount: "1000.00", RefType: "customer", RefID: buyer, Channel: "admin_manual", RequestID: fmt.Sprintf("WTEST:%d", buyer), AdminID: 1, AdminName: "integration", Notes: "rollback-only integration funding"})
+	_, e = balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyer, Type: "manual_credit", Amount: "1000.00", RefType: "customer", RefID: buyer, Channel: "admin_manual", RequestID: fmt.Sprintf("WTEST:%d", buyer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", Notes: "rollback-only integration funding"})
 	must(e)
 	service := market.NewService(tx, nil, nil)
 	must(tx.Table("system.system_configs").Where("`key`='marketplace.enabled'").Update("value", "true").Error)

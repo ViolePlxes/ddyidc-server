@@ -2,6 +2,7 @@ package navigation
 
 import (
 	"context"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -76,6 +77,9 @@ var errInvalid = errors.New("参数无效或记录不存在")
 
 func validScope(s string) bool { return s == "console" || s == "admin" || s == "sales" }
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	for _, statement := range strings.Split(schema, ";") {
 		if strings.TrimSpace(statement) != "" {
 			if err := s.db.WithContext(ctx).Exec(statement).Error; err != nil {

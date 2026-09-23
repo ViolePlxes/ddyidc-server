@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
+	schemamode "ddyidc/internal/shared/schema"
 	"fmt"
 	"gorm.io/gorm"
 	"strings"
@@ -76,6 +77,9 @@ func (r *GormRepository) List(c context.Context, page, limit int, filters map[st
 }
 
 func (r *GormRepository) EnsureSchema(c context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	columns := []struct {
 		name, definition string
 	}{

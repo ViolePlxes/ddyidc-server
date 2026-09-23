@@ -759,7 +759,7 @@ func appendFlow(tx *gorm.DB, userID int64, flowType, direction, amount, balance 
 	if existing > 0 {
 		return nil
 	}
-	return tx.Table(flowsTable).Create(&Flow{FlowNo: "MF" + at.Format("20060102150405") + fmt.Sprintf("%06d", snowflake.GenID()%1000000), UserID: userID, Type: flowType, Direction: direction, Amount: amount, BalanceAfter: balance, RefID: refID, Remark: remark, CreatedAt: at}).Error
+	return tx.Table(flowsTable).Create(&Flow{FlowNo: fmt.Sprintf("MF%d", snowflake.GenID()), UserID: userID, Type: flowType, Direction: direction, Amount: amount, BalanceAfter: balance, RefID: refID, Remark: remark, CreatedAt: at}).Error
 }
 func creditBilling(tx *gorm.DB, userID, amount, refID int64, now time.Time) error {
 	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: userID, Type: "refund", Amount: balance.Money(amount).String(), RefType: "marketplace", RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MR:%d", refID), Notes: "交易市场退款"})

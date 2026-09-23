@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"ddyidc/internal/points"
+	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	crypt "ddyidc/pkg/crypto"
 	_ "embed"
@@ -100,6 +101,9 @@ func New(db *gorm.DB, r *redis.Client, key []byte) *Service {
 	return &Service{db: db.Session(&gorm.Session{Logger: logger.Default.LogMode(logger.Silent)}), redis: r, key: key}
 }
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := s.db.WithContext(ctx).Exec(strings.TrimPrefix(schema, "\ufeff")).Error; err != nil {
 		return err
 	}

@@ -3,6 +3,7 @@ package cdnsell
 import (
 	"context"
 	"ddyidc/internal/shared/distsync"
+	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -48,6 +49,9 @@ func NewService(db *gorm.DB, key []byte, notifier Notifier) *Service {
 }
 
 func (s *Service) EnsureSchema(ctx context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
 		return err
 	}
@@ -253,7 +257,7 @@ func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int
 	amount := unit * int64(qty)
 	now := s.now()
 	mainID, bizID := snowflake.GenID(), snowflake.GenID()
-	no := "CDN" + now.Format("20060102") + fmt.Sprintf("%010d", bizID%10000000000)
+	no := fmt.Sprintf("CDN%d", bizID)
 	snap, _ := json.Marshal(map[string]any{"productName": p.Name, "capacityBytes": p.CapacityBytes, "unitPrice": unit, "customerLevel": customer.Level, "quantity": qty, "validDays": p.ValidDays})
 	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		order := orderdom.Order{ID: mainID, OrderNo: no, TenantID: customer.TenantID, CustomerID: userID, TotalAmount: amount, PayAmount: amount, Status: orderdom.OrderStatusPending, CreatedAt: now, UpdatedAt: now}

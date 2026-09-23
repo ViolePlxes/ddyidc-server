@@ -4,6 +4,7 @@ import (
 	"context"
 	dom "ddyidc/internal/product/domain"
 	"ddyidc/internal/product/specification"
+	schemamode "ddyidc/internal/shared/schema"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
@@ -114,6 +115,9 @@ type GormRepository struct{ db *gorm.DB }
 
 func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: database} }
 func (r *GormRepository) EnsureSpecsSchema(c context.Context) error {
+	if !schemamode.MigrationsEnabled() {
+		return nil
+	}
 	if err := r.db.WithContext(c).Exec(`CREATE TABLE IF NOT EXISTS product.product_specs (
 		id BIGINT UNSIGNED NOT NULL,
 		product_id BIGINT UNSIGNED NOT NULL,
