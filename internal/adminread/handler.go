@@ -22,14 +22,19 @@ type handler struct {
 }
 
 type orderRow struct {
-	ID          string    `json:"id" gorm:"column:id"`
-	OrderNo     string    `json:"orderNo" gorm:"column:order_no"`
-	Username    string    `json:"username" gorm:"column:username"`
-	ProductName string    `json:"productName" gorm:"column:product_name"`
-	PayAmount   int64     `json:"payAmount" gorm:"column:pay_amount"`
-	Status      uint8     `json:"status" gorm:"column:status"`
-	PayType     uint8     `json:"payType" gorm:"column:pay_type"`
-	CreatedAt   time.Time `json:"createdAt" gorm:"column:created_at"`
+	ID                  string    `json:"id" gorm:"column:id"`
+	OrderNo             string    `json:"orderNo" gorm:"column:order_no"`
+	Username            string    `json:"username" gorm:"column:username"`
+	CustomerID          string    `json:"customerId" gorm:"column:customer_id"`
+	CustomerDisplayName string    `json:"customerDisplayName" gorm:"column:customer_display_name"`
+	CustomerPhone       string    `json:"-" gorm:"column:customer_phone"`
+	VerifiedName        string    `json:"-" gorm:"column:verified_name"`
+	RealnameStatus      uint8     `json:"-" gorm:"column:realname_status"`
+	ProductName         string    `json:"productName" gorm:"column:product_name"`
+	PayAmount           int64     `json:"payAmount" gorm:"column:pay_amount"`
+	Status              uint8     `json:"status" gorm:"column:status"`
+	PayType             uint8     `json:"payType" gorm:"column:pay_type"`
+	CreatedAt           time.Time `json:"createdAt" gorm:"column:created_at"`
 }
 
 type customerRow struct {
@@ -273,10 +278,24 @@ func (h *handler) orderQuery(r *http.Request, status *uint8, keyword string) *go
 func (h *handler) orderRows(r *http.Request, page, pageSize int, status *uint8, keyword string) ([]orderRow, error) {
 	var rows []orderRow
 	err := h.orderQuery(r, status, keyword).
-		Select("CAST(o.id AS CHAR) AS id, o.order_no, COALESCE(c.username, '') AS username, COALESCE(oi.product_name, '') AS product_name, o.pay_amount, o.status, COALESCE(o.pay_type, 0) AS pay_type, o.created_at").
+		Joins("LEFT JOIN customer.customer_realname cr ON cr.id = (SELECT MAX(cr2.id) FROM customer.customer_realname cr2 WHERE cr2.customer_id = o.customer_id)").
+		Select("CAST(o.id AS CHAR) AS id, o.order_no, COALESCE(c.username, '') AS username, CAST(o.customer_id AS CHAR) AS customer_id, COALESCE(c.phone, '') AS customer_phone, COALESCE(cr.name, '') AS verified_name, COALESCE(cr.status, 0) AS realname_status, COALESCE(oi.product_name, '') AS product_name, o.pay_amount, o.status, COALESCE(o.pay_type, 0) AS pay_type, o.created_at").
 		Order("o.created_at DESC, o.id DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error
+	for i := range rows {
+		rows[i].CustomerDisplayName = orderCustomerDisplayName(rows[i])
+	}
 	return rows, err
+}
+
+func orderCustomerDisplayName(row orderRow) string {
+	if name := strings.TrimSpace(row.VerifiedName); row.RealnameStatus == 2 && name != "" {
+		return name
+	}
+	if phone := strings.TrimSpace(row.CustomerPhone); phone != "" {
+		return phone
+	}
+	return row.CustomerID
 }
 
 func (h *handler) customers(w http.ResponseWriter, r *http.Request) {
