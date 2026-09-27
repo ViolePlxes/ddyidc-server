@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"ddyidc/internal/shared/distsync"
+	"ddyidc/internal/shared/workgate"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,11 +142,14 @@ func firstFeature(changes []Change) string {
 func (m *Manager) runTask(task *Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.timeout())
 	defer cancel()
-	if task.Target == TargetBackend {
-		m.runBackend(ctx, task)
-		return
-	}
-	m.runFrontend(ctx, task)
+	_ = workgate.Run(ctx, func(ctx context.Context) error {
+		if task.Target == TargetBackend {
+			m.runBackend(ctx, task)
+			return nil
+		}
+		m.runFrontend(ctx, task)
+		return nil
+	})
 }
 
 func (m *Manager) progress(ctx context.Context, task *Task, progress int, logValue *taskLog, message string) {
@@ -171,7 +175,7 @@ func (m *Manager) StartResultWatcher(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			if distsync.IsLeader(ctx) {
-				m.processHelperResults(ctx)
+				_ = distsync.Work(ctx, func(ctx context.Context) error { m.processHelperResults(ctx); return nil })
 			}
 			select {
 			case <-ctx.Done():

@@ -5,9 +5,10 @@ This directory is the production deployment kit for Ubuntu 22.04 LTS amd64. The 
 ## Layout
 
 ```text
-/opt/ddyidc/bin/               # replaceable executable files (API read-only)
+/opt/ddyidc/bin/               # root-owned helpers and fixed server symlink (API/updater read-only)
+/opt/ddyidc/application/       # server executable; only update-helper mount permits replacement
 /opt/ddyidc/deploy/            # deployment scripts (API read-only)
-/etc/ddyidc/config.yaml        # configuration (mode 0600, API read-only)
+/etc/ddyidc/config.yaml        # root:ddyidc 0640, API read-only
 /etc/ddyidc/secrets/           # credentials (API read-only)
 /var/lib/ddyidc/
   storage/                    # ticket attachments and encrypted certification uploads
@@ -25,11 +26,28 @@ This directory is the production deployment kit for Ubuntu 22.04 LTS amd64. The 
 The API mount namespace permits writes only below `/var/lib/ddyidc`. System
 journald remains managed by systemd outside the program tree. The dedicated
 update helper may replace executables during deployment; the API cannot modify
-the program or rebuild that trusted helper. For another data root, change
+the program or rebuild that trusted helper. The helper remains unprivileged and
+cannot replace root-owned backup/bootstrap/helper binaries. Its writable program
+mount is limited to `application/`; this is a systemd mount boundary, not two
+different Unix application accounts. Do not grant the service account a shell.
+For another data root, change
 `Runtime.DataDir`, every Update writable path and the service/script paths
 together. Symlink escapes and legacy writable paths outside the root fail startup.
 
 ## Existing installation migration
+
+`install.sh` is for a fresh installation and refuses an existing config or an
+interrupted bootstrap. It runs explicit root-socket migrations before creating
+table/column-restricted runtime grants and enabling timers. No schema-wide ALL
+grant or existing credential rotation is performed. Use `ddyidc-bootstrap-admin`
+to create the first administrator; no default administrator is seeded.
+
+For the program/helper trust boundary, stop the API, updater and backup worker,
+then run `migrate-program-layout.sh` as root. It preserves private originals,
+verifies identical application bytes, changes the configured update target and
+installs a fixed public symlink. Install the updated helper unit before restarting.
+It refuses custom paths and repeat/partial attempts for inspection. A failed
+partial migration is an offline repair, never an automatic service restart.
 
 Install `python3-yaml` and `rsync`. Stop the API, update helper and backup timer/
 service before migrating. Back up service units and the executable separately.
@@ -49,18 +67,20 @@ files are not relocated; migrate them with native MySQL/Redis backup and restore
 
 ## Build the delivery package
 
-Run on Linux, WSL2, or a Linux CI runner with Go 1.27.1 and Node 20:
+Run on Linux, WSL2, or a Linux CI runner with Go 1.27.1 and Node 24 LTS (installer default: 24.21.0):
 
 ```bash
 cd /path/to/ddyidc-server
 FRONTEND_ROOT=/path/to/web-react ./deploy/linux/build-linux.sh
 ```
 
-The output is `deploy/linux/package/` with the two extensionless ELF binaries, the React `dist`, and SHA-256 checksums. Copy the repository deployment directory, including `package`, to the server.
+The output is `deploy/linux/package/` with four ELF binaries (API, update helper, backup worker, administrator bootstrap), the React `dist`, and SHA-256 checksums. Copy the repository deployment directory, including `package`, to the server.
 
 ## First installation
 
-Prepare DNS, a fixed SSH administration CIDR, and either a Let's Encrypt email or a certificate pair. The installer is repeatable: it preserves an existing production config and secret files.
+Prepare DNS, a fixed SSH administration CIDR, and either a Let's Encrypt email or a certificate pair. This is a fresh-install entry point: existing configuration or interrupted bootstrap causes an explicit refusal, never a credential rotation or automatic retry.
+
+The verified binary/static package can be installed without GitHub credentials. Source-based updates require separately prepared private repository worktrees and credentials. Set `CLONE_UPDATE_WORKTREES=1` only when the service account already has read access to both configured repositories; never pass a token in a repository URL. Until those worktrees are prepared, update preflight must refuse the operation.
 
 ```bash
 sudo DOMAIN=idc.example.com \
@@ -79,7 +99,7 @@ sudo DOMAIN=idc.example.com CERT_MODE=files \
   ./deploy/linux/install.sh
 ```
 
-The application service is enabled but not started by default, because a new host must first restore the production schemas. After the restore:
+The installer creates the schema through the explicit offline migration path, then installs restricted runtime credentials. The application service is enabled but not started by default. Create the first administrator with the documented bootstrap command, complete production configuration checks, and then start:
 
 ```bash
 sudo systemctl start ddyidc.service
@@ -87,7 +107,7 @@ sudo systemctl enable --now ddyidc-backup.timer ddyidc-disk-monitor.timer
 sudo /opt/ddyidc/deploy/verify-linux.sh
 ```
 
-On a prepared database, set `START_SERVICE=1` when running `install.sh` to start and health-check the API automatically. Service logs are available through `journalctl -u ddyidc.service`; the update helper uses `journalctl -u ddyidc-update-helper.service`.
+For an isolated fresh-install acceptance run, `START_SERVICE=1` also starts and health-checks the API. It does not create a default administrator or restore business data. Existing databases and backup recovery use their separate reviewed procedures. Service logs are available through `journalctl -u ddyidc.service`; the update helper uses `journalctl -u ddyidc-update-helper.service`.
 
 ## Automatic update flow
 
@@ -103,39 +123,39 @@ The helper result is imported into `system.update_tasks` and archived under `upd
 
 ## MySQL, Redis, and secrets
 
-`install-mysql-redis.sh` installs MySQL 8 and Redis 7, binds both to loopback, creates a non-root `ddyidc_app` account, and generates strong credentials. MySQL uses a 2 GiB buffer pool, 120 connections, one-second slow query logging, and 14-day binlog retention. Redis uses 512 MiB, `noeviction`, RDB plus AOF, protected mode, and an ACL password.
+`install-mysql-redis.sh` installs MySQL 8 and the Ubuntu Redis package (supported majors 7/8), binds both to loopback, and generates strong credentials. It does not add a rolling Redis repository or automatically downgrade existing databases. After offline schema migration, `database-identities.py` creates the restricted runtime account. MySQL uses a 2 GiB buffer pool, 120 connections, one-second slow query logging, and 14-day binlog retention. Redis uses 512 MiB, `noeviction`, RDB plus AOF, protected mode, and an ACL password.
 
-All production database, Redis, JWT, and AES values are regenerated. Source secret files and the rendered application config use mode 0600. Notification and payment credentials must be added only after installation; the Alipay JSON default is `/etc/ddyidc/secrets/alipay.json` and must be owned by `ddyidc` with mode 0600.
+All production database, Redis, JWT, and AES values are regenerated. Source/bootstrap secrets use mode 0600; the restricted runtime config is root:ddyidc 0640. The secrets directory permits group traversal only (0710), not directory listing. Notification and payment credentials must be added only after installation; the Alipay JSON default is `/etc/ddyidc/secrets/alipay.json` and must be owned by `ddyidc` with mode 0600.
 
 Loopback connections do not require database TLS. If MySQL or Redis is later moved to a private database host, enable their native TLS, change the application connection settings, and allow only the application subnet; never publish 3306, 6379, or 8080.
 
 ## Backup and restore drill
 
-The 02:00 systemd timer creates a single-transaction all-schema MySQL dump, Redis RDB plus AOF copy, and MySQL binlog bundle. Local retention is 7 daily, 4 weekly, and 12 monthly copies. Set `OBJECT_STORAGE_URI` in the mode-0600 `/etc/ddyidc/backup.env` to upload full backups and incrementally sync binlogs to S3-compatible storage using an instance role or external AWS credentials.
+Follow [the F07 recovery contract](../../docs/foundation/backup-recovery-contract.md).
+OSS is only the business backup repository: MySQL business schemas and `storage/`,
+with format/version/checksum/signature metadata. Never upload configuration,
+private keys, the MySQL identity schema, or Redis authentication sessions.
 
-Quarterly restore drill:
+Use the authenticated backup management workflow and the privileged backup worker.
+A successful `--verify-oss` verifies the archive; it does not restore a database.
+Restore only to a specifically authorized isolated target first, with all writers
+paused, runtime database accounts fenced, and external side effects disabled.
+Record RPO/RTO and the journal result. A completed import must remain isolated
+until external payment/refund/procurement/renewal facts have been reconciled and
+an operator explicitly releases it. Do not restart business automatically after
+SQL import or restore old Redis sessions.
 
-```bash
-sudo systemctl stop ddyidc.service
-sudo mkdir -p /var/tmp/ddyidc-restore
-sudo tar -xzf /var/lib/ddyidc/backups/daily/ddyidc-TIMESTAMP.tar.gz -C /var/tmp/ddyidc-restore
-sudo mysql --protocol=socket --user=root < /var/tmp/ddyidc-restore/mysql.sql
-sudo systemctl stop redis-server
-sudo cp /var/tmp/ddyidc-restore/redis.rdb /var/lib/redis/dump.rdb
-sudo chown redis:redis /var/lib/redis/dump.rdb
-sudo redis-check-rdb /var/lib/redis/dump.rdb
-sudo systemctl start redis-server ddyidc.service
-curl --fail http://127.0.0.1:8080/health
-```
-
-For Redis, stop Redis and restore the tested `redis.rdb` or the complete `redis-aof` directory according to `/etc/redis/redis.conf`; run `redis-check-rdb` or `redis-check-aof` before starting. Perform drills on an isolated host whenever possible, record RPO/RTO, and verify a sample order, payment record, session revocation, and update history.
+The former raw `tar`/`mysql`/Redis-copy instructions are intentionally removed:
+they bypass compatibility verification, the maintenance barrier, and explicit
+business release. Local disaster-recovery scripts must not be treated as a
+shortcut around the reviewed worker procedure.
 
 ## Security and operations
 
 - Public firewall rules are limited to 80/443. SSH requires a fixed CIDR, keys only, and no root login.
 - Nginx proxies API traffic only to loopback, gives the noVNC WebSocket a one-hour timeout, uses TLS 1.2/1.3, HSTS, CSP, and other Phase 1 security headers.
 - Disk monitoring warns at 70%, alerts at 80%, and blocks service/update admission at 85%.
-- Nginx and normal application logs retain 30 days; audit, payment, and update records retain 180 days.
+- Nginx and normal application log rotation defaults to 30 days. This does not authorize deleting database audit/payment records; balance ledger evidence remains permanent. Review any business-record retention policy separately.
 
 ## Capacity baseline
 

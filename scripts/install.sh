@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# Retired entry point: the historical implementation below grants broad runtime
+# DDL privileges and installs an obsolete toolchain. Keep it unreachable while
+# retaining the reviewed migration history. No environment override is allowed.
+printf '%s\n' 'This legacy installer is retired before any system changes.' 'Use deploy/linux/README.md: build a verified release package, then deploy/linux/install.sh for a fresh installation.' 'Existing installations require the documented offline migration; do not reinstall over an existing config.' >&2
+exit 2
+
 umask 077
 
 readonly INSTALLER_VERSION="1.0.4"

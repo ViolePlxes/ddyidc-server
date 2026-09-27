@@ -62,7 +62,7 @@ def main():
                 continue
             if name in ("system.schema_migrations", "billing.balance_guard_audit"):
                 privileges = "SELECT"
-            elif name in ("billing.transactions", "system.marketplace_flows"):
+            elif name in ("billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations"):
                 privileges = "SELECT,INSERT"
             elif name == "billing.accounts":
                 privileges = "SELECT,INSERT,UPDATE(balance,frozen_balance,total_recharge,total_consume,total_refund,total_withdraw,version,updated_at)"

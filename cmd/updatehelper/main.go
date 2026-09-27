@@ -14,7 +14,10 @@ import (
 	"syscall"
 	"time"
 
+	"ddyidc/internal/shared/workgate"
 	"ddyidc/internal/update"
+	"ddyidc/pkg/db"
+	"github.com/zeromicro/go-zero/core/conf"
 	"io"
 )
 
@@ -34,10 +37,34 @@ func main() {
 	if json.Unmarshal(data, &plan) != nil || !validPlan(plan) {
 		return
 	}
-	result := execute(plan)
+	result := executeAdmitted(plan)
 	if writeResult(plan.ResultFile, result) == nil {
 		_ = os.Remove(*planPath)
 	}
+}
+
+// The helper owns its own drain lock across stopping/replacing/restarting the
+// parent process. A lock held only by that parent would disappear mid-update.
+func executeAdmitted(plan update.HelperPlan) update.HelperResult {
+	rejected := func() update.HelperResult {
+		return failedResult(plan, nil, "not_required", errors.New("维护屏障未就绪，未执行程序切换"))
+	}
+	var config struct{ MySQL db.Config }
+	if err := conf.Load(plan.ConfigFile, &config); err != nil {
+		return rejected()
+	}
+	pool, err := db.OpenControl(config.MySQL)
+	if err != nil {
+		return rejected()
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+	var result update.HelperResult
+	if err := (&workgate.Gate{DB: pool}).Run(ctx, func(call context.Context) error { result = executeContext(call, plan); return nil }); err != nil {
+		return rejected()
+	}
+	return result
 }
 
 func validPlan(plan update.HelperPlan) bool {
@@ -65,13 +92,16 @@ func validServiceName(value string) bool {
 }
 
 func execute(plan update.HelperPlan) update.HelperResult {
+	return executeContext(context.Background(), plan)
+}
+func executeContext(parent context.Context, plan update.HelperPlan) update.HelperResult {
 	result := update.HelperResult{TaskID: plan.TaskID, Status: update.StatusFailed, FinishedAt: time.Now()}
 	logLines := []string{"更新助手已由 systemd 接管后端切换"}
 	timeout := time.Duration(plan.TimeoutSeconds) * time.Second
 	if timeout <= 0 || timeout > 10*time.Minute {
 		timeout = 10 * time.Minute
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	minimumMB := plan.MinFreeMB

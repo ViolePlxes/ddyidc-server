@@ -35,8 +35,8 @@ for required in mysql-app-password redis-password; do
 done
 
 if [[ -s "$destination" && "${FORCE_CONFIG:-0}" != 1 ]]; then
-  chown ddyidc:ddyidc "$destination"
-  chmod 0600 "$destination"
+  chown root:ddyidc "$destination"
+  chmod 0640 "$destination"
   echo "kept existing $destination"
   exit 0
 fi
@@ -55,7 +55,7 @@ sed \
   -e "s#__JWT_ACCESS_SECRET__#${jwt_access}#g" \
   -e "s#__JWT_REFRESH_SECRET__#${jwt_refresh}#g" \
   "$template" >"$temporary"
-chown ddyidc:ddyidc "$temporary"
-chmod 0600 "$temporary"
+chown root:ddyidc "$temporary"
+chmod 0640 "$temporary"
 mv -f "$temporary" "$destination"
 echo "rendered $destination with newly generated production secrets"

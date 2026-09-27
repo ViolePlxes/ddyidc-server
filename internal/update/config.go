@@ -79,7 +79,7 @@ func (c Config) normalized() Config {
 		c.Backend.Workspace = "/var/lib/ddyidc/update/workspaces/backend"
 	}
 	if strings.TrimSpace(c.Backend.Executable) == "" {
-		c.Backend.Executable = "/opt/ddyidc/bin/ddyidc-server"
+		c.Backend.Executable = "/opt/ddyidc/application/ddyidc-server"
 	}
 	if strings.TrimSpace(c.Backend.ConfigFile) == "" {
 		c.Backend.ConfigFile = "/etc/ddyidc/config.yaml"

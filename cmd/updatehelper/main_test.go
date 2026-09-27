@@ -138,3 +138,18 @@ func TestCrossDirectoryReplacePreservesBackup(t *testing.T) {
 		t.Fatal("failed deployment changed program")
 	}
 }
+
+func TestHelperRejectsUnavailableMaintenanceBeforeReplacement(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "current")
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := executeAdmitted(update.HelperPlan{TaskID: "isolated", ConfigFile: filepath.Join(t.TempDir(), "missing-config"), CurrentExecutable: path})
+	if result.Status != update.StatusFailed {
+		t.Fatal("missing maintenance configuration accepted")
+	}
+	body, err := os.ReadFile(path)
+	if err != nil || string(body) != "original" {
+		t.Fatal("program replaced without maintenance admission")
+	}
+}

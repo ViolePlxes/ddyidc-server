@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	"ddyidc/internal/shared/testenv"
 )
 
 func TestFirstFailed(t *testing.T) {
@@ -22,7 +22,7 @@ func TestFirstFailed(t *testing.T) {
 
 func TestLinuxProductionDefaults(t *testing.T) {
 	config := (Config{}).normalized()
-	if config.MinFreeMB != 10*1024 || config.Backend.Executable != "/opt/ddyidc/bin/ddyidc-server" {
+	if config.MinFreeMB != 10*1024 || config.Backend.Executable != "/opt/ddyidc/application/ddyidc-server" {
 		t.Fatalf("unexpected Linux defaults: %#v", config)
 	}
 	if config.UpdateHelperService != "ddyidc-update-helper.service" || config.SystemctlPath != "/usr/bin/systemctl" {
@@ -195,12 +195,9 @@ func TestRunnerHonorsTimeoutAndSanitizesCredentials(t *testing.T) {
 }
 
 func TestRedisGlobalLock(t *testing.T) {
-	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	client := testenv.Redis(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := client.Ping(ctx).Err(); err != nil {
-		t.Skip("local Redis unavailable")
-	}
 	locker := NewRedisLocker(client)
 	_ = locker.Release(ctx, "test-token-a")
 	_ = client.Del(ctx, updateLockKey).Err()

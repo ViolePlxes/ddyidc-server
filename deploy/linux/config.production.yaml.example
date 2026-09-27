@@ -2,6 +2,7 @@ Name: ddyidc-server
 Host: 127.0.0.1
 Port: 8080
 Mode: pro
+DeploymentEnvironment: production
 Timeout: 120000
 
 # Only the local reverse proxy can supply the client forwarding chain.
@@ -13,7 +14,7 @@ Network:
 MySQL:
   Host: 127.0.0.1
   Port: 3306
-  User: ddyidc_app
+  User: ddyidc_runtime
   Password: "__MYSQL_PASSWORD__"
   Database: ddyidc
   MaxOpenConns: 100
@@ -81,7 +82,7 @@ Update:
   Backend:
     Workspace: /var/lib/ddyidc/update/workspaces/backend
     Branch: main
-    Executable: /opt/ddyidc/bin/ddyidc-server
+    Executable: /opt/ddyidc/application/ddyidc-server
     ConfigFile: /etc/ddyidc/config.yaml
     HelperPath: /opt/ddyidc/bin/ddyidc-update-helper
   Frontend:
