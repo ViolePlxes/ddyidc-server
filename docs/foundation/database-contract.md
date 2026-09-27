@@ -33,6 +33,13 @@ SQL 位于 `internal/shared/migrations/sql`。001 是无账号/配置/业务数�
 
 ## 身份
 
+本机首次安装若 MySQL 开启 binlog，创建认证触发器需要 DBA 权限。可由 root 显式执行
+`ddyidc-server -f <迁移配置> --migrate --migration-socket /var/run/mysqld/mysqld.sock`。
+该入口仅接受 root、离线迁移标志、固定本机 socket 和回环数据库配置，并复核数据库端口；
+不会给常驻迁移/运行账号授予 SUPER，不放宽 binlog 安全设置，不启动业务。
+曾经失败的步骤须先检查部分结果，再添加 `--retry-dirty-migration`；不可删除 dirty 历史。
+远程数据库由对应 DBA 以受控迁移凭据操作，不允许用本机 socket 冒充远程目标。
+
 `deploy/linux/database-identities.py` 通过本机 root socket 创建：
 
 - `prepare`：迁移身份，业务 schema 的 DDL/DML；生成 root 0600 配置。

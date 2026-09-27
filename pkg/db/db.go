@@ -35,6 +35,77 @@ var DB *sql.DB
 // explicitly with Table("schema.table") instead of relying on a default schema.
 var G *gorm.DB
 
+// OpenControl uses an independent pool: long-lived maintenance read locks must
+// never consume the business connections needed to finish their own requests.
+func OpenControl(c Config) (*sql.DB, error) {
+	c.Migration = false
+	pool, err := sql.Open("mysql", dsn(c, c.Database))
+	if err != nil {
+		return nil, err
+	}
+	pool.SetMaxOpenConns(32)
+	pool.SetMaxIdleConns(4)
+	pool.SetConnMaxLifetime(5 * time.Minute)
+	if err := pool.Ping(); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+// OpenMaintenanceSocket is only for the fixed privileged local backup worker.
+// It must not share the application account that is fenced during restore.
+func OpenMaintenanceSocket(socket string) (*sql.DB, *gorm.DB, error) {
+	return openLocalSocket(socket, false)
+}
+
+// InitOfflineMigrationSocket is used only by the explicit root-only migration
+// CLI. It never grants SUPER to the persistent migration/runtime identities.
+func InitOfflineMigrationSocket(socket, primary string, expectedPort int) error {
+	if strings.TrimSpace(primary) == "" {
+		return errors.New("migration primary schema is empty")
+	}
+	pool, database, err := openLocalSocket(socket, true)
+	if err != nil {
+		return err
+	}
+	var port int
+	if err := pool.QueryRow("SELECT @@port").Scan(&port); err != nil || port != expectedPort {
+		pool.Close()
+		return errors.New("migration socket does not match configured database")
+	}
+	if _, err := pool.Exec("CREATE DATABASE IF NOT EXISTS `" + strings.ReplaceAll(primary, "`", "``") + "` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"); err != nil {
+		pool.Close()
+		return err
+	}
+	DB, G = pool, database
+	return nil
+}
+
+func openLocalSocket(socket string, multiStatements bool) (*sql.DB, *gorm.DB, error) {
+	cfg := mysqldriver.NewConfig()
+	cfg.User, cfg.Net, cfg.Addr = "root", "unix", socket
+	cfg.MultiStatements = multiStatements
+	cfg.ParseTime, cfg.Loc = true, time.Local
+	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 5*time.Second, 30*time.Second, 30*time.Second
+	pool, err := sql.Open("mysql", cfg.FormatDSN())
+	if err != nil {
+		return nil, nil, err
+	}
+	pool.SetMaxOpenConns(8)
+	pool.SetMaxIdleConns(2)
+	if err := pool.Ping(); err != nil {
+		pool.Close()
+		return nil, nil, err
+	}
+	database, err := gorm.Open(mysql.New(mysql.Config{Conn: pool}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		pool.Close()
+		return nil, nil, err
+	}
+	return pool, database, nil
+}
+
 func dsn(c Config, database string) string {
 	cfg := mysqldriver.NewConfig()
 	cfg.User, cfg.Passwd, cfg.Net = c.User, c.Password, "tcp"
