@@ -4,6 +4,8 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
+	orderstate "ddyidc/internal/order/repository"
+	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
@@ -14,6 +16,8 @@ import (
 )
 
 func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64, method string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
 	if s.db == nil {
 		return false, nil
 	}
@@ -42,10 +46,13 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	if e != nil {
 		return true, e
 	}
-	if h.OwnershipVersion != r.OwnershipVersion || h.UpstreamInstanceID != r.HostID {
+	if h.OwnershipVersion != r.OwnershipVersion || h.UpstreamInstanceID != r.HostID || (h.UpstreamProviderID == nil || *h.UpstreamProviderID != r.SupplierID) {
 		return true, errors.New("实例绑定已变更，续费待人工核对")
 	}
-	p, warning := s.provider(h)
+	if h.Status == 6 {
+		return true, errors.New("实例已删除，续费待人工核对")
+	}
+	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
 		return true, ErrUnsupported
 	}
@@ -53,13 +60,20 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	if !ok {
 		return true, ErrUnsupported
 	}
-	// Every re-entry first reconciles actual expiry; never replay an uncertain write.
+	// Expiry alone cannot prove this invoice was paid (an administrator or another
+	// order may have extended it). Only a persisted successful payment may settle.
 	detail, e := p.GetInstanceDetail(parseHostID(r.HostID))
 	if e != nil || detail == nil || detail.ID != r.HostID {
 		return true, errors.New("读取续费结果失败")
 	}
+	if unavailableLifecycle(detail, r.HostID) == "deleted" {
+		return true, errors.New("实例已删除，续费待人工核对")
+	}
 	if detail.ExpiresAt != nil && detail.ExpiresAt.After(r.BaseExpiry) {
-		return true, s.completeRenewal(ctx, r, *detail.ExpiresAt)
+		if r.State == "verifying" {
+			return true, s.completeRenewal(ctx, r, *detail.ExpiresAt)
+		}
+		return true, errors.New("服务到期时间已变化但缺少本次付款证据，请人工核对")
 	}
 	if r.State == "creating" || r.State == "paying" || r.State == "uncertain" || r.State == "verifying" {
 		return true, errors.New("续费结果待核对，请勿重复付款")
@@ -89,8 +103,12 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 		if e != nil {
 			return true, s.renewalUncertain(ctx, r.ID, "创建续费账单结果未确认，请人工核对")
 		}
-		if e = s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='creating'", r.ID).Updates(map[string]any{"invoice_id": invoice, "state": "invoiced", "updated_at": time.Now()}).Error; e != nil {
-			return true, e
+		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='creating'", r.ID).Updates(map[string]any{"invoice_id": invoice, "state": "invoiced", "updated_at": time.Now()})
+		if persisted.Error != nil {
+			return true, persisted.Error
+		}
+		if persisted.RowsAffected != 1 {
+			return true, errors.New("续费状态已变更，账单待核对，未再次支付")
 		}
 		r.InvoiceID = invoice
 		r.State = "invoiced"
@@ -106,8 +124,12 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 		if e = rp.PayRenewalInvoice(r.InvoiceID); e != nil {
 			return true, s.renewalUncertain(ctx, r.ID, "服务续费支付结果未确认，请人工核对")
 		}
-		if e = s.db.WithContext(ctx).Model(&Renewal{}).Where("id=?", r.ID).Updates(map[string]any{"state": "verifying", "updated_at": time.Now()}).Error; e != nil {
-			return true, e
+		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='paying'", r.ID).Updates(map[string]any{"state": "verifying", "updated_at": time.Now()})
+		if persisted.Error != nil {
+			return true, persisted.Error
+		}
+		if persisted.RowsAffected != 1 {
+			return true, errors.New("续费状态已变更，请核对远端结果")
 		}
 		detail, e = p.GetInstanceDetail(parseHostID(r.HostID))
 		if e == nil && detail != nil && detail.ID == r.HostID && detail.ExpiresAt != nil && detail.ExpiresAt.After(r.BaseExpiry) {
@@ -117,11 +139,21 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	return true, errors.New("已支付，等待服务到期时间更新")
 }
 func (s *Service) renewalUncertain(ctx context.Context, id int64, message string) error {
-	s.db.WithContext(ctx).Model(&Renewal{}).Where("id=?", id).Updates(map[string]any{"state": "uncertain", "last_error": message, "updated_at": time.Now()})
+	// Late errors from an old executor must never overwrite completion.
+	if err := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state IN ('creating','paying','verifying')", id).Updates(map[string]any{"state": "uncertain", "last_error": message, "updated_at": time.Now()}).Error; err != nil {
+		return err
+	}
 	return errors.New(message)
 }
 func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var paid order.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", r.OrderID, r.CustomerID).Take(&paid).Error; err != nil {
+			return err
+		}
+		if paid.Status != 2 && paid.Status != 6 {
+			return errors.New("续费订单状态已变化，请核对")
+		}
 		var current Renewal
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", r.ID).Take(&current).Error; e != nil {
 			return e
@@ -129,10 +161,22 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		if current.State == "completed" {
 			return nil
 		}
+		if current.State != "verifying" || current.InvoiceID == "" {
+			return errors.New("缺少本次续费支付成功证据，请人工核对")
+		}
 		now := time.Now()
 		var host dom.Host
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=?", r.InstanceID, r.CustomerID, r.OwnershipVersion).Take(&host).Error; e != nil {
 			return ErrForbidden
+		}
+		// Bind completion to the persisted renewal, not a stale executor snapshot.
+		if current.OrderID != r.OrderID || current.CustomerID != r.CustomerID || current.InstanceID != r.InstanceID ||
+			current.OwnershipVersion != r.OwnershipVersion || current.HostID != r.HostID || current.SupplierID != r.SupplierID ||
+			host.UpstreamInstanceID != current.HostID || (host.UpstreamProviderID == nil || *host.UpstreamProviderID != current.SupplierID) {
+			return errors.New("实例绑定已变更，续费待人工核对")
+		}
+		if !expiry.After(current.BaseExpiry) || (host.ExpiresAt != nil && expiry.Before(*host.ExpiresAt)) {
+			return errors.New("续费到期时间证据已过期，请重新核对服务状态")
 		}
 		snapshot := map[string]any{}
 		if e := json.Unmarshal([]byte(host.ConfigSnapshot), &snapshot); e != nil {
@@ -153,8 +197,14 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		if e := tx.Model(&current).Updates(map[string]any{"state": "completed", "last_error": "", "updated_at": now}).Error; e != nil {
 			return e
 		}
-		if e := tx.Model(&order.Order{}).Where("id=? AND status=2", r.OrderID).Updates(map[string]any{"status": 6, "updated_at": now}).Error; e != nil {
-			return e
+		if paid.Status == order.OrderStatusPaid {
+			changed, err := orderstate.CompletePaidTx(tx, r.OrderID, r.CustomerID, now)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				return errors.New("续费订单状态已变化，交付已回滚")
+			}
 		}
 		if e := tx.Model(&order.OrderItem{}).Where("order_id=? AND module_type='instance_renewal'", r.OrderID).Updates(map[string]any{"delivery_status": 2, "updated_at": now}).Error; e != nil {
 			return e
@@ -170,23 +220,19 @@ func (s *Service) StartRenewalMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.renewalTick(ctx)
+			_ = distsync.Work(ctx, func(ctx context.Context) error { s.renewalTick(ctx); return nil })
 		}
 	}
 }
 func (s *Service) renewalTick(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	if s.db == nil {
 		return
 	}
-	var pending []Renewal
-	s.db.WithContext(ctx).Table("instance.instance_renewals r").Select("r.*").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("o.status=2 AND r.state NOT IN ?", []string{"completed", "cancelled"}).Order("r.updated_at ASC").Limit(50).Find(&pending)
-	for _, r := range pending {
-		if ctx.Err() != nil {
-			return
-		}
-		s.ProvisionRenewal(ctx, r.CustomerID, r.OrderID, "reconcile")
-		s.db.WithContext(ctx).Model(&Renewal{}).Where("id=?", r.ID).Update("updated_at", time.Now())
-	}
+	// Paid renewals execute only through their transactional durable intention.
+	// Unknown outcomes remain visible for reconciliation, not minute-by-minute
+	// unbounded provider calls or a second execution path.
 	var hosts []dom.Host
 	s.db.WithContext(ctx).Table("instance.instances i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4,5) AND i.expires_at<=? AND i.expires_at>? AND r.updated_at<=?", time.Now().Add(72*time.Hour), time.Now().Add(-7*24*time.Hour), time.Now().Add(-15*time.Minute)).Limit(50).Find(&hosts)
 	for _, h := range hosts {

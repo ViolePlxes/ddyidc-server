@@ -38,6 +38,7 @@ func TestCancelOrderMySQL(t *testing.T) {
 	defer sqlDB.Close()
 	for _, statement := range []string{
 		"CREATE DATABASE `order`", "CREATE DATABASE marketing",
+		"CREATE TABLE `order`.stock_reservations (order_id BIGINT PRIMARY KEY,product_id BIGINT,source_id BIGINT,source_kind VARCHAR(16),quantity INT,status VARCHAR(16),expires_at DATETIME) ENGINE=InnoDB",
 		"CREATE TABLE `order`.orders (id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, status TINYINT NOT NULL, cancelled_at DATETIME(6), updated_at DATETIME(6)) ENGINE=InnoDB",
 		"CREATE TABLE marketing.coupons (id BIGINT PRIMARY KEY, used_count BIGINT NOT NULL) ENGINE=InnoDB",
 		"CREATE TABLE marketing.user_coupons (id BIGINT PRIMARY KEY, coupon_id BIGINT NOT NULL, status TINYINT NOT NULL, order_id BIGINT NULL, used_at DATETIME(6), INDEX(order_id)) ENGINE=InnoDB",

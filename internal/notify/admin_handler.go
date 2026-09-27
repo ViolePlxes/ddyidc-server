@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"strings"
 
+	balance "ddyidc/internal/billing/balance"
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"gorm.io/gorm"
@@ -16,11 +18,14 @@ import (
 type adminHandler struct {
 	manager *Manager
 	auth    *auth.Manager
+	outbox  *balance.BalanceService
 }
 
-func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *auth.Manager) {
-	h := &adminHandler{manager: manager, auth: authManager}
+func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *auth.Manager, outbox *balance.BalanceService) {
+	h := &adminHandler{manager: manager, auth: authManager, outbox: outbox}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/admin/v1/system/notify/reviews", Handler: h.noticeReviews},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/reviews/:id", Handler: h.reviewNotice},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/config", Handler: h.getConfig},
 		{Method: http.MethodPut, Path: "/admin/v1/system/notify/config", Handler: h.saveConfig},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/templates", Handler: h.listTemplates},
@@ -28,6 +33,62 @@ func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *a
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/logs", Handler: h.listLogs},
 		{Method: http.MethodPost, Path: "/admin/v1/system/notify/test", Handler: h.testNotify},
 	})
+}
+
+func (h *adminHandler) noticeReviews(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	rows, err := h.outbox.NoticeReviews(r.Context())
+	if err != nil {
+		adminError(w, 500, 500, "读取待处置通知失败")
+		return
+	}
+	adminOK(w, rows)
+}
+
+func (h *adminHandler) reviewNotice(w http.ResponseWriter, r *http.Request) {
+	if !h.authorize(w, r) {
+		return
+	}
+	id, err := strconv.ParseInt(pathvar.Vars(r)["id"], 10, 64)
+	if err != nil || id <= 0 {
+		adminError(w, 400, 400, "通知编号无效")
+		return
+	}
+	cookie, err := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	if err != nil {
+		adminError(w, 401, 401, "登录已失效")
+		return
+	}
+	claims, err := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if err != nil || claims == nil {
+		adminError(w, 401, 401, "登录已失效")
+		return
+	}
+	var in struct {
+		Reason      string `json:"reason"`
+		Action      string `json:"action"`
+		Status      string `json:"status"`
+		Attempts    int    `json:"attempts"`
+		Acknowledge bool   `json:"acknowledge"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	dec.DisallowUnknownFields()
+	if dec.Decode(&in) != nil {
+		adminError(w, 400, 400, "处置参数无效")
+		return
+	}
+	err = h.outbox.ReviewNotice(r.Context(), id, claims.UserID, clientip.FromRequest(r), in.Reason, in.Action, in.Status, in.Attempts, in.Acknowledge)
+	if errors.Is(err, balance.ErrNoticeReview) {
+		adminError(w, 409, 409, err.Error())
+		return
+	}
+	if err != nil {
+		adminError(w, 500, 500, "通知处置失败")
+		return
+	}
+	adminOK(w, map[string]bool{"saved": true})
 }
 
 func (h *adminHandler) authorize(w http.ResponseWriter, r *http.Request) bool {

@@ -5,8 +5,10 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
+	orderstate "ddyidc/internal/order/repository"
 	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/tasks"
 	"ddyidc/internal/upstream/provider/contracts"
 	_ "embed"
 	"encoding/json"
@@ -110,14 +112,19 @@ func retailRenewal(cost balance.Money, rate, profit string, kind int) (balance.M
 	return balance.Money(whole.Int64()), nil
 }
 func (s *Service) RenewalOptions(ctx context.Context, customer, id int64) ([]RenewalOption, error) {
+	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	defer cancel()
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return nil, e
 	}
+	if h.Status == 6 {
+		return nil, ErrUnsupported
+	}
 	if s.db == nil {
 		return nil, ErrUnsupported
 	}
-	p, warning := s.provider(h)
+	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
 		return nil, errors.New("服务配置不可用")
 	}
@@ -186,6 +193,9 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 	if e != nil || real == nil || real.ID != h.UpstreamInstanceID || real.ExpiresAt == nil {
 		return nil, errors.New("实例到期信息未确认，不能创建续费订单")
 	}
+	if unavailableLifecycle(real, h.UpstreamInstanceID) == "deleted" {
+		return nil, ErrUnsupported
+	}
 	expiry := *real.ExpiresAt
 	amount, _ := balance.ParseMoney(selected.Amount)
 	var result RenewalOrder
@@ -196,6 +206,9 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 		}
 		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID {
 			return errors.New("实例归属或绑定已变更")
+		}
+		if current.Status == 6 {
+			return ErrUnsupported
 		}
 		var busy int64
 		if err := tx.Table("system.push_transfers").Where("instance_id=? AND status='pending'", id).Count(&busy).Error; err != nil {
@@ -275,8 +288,15 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 			return errors.New("续费订单当前不可支付")
 		}
 		var h dom.Host
-		if e := tx.Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", id, customer, r.OwnershipVersion, r.HostID).Take(&h).Error; e != nil {
+		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", id, customer, r.OwnershipVersion, r.HostID).Take(&h).Error; e != nil {
 			return ErrForbidden
+		}
+		var trading int64
+		if e := tx.Table("system.marketplace_listings").Where("product_id=? AND status IN ('pending','on_sale','locked')", id).Count(&trading).Error; e != nil {
+			return e
+		}
+		if trading > 0 {
+			return ErrTradingLocked
 		}
 		var pending int64
 		if e := tx.Table("payment.payments").Where("biz_type='order' AND biz_id=? AND status='pending'", orderID).Count(&pending).Error; e != nil {
@@ -294,13 +314,19 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 			return e
 		}
 		now := time.Now()
-		return tx.Model(&o).Updates(map[string]any{"status": 2, "balance_amount": int64(r.Amount), "pay_type": 3, "paid_at": now, "updated_at": now}).Error
+		changed, err := orderstate.AcceptBalancePaymentTx(tx, orderID, customer, int64(r.Amount), now)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("续费订单状态或金额已变化")
+		}
+		return tasks.EnqueuePayment(tx, fmt.Sprintf("renewal-balance:%d", r.ID), tasks.PaymentPayload{CustomerID: customer, BusinessID: orderID, BusinessType: "order", Channel: "balance", AmountFen: int64(r.Amount)})
 	})
 	if e != nil {
 		return e
 	}
-	_, e = s.ProvisionRenewal(ctx, customer, orderID, "balance")
-	return e
+	return nil
 }
 func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool) error {
 	h, e := s.owned(ctx, customer, id)
@@ -321,6 +347,9 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 			return ErrForbidden
 		}
 		settings := RenewalSettings{InstanceID: id, CustomerID: customer, Enabled: enabled, UpdatedAt: time.Now()}
+		if enabled && current.Status == 6 {
+			return ErrUnsupported
+		}
 		if e := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.AssignmentColumns([]string{"customer_id", "enabled", "updated_at"})}).Create(&settings).Error; e != nil {
 			return e
 		}

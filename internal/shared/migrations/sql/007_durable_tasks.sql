@@ -1,0 +1,28 @@
+CREATE TABLE IF NOT EXISTS system.durable_tasks (
+ id BIGINT NOT NULL PRIMARY KEY,
+ task_key VARCHAR(128) NOT NULL UNIQUE,
+ kind VARCHAR(32) NOT NULL,
+ payload JSON NOT NULL,
+ status VARCHAR(16) NOT NULL DEFAULT 'pending',
+ attempt INT NOT NULL DEFAULT 0,
+ lease_token CHAR(32) NOT NULL DEFAULT '',
+ lease_until DATETIME(3) NULL,
+ available_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ safe_error VARCHAR(256) NOT NULL DEFAULT '',
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ KEY idx_claim(status,available_at,id)
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS system.task_claim_guard (id INT NOT NULL PRIMARY KEY) ENGINE=InnoDB;
+INSERT IGNORE INTO system.task_claim_guard(id) VALUES(1);
+CREATE TABLE IF NOT EXISTS system.task_reconciliations (
+ id BIGINT NOT NULL PRIMARY KEY,
+ task_id BIGINT NOT NULL,
+ admin_id BIGINT NOT NULL,
+ operator_ip VARCHAR(64) NOT NULL,
+ reason VARCHAR(256) NOT NULL,
+ from_status VARCHAR(16) NOT NULL,
+ to_status VARCHAR(16) NOT NULL,
+ created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+ KEY idx_task(task_id,created_at)
+) ENGINE=InnoDB;

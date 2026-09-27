@@ -18,8 +18,10 @@ import (
 
 	instancedom "ddyidc/internal/instance/domain"
 	dom "ddyidc/internal/order/domain"
+	"ddyidc/internal/order/inventory"
 	rep "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/tasks"
 	upstreammodel "ddyidc/internal/upstream/model"
 	upstreamcontracts "ddyidc/internal/upstream/provider/contracts"
 	upstream "ddyidc/internal/upstream/service"
@@ -381,7 +383,15 @@ func parseID(raw string) (int64, error) {
 }
 
 // CreateOrder 创建订单：服务端定价 + 服务端核销优惠券（同事务）。
-func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*OrderView, error) {
+// PreparedOrder contains validated configuration; it is opaque to callers.
+// Preparation may read a supplier. Persistence never performs network I/O.
+type PreparedOrder struct {
+	order    *dom.Order
+	item     *dom.OrderItem
+	couponID int64
+}
+
+func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*PreparedOrder, error) {
 	if err := s.repo.Transaction(ctx, func(tx *gorm.DB) error { return certification.CheckPurchase(tx, customerID) }); err != nil {
 		return nil, err
 	}
@@ -462,6 +472,16 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 	if strings.TrimSpace(input.Remark) != "" {
 		orderRow.CustomerRemark = strings.TrimSpace(input.Remark)
 	}
+	return &PreparedOrder{order: orderRow, item: item, couponID: couponID}, nil
+}
+
+func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*OrderView, error) {
+	prepared, err := s.PrepareOrder(ctx, customerID, input)
+	if err != nil {
+		return nil, err
+	}
+	orderRow, item, couponID := prepared.order, prepared.item, prepared.couponID
+	productID, qty, total := item.ProductID, int(item.Qty), orderRow.TotalAmount
 	if e := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
 		if e := certification.CheckPurchase(tx, customerID); e != nil {
 			return e
@@ -469,12 +489,16 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		if e := s.repo.CreateOrderTx(ctx, tx, orderRow); e != nil {
 			return e
 		}
+		if err := inventory.Reserve(tx, orderRow.ID, productID, qty); err != nil {
+			return err
+		}
 		if couponID > 0 {
 			discount, e := s.hooks.ChargeCoupon(ctx, tx, customerID, couponID, orderRow.ID, total)
 			if e != nil {
 				return e
 			}
 			orderRow.CouponAmount = discount
+			orderRow.CouponID = &couponID
 			orderRow.DiscountAmount = discount
 			orderRow.PayAmount = total - discount
 			if e := s.repo.UpdateOrderTx(ctx, tx, orderRow); e != nil {
@@ -483,7 +507,31 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		}
 		item.OrderID = orderRow.ID
 		item.Subtotal = total
-		return s.repo.CreateItemTx(ctx, tx, item)
+		if err := s.repo.CreateItemTx(ctx, tx, item); err != nil {
+			return err
+		}
+		if orderRow.PayAmount < 0 {
+			return errors.New("订单应付金额无效")
+		}
+		if orderRow.PayAmount == 0 {
+			if total <= 0 || couponID <= 0 || orderRow.CouponAmount != total || orderRow.BalanceAmount != 0 {
+				return errors.New("零应付订单抵扣依据无效")
+			}
+			now := time.Now()
+			result := tx.Model(&dom.Order{}).Where("id=? AND status=? AND pay_amount=0", orderRow.ID, dom.OrderStatusPending).Updates(map[string]any{"status": dom.OrderStatusPaid, "paid_at": now})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("零应付订单状态已变化")
+			}
+			orderRow.Status, orderRow.PaidAt = dom.OrderStatusPaid, &now
+			if err := inventory.Consume(tx, orderRow.ID); err != nil {
+				return err
+			}
+			return tasks.EnqueuePayment(tx, fmt.Sprintf("zero-order:%d", orderRow.ID), tasks.PaymentPayload{CustomerID: customerID, BusinessID: orderRow.ID, BusinessType: "order", Channel: "discount", AmountFen: 0})
+		}
+		return nil
 	}); e != nil {
 		return nil, fmt.Errorf("创建订单失败: %w", e)
 	}
@@ -500,7 +548,7 @@ func (s *Service) PayOrder(ctx context.Context, customerID, orderID int64, metho
 // ProvisionAfterPayment links a verified channel payment to the existing
 // upstream provisioning flow. Payment state is already committed before this
 // method runs; failures remain visible as delivery_status=3 for manual retry.
-func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
+func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64, method string, unit *deliveryUnit) error {
 	orderRow, err := s.repo.FindByID(ctx, orderID)
 	if err != nil {
 		return fmt.Errorf("查询订单失败: %w", err)
@@ -540,10 +588,7 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 	for id, option := range snapshot.ConfigOptions {
 		configValues[id] = option.Value
 	}
-	instanceID := snowflake.GenID()
-	if item.InstanceID != nil && *item.InstanceID > 0 {
-		instanceID = *item.InstanceID
-	}
+	instanceID := unit.InstanceID
 	if err := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
 		var lockedOrder dom.Order
 		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).First(&lockedOrder, orderID).Error; err != nil {
@@ -553,13 +598,13 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 			return errors.New("订单已不处于可交付状态")
 		}
 		var refundCount int64
-		if err := tx.Table("payment.original_refunds AS r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Where("p.biz_type='order' AND p.biz_id=?", orderID).Count(&refundCount).Error; err != nil {
+		if err := tx.Table("payment.original_refunds AS r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Joins("LEFT JOIN payment.receipt_reviews rv ON rv.payment_id=p.id").Where("p.biz_type='order' AND p.biz_id=? AND rv.payment_id IS NULL", orderID).Count(&refundCount).Error; err != nil {
 			return err
 		}
 		if refundCount != 0 {
 			return errors.New("订单正在退款或已退款，禁止交付")
 		}
-		result := tx.WithContext(ctx).Table("order.order_items").Where("id = ? AND delivery_status IN ?", item.ID, []int{0, 3}).Updates(map[string]any{"delivery_status": 1, "instance_id": instanceID})
+		result := tx.WithContext(ctx).Model(&deliveryUnit{}).Where("id=? AND order_id=? AND order_item_id=? AND customer_id=? AND status='pending'", unit.ID, orderID, item.ID, customerID).Update("status", "running")
 		if result.Error != nil {
 			return result.Error
 		}
@@ -570,9 +615,9 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 	}); err != nil {
 		return fmt.Errorf("锁定开通任务失败: %w", err)
 	}
-	result, err := upstream.Default.ProvisionOrder(upstream.ProvisionInput{
+	result, err := upstream.Default.ProvisionOrder(ctx, upstream.ProvisionInput{
 		OrderID: formatID(orderID), LocalProductID: formatID(item.ProductID), CustomerID: formatID(customerID),
-		InstanceID: formatID(instanceID), Quantity: int(item.Qty), Cycle: cycle,
+		InstanceID: formatID(instanceID), UnitID: formatID(unit.ID), Quantity: 1, Cycle: cycle,
 		ConfigOptions: configValues, Hostname: snapshot.Hostname, Password: snapshot.PasswordCiphertext,
 	})
 	if err != nil {
@@ -581,56 +626,97 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 		})
 		return fmt.Errorf("支付成功但上游开通失败: %w", err)
 	}
+	if result.HostID == "" {
+		return errors.New("采购已返回订单但实例关联尚未确认，需核对远端订单")
+	}
 	now := time.Now()
 	active := result.Status == "active" && result.HostID != ""
 	instanceStatus, deliveryStatus := uint8(2), uint8(1)
 	orderStatus := dom.OrderStatusPaid
-	var activatedAt *time.Time
 	if active {
-		instanceStatus, deliveryStatus, orderStatus, activatedAt = 3, 2, dom.OrderStatusCompleted, &now
+		instanceStatus, deliveryStatus, orderStatus = 3, 2, dom.OrderStatusCompleted
 	}
-	expiresAt := now
-	months := 1
-	if item.DurationMonths != nil && *item.DurationMonths > 0 {
-		months = *item.DurationMonths
-	}
-	expiresAt = expiresAt.AddDate(0, months, 0)
 	host := &instancedom.Host{
 		ID: instanceID, InstanceNo: generateInstanceNo(), CustomerID: customerID, OrderID: orderID,
 		OrderItemID: item.ID, ProductID: item.ProductID, ProductName: item.ProductName,
 		ModuleType: item.ModuleType, ConfigSnapshot: item.ConfigSnapshot, Status: instanceStatus,
-		UpstreamInstanceID: result.HostID, ActivatedAt: activatedAt, ExpiresAt: &expiresAt,
+		UpstreamInstanceID: result.HostID, ActivatedAt: result.ActivatedAt, ExpiresAt: result.ExpiresAt,
 	}
 	if supplierID, parseErr := parseID(result.SupplierID); parseErr == nil {
 		host.UpstreamProviderID = &supplierID
 	}
-	upstreamHost := &upstreammodel.UpstreamHost{HostID: formatID(instanceID), SupplierID: result.SupplierID, UpstreamHostID: result.HostID, Status: result.Status, DueTime: expiresAt.Unix()}
+	upstreamHost := &upstreammodel.UpstreamHost{HostID: formatID(instanceID), SupplierID: result.SupplierID, UpstreamHostID: result.HostID, Status: result.Status, DueTime: 0}
+	if result.ExpiresAt != nil {
+		upstreamHost.DueTime = result.ExpiresAt.Unix()
+	}
 	payType := payTypeCode(method)
-	orderRow.Status, orderRow.PayType = orderStatus, &payType
+	allComplete := false
 	if e := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
-		if e := s.repo.UpdateOrderTx(ctx, tx, orderRow); e != nil {
+		var locked dom.Order
+		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND status=?", orderID, dom.OrderStatusPaid).First(&locked).Error; err != nil {
+			return err
+		}
+		if e := tx.WithContext(ctx).Create(host).Error; e != nil {
 			return e
 		}
-		if e := tx.WithContext(ctx).Table(host.TableName()).Clauses(clause.OnConflict{DoNothing: true}).Create(host).Error; e != nil {
+		if e := tx.WithContext(ctx).Create(upstreamHost).Error; e != nil {
 			return e
 		}
-		if e := tx.WithContext(ctx).Table(upstreamHost.TableName()).Clauses(clause.OnConflict{DoNothing: true}).Create(upstreamHost).Error; e != nil {
-			return e
+		state := "unknown"
+		if active {
+			state = "complete"
 		}
-		if e := tx.WithContext(ctx).Table("order.order_items").Where("id = ?", item.ID).Updates(map[string]any{"instance_id": instanceID, "delivery_status": deliveryStatus}).Error; e != nil {
-			return e
+		result := tx.Model(&deliveryUnit{}).Where("id=? AND status='running'", unit.ID).Updates(map[string]any{"status": state, "updated_at": now})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("交付单元状态变化，需核对")
+		}
+		var remaining int64
+		if err := tx.Model(&deliveryUnit{}).Where("order_id=? AND status<>'complete'", orderID).Count(&remaining).Error; err != nil {
+			return err
+		}
+		allComplete = remaining == 0
+		orderStatus = dom.OrderStatusPaid
+		deliveryStatus = 1
+		if allComplete {
+			orderStatus = dom.OrderStatusCompleted
+			deliveryStatus = 2
+		}
+		var uncertain int64
+		if err := tx.Model(&deliveryUnit{}).Where("order_id=? AND status='unknown'", orderID).Count(&uncertain).Error; err != nil {
+			return err
+		}
+		if uncertain > 0 {
+			deliveryStatus = 3
+		}
+		if err := tx.Model(&dom.Order{}).Where("id=?", orderID).Updates(map[string]any{"status": orderStatus, "pay_type": payType, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		fields := map[string]any{"delivery_status": deliveryStatus}
+		if unit.UnitNo == 1 {
+			fields["instance_id"] = instanceID
+		}
+		if err := tx.Table("order.order_items").Where("id=?", item.ID).Updates(fields).Error; err != nil {
+			return err
+		}
+		if allComplete {
+			if err := tasks.EnqueuePayment(tx, fmt.Sprintf("delivery-hooks:%d", orderID), tasks.PaymentPayload{CustomerID: customerID, BusinessID: orderID, BusinessType: "order_hooks", Channel: method}); err != nil {
+				return err
+			}
+		}
+		if active {
+			return tasks.EnqueuePayment(tx, fmt.Sprintf("activation-notice:%d", instanceID), tasks.PaymentPayload{CustomerID: customerID, BusinessID: instanceID, OrderID: orderID, BusinessType: "activation_notice", Channel: method})
 		}
 		return nil
 	}); e != nil {
-		return fmt.Errorf("上游已扣款但本地开通落库失败: %w", e)
+		return fmt.Errorf("远端采购成功但本地交付保存失败: %w", e)
 	}
-	hookErr := s.hooks.OnOrderPaid(ctx, orderRow.ID, orderRow.OrderNo, customerID, orderRow.PayAmount)
-	if active {
-		if notifyErr := s.notifyActivation(ctx, orderRow, host); notifyErr != nil && hookErr == nil {
-			hookErr = notifyErr
-		}
+	if !active {
+		return errors.New("远端实例尚未确认开通，保留关联等待核对")
 	}
-	return hookErr
+	return nil
 }
 
 func cycleForMonths(months int) string {
@@ -647,7 +733,10 @@ func (s *Service) CancelOrder(ctx context.Context, customerID, orderID int64) er
 		if e := s.repo.CancelPendingOrderTx(ctx, tx, customerID, orderID); e != nil {
 			return e
 		}
-		return s.hooks.ReleaseCoupon(ctx, tx, orderID)
+		if err := s.hooks.ReleaseCoupon(ctx, tx, orderID); err != nil {
+			return err
+		}
+		return inventory.Release(tx, orderID, false)
 	})
 }
 

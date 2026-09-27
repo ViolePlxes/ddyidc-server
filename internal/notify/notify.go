@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"ddyidc/pkg/cache"
+	"ddyidc/pkg/clientip"
+	"github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/rest"
 )
 
@@ -143,12 +145,21 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 		return
 	}
 	base := s.key(channel, target, scene)
-	if _, ok := s.get(base + ":cooldown"); ok {
+	if cache.RDB != nil {
+		reserved, err := s.reserveRedisSend(r.Context(), channel, target, scene, clientip.FromRequest(r))
+		if err != nil {
+			respond(w, http.StatusServiceUnavailable, 503, nil, "验证码服务暂时不可用，请稍后重试")
+			return
+		}
+		if reserved != 0 {
+			respond(w, http.StatusTooManyRequests, 429, nil, "验证码发送过于频繁或已达当日限额，请稍后重试")
+			return
+		}
+	} else if _, ok := s.get(base + ":cooldown"); ok {
 		respond(w, http.StatusTooManyRequests, 429, nil, "验证码已发送，请 60 秒后重试")
 		return
 	}
-	daily := s.increment(base+":daily", 24*time.Hour)
-	if daily > maxDailySends {
+	if cache.RDB == nil && s.increment(base+":daily", 24*time.Hour) > maxDailySends {
 		respond(w, http.StatusTooManyRequests, 429, nil, "今日验证码发送次数已达上限")
 		return
 	}
@@ -171,9 +182,23 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 		ttl = 10 * time.Minute
 	}
 	encoded, _ := json.Marshal(record{Code: code, Expires: time.Now().Add(ttl)})
-	s.set(base+":code", string(encoded), ttl)
-	s.set(base+":cooldown", "1", time.Minute)
-	s.del(base + ":consumed")
+	if cache.RDB != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		_, err = cache.RDB.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(ctx, base+":code", string(encoded), ttl)
+			pipe.Del(ctx, base+":consumed")
+			return nil
+		})
+		cancel()
+		if err != nil {
+			respond(w, http.StatusServiceUnavailable, 503, nil, "验证码服务暂时不可用，请稍后重试")
+			return
+		}
+	} else {
+		s.set(base+":code", string(encoded), ttl)
+		s.set(base+":cooldown", "1", time.Minute)
+		s.del(base + ":consumed")
+	}
 	if !mock {
 		template, templateErr := s.manager.repo.TemplateByScene(r.Context(), scene)
 		if templateErr != nil || template == nil || !template.Enabled {
@@ -204,6 +229,24 @@ func (s *VerificationService) verify(w http.ResponseWriter, r *http.Request, cha
 	}
 	if (channel == ChannelSMS && !validMobile(target)) || (channel == ChannelEmail && !validEmail(target)) || !validVerificationScene(req.Scene) {
 		respond(w, http.StatusBadRequest, 400, nil, "请求参数错误")
+		return
+	}
+	if cache.RDB != nil {
+		if err := s.consumeRedisCode(r.Context(), channel, target, req.Scene, req.Code); err != nil {
+			respond(w, http.StatusBadRequest, 400, nil, err.Error())
+			return
+		}
+		token, err := randomToken()
+		if err == nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			err = cache.RDB.Set(ctx, s.key(channel, target, req.Scene)+":verified:"+token, "1", 10*time.Minute).Err()
+			cancel()
+		}
+		if err != nil {
+			respond(w, http.StatusServiceUnavailable, 503, nil, "验证码服务暂时不可用，请重新获取验证码")
+			return
+		}
+		respond(w, http.StatusOK, 0, map[string]interface{}{"verificationToken": token, "expiresIn": 600}, "验证成功")
 		return
 	}
 	base := s.key(channel, target, req.Scene)
@@ -242,9 +285,12 @@ func (s *VerificationService) verify(w http.ResponseWriter, r *http.Request, cha
 
 // ConsumeSMSCode validates and consumes a code exactly once. Sending and
 // registration share this service instance, so concurrent replays serialize.
-func (s *VerificationService) ConsumeSMSCode(_ context.Context, mobile, scene, code string) error {
+func (s *VerificationService) ConsumeSMSCode(ctx context.Context, mobile, scene, code string) error {
 	if !validMobile(mobile) || !validVerificationScene(scene) || strings.TrimSpace(code) == "" {
 		return errors.New("验证码参数错误")
+	}
+	if cache.RDB != nil {
+		return s.consumeRedisCode(ctx, ChannelSMS, mobile, scene, code)
 	}
 	s.consumeMu.Lock()
 	defer s.consumeMu.Unlock()
@@ -350,7 +396,9 @@ func safeProviderError(err error) string {
 
 func (s *VerificationService) get(key string) (string, bool) {
 	if cache.RDB != nil {
-		v, err := cache.RDB.Get(context.Background(), key).Result()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		v, err := cache.RDB.Get(ctx, key).Result()
 		return v, err == nil
 	}
 	s.mu.Lock()
@@ -367,7 +415,9 @@ func (s *VerificationService) set(key, value string, ttl time.Duration) {
 		return
 	}
 	if cache.RDB != nil {
-		_ = cache.RDB.Set(context.Background(), key, value, ttl).Err()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = cache.RDB.Set(ctx, key, value, ttl).Err()
 		return
 	}
 	s.mu.Lock()
@@ -376,7 +426,9 @@ func (s *VerificationService) set(key, value string, ttl time.Duration) {
 }
 func (s *VerificationService) del(keys ...string) {
 	if cache.RDB != nil {
-		_ = cache.RDB.Del(context.Background(), keys...).Err()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = cache.RDB.Del(ctx, keys...).Err()
 		return
 	}
 	s.mu.Lock()
@@ -387,9 +439,11 @@ func (s *VerificationService) del(keys ...string) {
 }
 func (s *VerificationService) increment(key string, ttl time.Duration) int {
 	if cache.RDB != nil {
-		n, err := cache.RDB.Incr(context.Background(), key).Result()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		n, err := cache.RDB.Incr(ctx, key).Result()
 		if err == nil && n == 1 {
-			_ = cache.RDB.Expire(context.Background(), key, ttl).Err()
+			_ = cache.RDB.Expire(ctx, key, ttl).Err()
 		}
 		return int(n)
 	}
