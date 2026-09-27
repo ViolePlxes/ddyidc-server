@@ -168,11 +168,17 @@ func Logger() func(http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			writer := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			completed := false
 			defer func() {
-				entry, _ := json.Marshal(map[string]any{"event": "http_request", "method": r.Method, "path": r.URL.Path, "status": writer.status, "duration_ms": time.Since(start).Milliseconds(), "request_id": w.Header().Get("X-Request-ID")})
+				status := writer.status
+				if !completed {
+					status = 0
+				}
+				entry, _ := json.Marshal(map[string]any{"event": "http_request", "method": r.Method, "path": r.URL.Path, "status": status, "completed": completed, "duration_ms": time.Since(start).Milliseconds(), "request_id": w.Header().Get("X-Request-ID")})
 				log.Print(string(entry))
 			}()
 			next(writer, r)
+			completed = true
 		}
 	}
 }

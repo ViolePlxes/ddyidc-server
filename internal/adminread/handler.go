@@ -16,8 +16,9 @@ import (
 )
 
 type handler struct {
-	db   *gorm.DB
-	auth *auth.Manager
+	db       *gorm.DB
+	auth     *auth.Manager
+	dataRoot string
 }
 
 type orderRow struct {
@@ -96,8 +97,8 @@ type trendPoint struct {
 	OrderCount   int64  `json:"orderCount" gorm:"column:order_count"`
 }
 
-func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.Manager) {
-	h := &handler{db: database, auth: authManager}
+func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.Manager, dataRoot string) {
+	h := &handler{db: database, auth: authManager, dataRoot: dataRoot}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id", Handler: h.clientDetail},
 		{Method: http.MethodPut, Path: "/admin/v1/clients/:id", Handler: h.clientUpdate},
@@ -109,6 +110,7 @@ func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id/credit/freeze", Handler: h.frozenCredits},
 		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/login", Handler: h.clientLogin},
 		{Method: http.MethodGet, Path: "/admin/v1/dashboard", Handler: h.dashboard},
+		{Method: http.MethodGet, Path: "/admin/v1/operations", Handler: h.operations},
 		{Method: http.MethodGet, Path: "/admin/v1/orders", Handler: h.orders},
 		{Method: http.MethodGet, Path: "/admin/v1/customers", Handler: h.customers},
 		{Method: http.MethodPost, Path: "/admin/v1/customers", Handler: h.createCustomer},

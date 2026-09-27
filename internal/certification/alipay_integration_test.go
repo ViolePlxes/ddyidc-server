@@ -9,16 +9,12 @@ import (
 	"crypto/x509"
 	customer "ddyidc/internal/customer/domain"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/testenv"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"github.com/redis/go-redis/v9"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -28,15 +24,8 @@ import (
 // Explicitly opt-in local VM integration test. Only the external Alipay transport
 // is simulated; database locks, AES storage, Redis limits and orders are real.
 func TestAlipayLocalDatabase(t *testing.T) {
-	dsn := os.Getenv("ALIPAY_TEST_DSN")
-	if dsn == "" {
-		t.Skip("local VM integration environment required")
-	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal("database unavailable")
-	}
-	r := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379", Password: os.Getenv("ALIPAY_TEST_REDIS_PASSWORD")})
+	db := testenv.MySQL(t)
+	r := testenv.Redis(t)
 	defer r.Close()
 	ctx := context.Background()
 	s := New(db, r, []byte("0123456789abcdef0123456789abcdef"), t.TempDir())

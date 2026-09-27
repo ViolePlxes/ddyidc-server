@@ -5,17 +5,10 @@ import (
 	"crypto/sha1"
 	"ddyidc/internal/points"
 	"ddyidc/internal/shared/snowflake"
-	"ddyidc/pkg/cache"
-	"ddyidc/pkg/db"
+	"ddyidc/internal/shared/testenv"
 	"encoding/json"
 	"fmt"
-	"github.com/redis/go-redis/v9"
-	"github.com/zeromicro/go-zero/core/conf"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -40,19 +33,7 @@ func TestSignatureUsesExactRawBody(t *testing.T) {
 	}
 }
 func TestRealDatabaseVideoEvents(t *testing.T) {
-	path := os.Getenv("DDYIDC_VIDEO_TEST_CONFIG")
-	if path == "" {
-		t.Skip("requires isolated VM MySQL")
-	}
-	var cfg struct {
-		MySQL db.Config
-		Redis cache.Config
-	}
-	conf.MustLoad(path, &cfg)
-	database, e := gorm.Open(mysql.Open(fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true", cfg.MySQL.User, cfg.MySQL.Password, cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.Database)), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if e != nil {
-		t.Fatal("DB unavailable")
-	}
+	database := testenv.MySQL(t)
 	key := []byte("0123456789abcdef0123456789abcdef")
 	ctx := context.Background()
 	must := func(e error) {
@@ -196,7 +177,7 @@ func TestRealDatabaseVideoEvents(t *testing.T) {
 	if string(encoded) != `{"challenge":12345}` {
 		t.Fatal("challenge mismatch")
 	}
-	rdb := redis.NewClient(&redis.Options{Addr: fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port), Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	rdb := testenv.Redis(t)
 	defer rdb.Close()
 	s.redis = rdb
 	link, e := s.Authorize(ctx, user, "douyin")

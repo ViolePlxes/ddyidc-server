@@ -1,0 +1,154 @@
+{
+  "ddyidc/internal/customer/repository/TestIdentityMutationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET; identity code consumption, uniqueness, transaction rollback and session invalidation require the isolated database suite. Evidence: f02-identity-20260927.log. A normal-suite skip is not a pass."
+  },
+  "ddyidc/TestOfflineMigrationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestBalanceGuardMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestNotificationBoundariesMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/backup/TestRuntimeAccountFenceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestAlipayLocalDatabase": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestAlipayLiveUnconfiguredApp": {
+    "disposition": "external_credentials_and_authorization_required",
+    "verification": "Do not invoke a real gateway or supplier from routine CI. Record explicit authorization and real evidence separately."
+  },
+  "ddyidc/internal/groupbuy/TestCertificationGateRealDatabase": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/groupbuy/TestDurableGroupMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/groupbuy/TestIntegrationLifecycle": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestRenewalQueueMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestWebhookIsolationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/marketplace/TestCertificationGateRealDatabase": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/marketplace/TestPushMarketRealDatabase": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/marketplace/TestBalanceEngineLifecycle": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/order/inventory/TestStockReservationsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestCancelOrderMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestDeliveryUnitsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestZeroPayableMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/TestReceiptRacesMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/points/TestPointsIntegration": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/product/repository/TestMoveGroupMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/shared/filebarrier/TestSnapshotDefersDeletionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/shared/snowflake/TestIDProcessHelper": {
+    "disposition": "subprocess_helper",
+    "verification": "Executed by TestDurableIDsMySQL child process, not as a standalone test."
+  },
+  "ddyidc/internal/shared/snowflake/TestDurableIDsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/shared/tasks/TestDurableTaskCrashMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/shared/tasks/TestDurableTasksMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/shared/workgate/TestTwoPoolsDrainBeforePauseMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/ticket/repository/TestOwnedUploadsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/pkg/auth/TestAccountVersionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/videobind/TestRealDatabaseVideoEvents": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass."
+  },
+  "ddyidc/internal/upstream/provider/zjmf/TestGetOrderPageIntegration": {
+    "disposition": "external_credentials_and_authorization_required",
+    "verification": "Do not invoke a real gateway or supplier from routine CI. Record explicit authorization and real evidence separately."
+  },
+  "ddyidc/internal/upstream/provider/zjmf/TestCreateOrderRejectsInsufficientBalanceIntegration": {
+    "disposition": "external_credentials_and_authorization_required",
+    "verification": "Do not invoke a real gateway or supplier from routine CI. Record explicit authorization and real evidence separately."
+  },
+  "ddyidc/internal/update/TestRedisGlobalLock": {
+    "disposition": "legacy_skip_replaced",
+    "verification": "Now starts private Redis and must run in the normal suite. This registry entry records the previous baseline only."
+  },
+  "ddyidc/internal/upstream/service/TestCatalogReplacementMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run disposable MySQL catalog atomic-replacement test; ordinary skipped suite is not a pass."
+  },
+  "ddyidc/internal/backup/TestRestoreReleaseAtomicMySQL": {
+    "verification": "Run isolated MySQL release-state failure/rollback test; skip is not a pass.",
+    "disposition": "isolated_suite_required"
+  },
+  "ddyidc/internal/upstream/service/TestCatalogMultiNodeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run disposable MySQL two-store admission/cancel/stale-publication test; a skip is not a pass."
+  },
+  "ddyidc/internal/cdnsell/TestPaidFulfillmentMySQL": {
+    "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass.",
+    "disposition": "isolated_suite_required"
+  }
+}

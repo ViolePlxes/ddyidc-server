@@ -38,6 +38,8 @@ import (
 	"ddyidc/internal/shared/runtimepaths"
 	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/tasks"
+	"ddyidc/internal/shared/workgate"
 	systemrepo "ddyidc/internal/system/repository"
 	tickethandler "ddyidc/internal/ticket/handler"
 	ticketrepo "ddyidc/internal/ticket/repository"
@@ -45,6 +47,7 @@ import (
 	"ddyidc/internal/update"
 	upstreamapi "ddyidc/internal/upstream/api"
 	upstreamservice "ddyidc/internal/upstream/service"
+	"ddyidc/internal/upstream/testpolicy"
 	"ddyidc/internal/videobind"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/cache"
@@ -52,10 +55,13 @@ import (
 	cryptoutil "ddyidc/pkg/crypto"
 	"ddyidc/pkg/db"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"github.com/zeromicro/go-zero/core/proc"
 	"net/http"
+	"os"
+	"sync/atomic"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/conf"
@@ -64,9 +70,11 @@ import (
 )
 
 var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
+var draining atomic.Bool
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
 var migrate = flag.Bool("migrate", false, "执行离线版本迁移后退出；使用独立迁移账号配置")
+var migrationSocket = flag.String("migration-socket", "", "仅root离线迁移使用本地MySQL socket；不改变运行账户权限")
 var retryDirty = flag.Bool("retry-dirty-migration", false, "检查失败迁移的部分结果后显式重试")
 
 var (
@@ -87,6 +95,8 @@ var repositories struct {
 }
 
 type paymentCoordinator struct {
+	notifier      *notify.Manager
+	groups        *groupbuy.Service
 	instances     *instanceservice.Service
 	certification *certification.Service
 	orders        *orderservice.Service
@@ -164,6 +174,36 @@ func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerI
 func (c paymentCoordinator) AfterRechargePayment(ctx context.Context, rechargeID, customerID, amountCents int64) error {
 	return c.orders.AfterRechargePayment(ctx, rechargeID, customerID, amountCents)
 }
+func (c paymentCoordinator) ProvisionDeliveryUnit(ctx context.Context, customerID, unitID int64, method string) error {
+	return c.orders.ProvisionDeliveryUnit(ctx, customerID, unitID, method)
+}
+func (c paymentCoordinator) AfterOrderDelivery(ctx context.Context, customerID, orderID int64) error {
+	if err := c.groups.SyncDeliveredOrder(ctx, customerID, orderID); err != nil {
+		return err
+	}
+	return c.orders.AfterOrderDelivery(ctx, customerID, orderID)
+}
+func (c paymentCoordinator) NotifyDeliveredInstance(ctx context.Context, customerID, instanceID int64) error {
+	return c.orders.NotifyDeliveredInstance(ctx, customerID, instanceID)
+}
+func (c paymentCoordinator) RefreshWebhook(ctx context.Context, p tasks.RefreshPayload) error {
+	return c.instances.RefreshWebhook(ctx, p)
+}
+func (c paymentCoordinator) DeliverNotice(ctx context.Context, p tasks.NoticePayload) error {
+	if c.notifier == nil {
+		return errors.New("notification service unavailable")
+	}
+	return c.notifier.NotifyCustomer(ctx, p.Scene, p.CustomerID, fmt.Sprint(p.BusinessID), p.Params)
+}
+func (c paymentCoordinator) NotifyGroupStatus(ctx context.Context, customerID, recordID int64, scene string) error {
+	return c.groups.NotifyStatus(ctx, customerID, recordID, scene)
+}
+func (c paymentCoordinator) NotifyGroupDelivered(ctx context.Context, customerID, recordID int64) error {
+	return c.groups.NotifyDelivered(ctx, customerID, recordID)
+}
+func (c paymentCoordinator) CompleteGroup(ctx context.Context, id int64) error {
+	return c.groups.CompleteGroup(ctx, id)
+}
 func (c paymentCoordinator) AfterMarketplacePayment(ctx context.Context, orderID, customerID int64) error {
 	return c.marketplace.AfterExternalPayment(ctx, orderID, customerID)
 }
@@ -173,17 +213,19 @@ func main() {
 
 	var c struct {
 		rest.RestConf
-		Runtime       runtimepaths.Config `json:",optional"`
-		Cron          *distsync.Config    `json:",optional"`
-		Network       clientip.Config     `json:",optional"`
-		MySQL         db.Config
-		Redis         cache.Config
-		Notify        notify.Config
-		Update        update.Config
-		RemoteConsole remoteconsole.Config
-		Payment       struct{ AlipaySecretFile string }
-		Crypto        struct{ AESKey string }
-		JWT           struct {
+		Runtime               runtimepaths.Config `json:",optional"`
+		DeploymentEnvironment string              `json:",optional"`
+		UpstreamTestPolicy    testpolicy.Config   `json:",optional"`
+		Cron                  *distsync.Config    `json:",optional"`
+		Network               clientip.Config     `json:",optional"`
+		MySQL                 db.Config
+		Redis                 cache.Config
+		Notify                notify.Config
+		Update                update.Config
+		RemoteConsole         remoteconsole.Config
+		Payment               struct{ AlipaySecretFile string }
+		Crypto                struct{ AESKey string }
+		JWT                   struct {
 			AccessSecret  string
 			AccessExpire  int64
 			RefreshSecret string
@@ -191,6 +233,9 @@ func main() {
 		}
 	}
 	conf.MustLoad(*configFile, &c)
+	if err := testpolicy.Configure(c.DeploymentEnvironment, c.UpstreamTestPolicy); err != nil {
+		panic(err)
+	}
 	clientIPs, err := clientip.New(c.Network)
 	if err != nil {
 		panic(err)
@@ -213,7 +258,20 @@ func main() {
 	}
 	// 初始化数据库
 	c.MySQL.Migration = *migrate
-	db.MustInit(c.MySQL)
+	if *migrationSocket != "" {
+		if err := validateMigrationSocket(*migrate, os.Geteuid(), *migrationSocket, c.MySQL.Host); err != nil {
+			panic(err)
+		}
+		if err := db.InitOfflineMigrationSocket(*migrationSocket, c.MySQL.Database, c.MySQL.Port); err != nil {
+			panic("offline migration socket unavailable")
+		}
+		var port int
+		if err := db.DB.QueryRow("SELECT @@port").Scan(&port); err != nil || port != c.MySQL.Port {
+			panic("migration socket does not match configured local database")
+		}
+	} else {
+		db.MustInit(c.MySQL)
+	}
 	defer db.Close()
 	migrationSteps, err := migrations.Steps()
 	if err != nil {
@@ -234,6 +292,15 @@ func main() {
 	}
 	if err := migrations.Verify(context.Background(), db.DB, migrationSteps); err != nil {
 		panic(err)
+	}
+	controlPool, err := db.OpenControl(c.MySQL)
+	if err != nil {
+		panic("maintenance control connection unavailable")
+	}
+	defer controlPool.Close()
+	workgate.Configure(controlPool)
+	if err := workgate.Run(context.Background(), func(context.Context) error { return nil }); err != nil {
+		panic("maintenance barrier is closed")
 	}
 	if err := snowflake.Configure(context.Background(), db.DB); err != nil {
 		panic(err)
@@ -283,9 +350,11 @@ func main() {
 	server.Use(middleware.Logger())
 	server.Use(middleware.RedactSensitiveHeaders())
 	server.Use(middleware.CookieSession(authManager))
+	server.Use(workgate.Middleware)
 
 	// 注册路由（各域 handler 在此注册）
 	var cronStarts []func(context.Context)
+	proc.AddShutdownListener(func() { draining.Store(true) })
 	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
 	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, balance.New(db.G).StartReconciliation,
 		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
@@ -296,7 +365,7 @@ func main() {
 		defer cancelCron()
 		// go-zero's shutdown hook runs before resource teardown.
 		proc.AddShutdownListener(cancelCron)
-		go distsync.NewLeader(cache.RDB).Run(cronCtx, cronStarts)
+		go distsync.NewLeader(cache.RDB).WithAdmission(workgate.Run).Run(cronCtx, cronStarts)
 	}
 
 	fmt.Printf("DDYIDC 服务启动，监听 %s:%d\n", c.Host, c.Port)
@@ -321,11 +390,13 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		Handler: healthHandler,
 	})
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/api/v1/system/version", Handler: versionHandler})
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/health/live", Handler: liveHandler})
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/health/ready", Handler: healthHandler})
 	verificationService := notify.RegisterHandlers(server, notifyManager)
-	notify.RegisterAdminHandlers(server, notifyManager, jwt)
+	notify.RegisterAdminHandlers(server, notifyManager, jwt, balance.New(db.G))
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
-	adminread.RegisterHandlers(server, db.G, jwt)
+	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
 	navigationSvc := navigation.New(db.G)
 	if err := navigationSvc.EnsureSchema(context.Background()); err != nil {
 		panic(err)
@@ -362,6 +433,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 
 	// 订单/充值（M2/M4 挂钩分销与优惠券）
 	orderSvc := orderservice.NewService(repositories.Order, orderEventHooks{marketing: marketingapi.NewOrderHooks(marketingSvc), points: pointsSvc}, snapshotKey)
+	*cronStarts = append(*cronStarts, orderSvc.StartStockExpiry)
 	orderSvc.SetNotifier(notifyManager)
 	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)
 	if err := cdnsellSvc.EnsureSchema(context.Background()); err != nil {
@@ -379,14 +451,12 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := groupbuySvc.EnsureSchema(context.Background()); err != nil {
 		panic("groupbuy schema initialization failed: " + err.Error())
 	}
-	groupbuyEnabled, err := groupbuySvc.Enabled(context.Background())
+	_, err = groupbuySvc.Enabled(context.Background())
 	if err != nil {
 		panic("groupbuy configuration failed: " + err.Error())
 	}
 	groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
-	if groupbuyEnabled {
-		*cronStarts = append(*cronStarts, groupbuySvc.StartMaintenance)
-	}
+	*cronStarts = append(*cronStarts, groupbuySvc.StartMaintenance)
 	marketplaceSvc := marketplace.NewService(db.G, cache.RDB, notifyManager)
 	if err := marketplaceSvc.EnsureSchema(context.Background()); err != nil {
 		panic("marketplace schema initialization failed: " + err.Error())
@@ -412,7 +482,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("instance management schema failed: " + err.Error())
 	}
 	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance)
-	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewAsyncDispatcher(paymentCoordinator{instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
+	taskContext, stopTasks := context.WithCancel(context.Background())
+	proc.AddShutdownListener(stopTasks)
+	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewDurableDispatcher(taskContext, db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
+	paymentSvc.SetRemoteDeliveryRecovery(orderSvc.ReconcileRemoteDelivery)
+	paymentSvc.SetRenewalRecovery(instanceSvc.ReconcileRenewal)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
@@ -440,7 +514,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 
 	remoteRegistry := remoteconsole.NewRegistry()
-	if err := remoteRegistry.Register(remoteconsole.NewNoVNCProvider(instanceSvc)); err != nil {
+	remoteProvider := remoteconsole.NewNoVNCProvider(instanceSvc)
+	if err := remoteProvider.SetNodeID(remoteConfig.NodeID); err != nil {
+		panic("invalid remote console node identity")
+	}
+	if err := remoteRegistry.Register(remoteProvider); err != nil {
 		panic("remote console provider initialization failed")
 	}
 	if err := remoteRegistry.Use(remoteConfig.Engine); err != nil {
@@ -474,22 +552,35 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
+	if draining.Load() {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "draining"})
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	var one int
 	databaseOK := db.G != nil && db.G.WithContext(ctx).Raw("SELECT 1").Scan(&one).Error == nil && one == 1
 	redisOK := cache.RDB != nil && cache.RDB.Ping(ctx).Err() == nil
+	var barrierMode string
+	maintenanceOK := db.G != nil && db.G.WithContext(ctx).Raw("SELECT mode FROM system.operation_barrier WHERE id=1").Scan(&barrierMode).Error == nil && barrierMode == "running"
 	status := http.StatusOK
-	if !databaseOK || !redisOK {
+	if !databaseOK || !redisOK || !maintenanceOK {
 		status = http.StatusServiceUnavailable
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"status":  map[bool]string{true: "ok", false: "degraded"}[databaseOK && redisOK],
+		"status":  map[bool]string{true: "ok", false: "degraded"}[databaseOK && redisOK && maintenanceOK],
 		"version": version, "commit": commit, "branch": branch, "buildTime": buildTime,
-		"database": databaseOK, "redis": redisOK,
+		"database": databaseOK, "redis": redisOK, "maintenanceReady": maintenanceOK,
 	})
+}
+
+func liveHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 }
 
 func versionHandler(w http.ResponseWriter, _ *http.Request) {

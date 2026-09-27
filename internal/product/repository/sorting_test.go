@@ -3,11 +3,9 @@ package product
 import (
 	"context"
 	dom "ddyidc/internal/product/domain"
+	"ddyidc/internal/shared/testenv"
 	"errors"
-	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"os"
 	"reflect"
 	"testing"
 )
@@ -27,14 +25,7 @@ func TestFullListValidation(t *testing.T) {
 
 // Real MySQL, with all fixtures and mutations contained in an outer rollback.
 func TestMoveGroupMySQL(t *testing.T) {
-	dsn := os.Getenv("PRODUCT_SORT_TEST_DSN")
-	if dsn == "" {
-		t.Skip("PRODUCT_SORT_TEST_DSN not set")
-	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal("cannot open integration database")
-	}
+	db := testenv.MySQL(t)
 	tx := db.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
@@ -96,7 +87,7 @@ func TestMoveGroupMySQL(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	err = repo.MoveAdminGroup(ctx, x.ID, a.ID, []int64{x.ID, y.ID}, []int64{z.ID})
+	err := repo.MoveAdminGroup(ctx, x.ID, a.ID, []int64{x.ID, y.ID}, []int64{z.ID})
 	db.Callback().Update().Remove(callback)
 	if err == nil || writes < 3 {
 		t.Fatal("failure injection did not execute")

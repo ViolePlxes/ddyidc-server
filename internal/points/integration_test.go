@@ -11,8 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"ddyidc/pkg/db"
-	"github.com/redis/go-redis/v9"
+	"ddyidc/internal/shared/testenv"
 	"gorm.io/gorm"
 )
 
@@ -22,12 +21,9 @@ func TestPointsIntegration(t *testing.T) {
 		cleanupBrowser(context.Background(), database)
 		return
 	}
-	if os.Getenv("DDYIDC_POINTS_INTEGRATION") != "1" {
-		t.Skip("set DDYIDC_POINTS_INTEGRATION=1")
-	}
 	ctx := context.Background()
 	database := openQA(t)
-	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:6379"})
+	rdb := testenv.Redis(t)
 	defer rdb.Close()
 	s := NewService(database, rdb)
 	if err := s.EnsureSchema(ctx); err != nil {
@@ -149,10 +145,7 @@ func TestPointsIntegration(t *testing.T) {
 
 func openQA(t *testing.T) *gorm.DB {
 	t.Helper()
-	if err := db.Init(db.Config{Host: "127.0.0.1", Port: 3306, User: "root", Password: "ddyidc123", Database: "ddyidc", MaxOpenConns: 20, MaxIdleConns: 5, ConnMaxLifetime: 3600}); err != nil {
-		t.Fatal(err)
-	}
-	return db.G
+	return testenv.MySQL(t)
 }
 
 func cleanupCore(ctx context.Context, database *gorm.DB, userID int64) {

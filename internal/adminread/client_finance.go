@@ -14,6 +14,7 @@ import (
 
 	balance "ddyidc/internal/billing/balance"
 	payment "ddyidc/internal/payment/domain"
+	paymentrepo "ddyidc/internal/payment/repository"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/pkg/auth"
 	"gorm.io/gorm"
@@ -145,13 +146,8 @@ func (h *handler) credit(w http.ResponseWriter, r *http.Request) {
 			}
 			value, _ := balance.ParseMoney(command.Amount)
 			now := time.Now()
-			orderID := snowflake.GenID()
-			paymentID := snowflake.GenID()
-			if e = tx.Table("payment.recharge_orders").Create(map[string]any{"id": orderID, "recharge_no": fmt.Sprintf("AR%d", orderID), "customer_id": id, "amount": int64(value), "channel": in.Gateway, "status": 2, "paid_at": now, "created_at": now, "updated_at": now}).Error; e != nil {
-				return e
-			}
-			p := payment.Payment{ID: paymentID, PaymentNo: fmt.Sprintf("AP%d", paymentID), BizType: payment.BizRecharge, BizID: orderID, CustomerID: id, Channel: in.Gateway, OutTradeNo: fmt.Sprintf("AP%d", paymentID), TransactionID: in.TransactionNumber, Amount: value.String(), AmountFen: int64(value), Currency: "CNY", Status: payment.StatusPaid, PaidAt: &now, ExpireAt: now, CreatedAt: now, UpdatedAt: now}
-			if e = tx.Create(&p).Error; e != nil {
+			paymentID, e := paymentrepo.RecordAdminRechargeTx(tx, id, actor, command.Notes, value, in.Gateway, in.TransactionNumber, now)
+			if e != nil {
 				return e
 			}
 			command.RefType = "payment"

@@ -1,0 +1,13 @@
+{
+  "001_baseline.sql": "210f1fedc0972f9839a48238837f6ecd1b92aafce9934fc3b533bc38e635dc23",
+  "002_auth_version.sql": "d33310e9df24be5402ccf6e2d048727613faee4eaeace74d78dc16f28372a707",
+  "003_ticket_uploads.sql": "24e85099e12d6fe8dd609539b29dc9c49a3428dfe7032d03e2dc47417763e2cf",
+  "004_id_sequences.sql": "beda87dc1e4676e6325beb410607115486c787953d00cb963473505cdd5b7ab9",
+  "005_ledger_constraints.sql": "2cb95050391abe679e78c4585886464af4c1b5b2725066269889a2e870283df1",
+  "006_payment_receipts.sql": "b72e4d5303fd89022579741edaf1445973342a6f93652d494f5869073b15827b",
+  "007_durable_tasks.sql": "d533ba79b3cd4c16ab08cac7f73a89982710d419e866d5d9e4226ef21ef06282",
+  "008_delivery_units.sql": "77834dbb64cfeed31ed8bb46cda6260c73067f15eb279bb834853da92be76aad",
+  "009_stock_reservations.sql": "dc0d9ff6bd2f77c20b6cacda5b5d105281474a17642fcbf7faa8b76acd1a5552",
+  "010_upstream_event_inbox.sql": "8095ef098a5a3a7fd6203981ce07afb28805bdce3d438afefa1a83077f178f11",
+  "011_operation_barrier.sql": "a3d7bd3219d9924529a952055b4dc817b1ad7a22a12ca7e332a2c75880696253"
+}

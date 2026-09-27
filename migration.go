@@ -26,6 +26,13 @@ import (
 	"fmt"
 )
 
+func validateMigrationSocket(offline bool, uid int, socket, host string) error {
+	if !offline || uid != 0 || socket != "/var/run/mysqld/mysqld.sock" || (host != "127.0.0.1" && host != "localhost" && host != "::1") {
+		return fmt.Errorf("migration socket is restricted to explicit local root offline migration")
+	}
+	return nil
+}
+
 // Only called by the offline migrator; no HTTP server, cron, provider request or
 // development account bootstrap is started here. Existing settings are retained.
 func seedModules(ctx context.Context, key []byte, root string) error {

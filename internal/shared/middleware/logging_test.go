@@ -33,3 +33,17 @@ func TestRequestMetadataExcludesCredentials(t *testing.T) {
 		t.Fatal("untrusted request identity accepted")
 	}
 }
+
+func TestInterruptedHandlerIsNotLoggedAsSuccess(t *testing.T) {
+	var output bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(old)
+	func() {
+		defer func() { _ = recover() }()
+		Logger()(func(http.ResponseWriter, *http.Request) { panic("TEST_PANIC_SECRET") })(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v1/example", nil))
+	}()
+	if strings.Contains(output.String(), "TEST_PANIC_SECRET") || !strings.Contains(output.String(), `"completed":false`) || !strings.Contains(output.String(), `"status":0`) {
+		t.Fatal("interrupted request logged incorrectly")
+	}
+}

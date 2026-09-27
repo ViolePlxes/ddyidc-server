@@ -20,12 +20,16 @@ jobs:
       - name: Build, race and protocol regression
         run: |
           go test -json ./... > go-test.jsonl
+          python3 tools/security/check_go_tests.py go-test.jsonl tools/security/integration-skips.json --output go-test-summary.json
           go test -race -count=3 ./pkg/auth ./pkg/clientip ./pkg/db ./internal/shared/middleware ./internal/shared/distsync
           go vet ./...
           go build ./...
           go build -trimpath -o /tmp/ddyidc-server .
           python3 deploy/linux/tests/test_nginx_proxy.py
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
+          bash deploy/linux/tests/test_foundation_modules.sh > foundation-modules.log 2>&1
+          bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1
+          bash deploy/linux/tests/test_finance_recovery.sh > finance-recovery.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
       - name: Source and artifact vulnerability checks
         run: |
@@ -41,6 +45,10 @@ jobs:
           name: foundation-core-evidence
           path: |
             go-test.jsonl
+            go-test-summary.json
             source-vulns.json
             binary-vulns.json
             order-transactions.log
+            foundation-modules.log
+            schema-contracts.log
+            finance-recovery.log
