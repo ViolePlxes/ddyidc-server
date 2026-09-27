@@ -28,6 +28,7 @@ import (
 	"ddyidc/internal/upstream/metrics"
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
+	"ddyidc/pkg/outbound"
 )
 
 const (
@@ -37,7 +38,7 @@ const (
 )
 
 var (
-	client = &http.Client{Timeout: requestTimeout}
+	client = outbound.NewClient(requestTimeout)
 	tokens = struct {
 		sync.Mutex
 		values map[string]cachedJWT
@@ -846,6 +847,9 @@ func (p *Provider) authorizedFormPost(path string, form url.Values) ([]byte, err
 // intentionally below Auth/GetProduct/CreateOrder so every request, including
 // login and read-only traffic, is covered by the same guard.
 func (p *Provider) request(method, endpoint string, body io.Reader, contentType, jwt string) ([]byte, int, error) {
+	if err := outbound.ValidateURL(endpoint); err != nil {
+		return nil, 0, err
+	}
 	var bodyBytes []byte
 	if body != nil {
 		var err error
@@ -909,8 +913,11 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			}
 			break
 		}
-		payload, readErr := io.ReadAll(io.LimitReader(response.Body, 20<<20))
+		payload, readErr := io.ReadAll(io.LimitReader(response.Body, (20<<20)+1))
 		response.Body.Close()
+		if len(payload) > 20<<20 {
+			return nil, response.StatusCode, errors.New("supplier response exceeds size limit")
+		}
 		if readErr != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr, remoteAudit)
 			lastErr = readErr

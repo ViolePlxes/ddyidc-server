@@ -54,6 +54,7 @@ import (
 	"ddyidc/pkg/clientip"
 	cryptoutil "ddyidc/pkg/crypto"
 	"ddyidc/pkg/db"
+	"ddyidc/pkg/outbound"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -216,6 +217,7 @@ func main() {
 		Runtime               runtimepaths.Config `json:",optional"`
 		DeploymentEnvironment string              `json:",optional"`
 		UpstreamTestPolicy    testpolicy.Config   `json:",optional"`
+		Outbound              outbound.Config     `json:",optional"`
 		Cron                  *distsync.Config    `json:",optional"`
 		Network               clientip.Config     `json:",optional"`
 		MySQL                 db.Config
@@ -233,6 +235,9 @@ func main() {
 		}
 	}
 	conf.MustLoad(*configFile, &c)
+	if err := outbound.Configure(c.Outbound); err != nil {
+		panic("invalid outbound network policy")
+	}
 	if err := testpolicy.Configure(c.DeploymentEnvironment, c.UpstreamTestPolicy); err != nil {
 		panic(err)
 	}

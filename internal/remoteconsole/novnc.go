@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"ddyidc/pkg/outbound"
 	"encoding/hex"
 	"io"
 	"log"
@@ -53,7 +54,7 @@ func NewNoVNCProvider(source UpstreamSource) *NoVNCProvider {
 		ttl:      defaultSessionTTL,
 		now:      time.Now,
 		random:   rand.Reader,
-		dialer:   &websocket.Dialer{HandshakeTimeout: 15 * time.Second, Subprotocols: []string{"binary"}},
+		dialer:   &websocket.Dialer{HandshakeTimeout: 15 * time.Second, Subprotocols: []string{"binary"}, NetDialContext: outbound.DialContext},
 		sessions: make(map[int64]*cachedSession),
 	}
 	activeProviders.Store(p, struct{}{})
@@ -184,6 +185,9 @@ func (p *NoVNCProvider) Proxy(ctx context.Context, session *RemoteSession, clien
 	go p.watch(ctx, cancel, session)
 	clientConn = &ownershipConn{Conn: clientConn, valid: func() bool { return p.valid(ctx, session) }}
 	defer p.Discard(session)
+	if err := outbound.ValidateURL(session.upstream); err != nil {
+		return ErrUpstreamUnavailable
+	}
 	upstream, response, err := p.dialer.DialContext(ctx, session.upstream, nil)
 	if response != nil && response.Body != nil {
 		_ = response.Body.Close()
