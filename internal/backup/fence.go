@@ -7,6 +7,7 @@ import (
 	"gorm.io/gorm"
 	"regexp"
 	"strings"
+	"time"
 )
 
 type RuntimeAccount struct {
@@ -65,9 +66,25 @@ func fenceAccounts(ctx context.Context, database *gorm.DB, accounts []RuntimeAcc
 			}
 		}
 	}
-	var remaining int64
-	if err := database.WithContext(ctx).Table("information_schema.PROCESSLIST").Where("USER='ddyidc_runtime'").Count(&remaining).Error; err != nil || remaining != 0 {
-		return errors.New("仍有应用连接，禁止导入")
+	// MySQL KILL marks a thread for termination; its cleanup may outlive the
+	// statement. Wait boundedly for actual disappearance, never infer isolation
+	// from KILL success or unlock the account on timeout.
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var remaining int64
+		if err := database.WithContext(waitCtx).Table("information_schema.PROCESSLIST").Where("USER='ddyidc_runtime'").Count(&remaining).Error; err != nil {
+			return errors.New("无法确认应用连接已退出，禁止导入")
+		}
+		if remaining == 0 {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return errors.New("仍有应用连接，禁止导入")
+		case <-ticker.C:
+		}
 	}
-	return nil
 }
