@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -121,7 +122,7 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 		cfg.Wechat.NotifyURL = cfg.Wechat.BaseURL + "/api/v1/payment/notify/wechat"
 	}
 	if cfg.Wechat.Enabled {
-		cfg.Wechat.PublicKeyID, cfg.Wechat.PublicKey, err = loadWechatVerificationFiles(defaultWechatPublicKeyIDPath, defaultWechatPublicKeyPath)
+		cfg.Wechat.PublicKeyID, cfg.Wechat.PublicKey, err = loadWechatVerificationMaterial()
 		if err != nil {
 			return Config{}, err
 		}
@@ -139,6 +140,21 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 
 // Optional pinned WeChat Pay verification material. Never obtain a key from an
 // incoming callback URL or trust a key supplied alongside the notification.
+func loadWechatVerificationMaterial() (string, string, error) {
+	if directory := os.Getenv("CREDENTIALS_DIRECTORY"); directory != "" {
+		idPath := filepath.Join(directory, "wechatpay_public_key_id")
+		keyPath := filepath.Join(directory, "wechatpay_public_key.pem")
+		_, idErr := os.Stat(idPath)
+		_, keyErr := os.Stat(keyPath)
+		// Other systemd credentials may exist without configuring WeChat. Once
+		// either member exists, an incomplete pair must fail closed.
+		if !errors.Is(idErr, os.ErrNotExist) || !errors.Is(keyErr, os.ErrNotExist) {
+			return loadWechatVerificationFiles(idPath, keyPath)
+		}
+	}
+	return loadWechatVerificationFiles(defaultWechatPublicKeyIDPath, defaultWechatPublicKeyPath)
+}
+
 func loadWechatVerificationFiles(idPath, keyPath string) (string, string, error) {
 	idRaw, idErr := os.ReadFile(idPath)
 	keyRaw, keyErr := os.ReadFile(keyPath)

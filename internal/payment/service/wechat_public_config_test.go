@@ -33,3 +33,29 @@ func TestWechatPublicVerificationPair(t *testing.T) {
 		}
 	}
 }
+
+func TestWechatSystemdCredentialPair(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", dir)
+	idPath := filepath.Join(dir, "wechatpay_public_key_id")
+	keyPath := filepath.Join(dir, "wechatpay_public_key.pem")
+	if err := os.WriteFile(idPath, []byte("PUB_KEY_ID_456"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadWechatVerificationMaterial(); err == nil {
+		t.Fatal("incomplete systemd credentials must not fall back to certificate mode")
+	}
+	if err := os.WriteFile(keyPath, []byte("test-only-systemd-key"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	id, key, err := loadWechatVerificationMaterial()
+	if err != nil || id != "PUB_KEY_ID_456" || key != "test-only-systemd-key" {
+		t.Fatal("systemd credential pair not selected")
+	}
+	if err := os.Remove(idPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := loadWechatVerificationMaterial(); err == nil {
+		t.Fatal("key without ID must fail closed")
+	}
+}
