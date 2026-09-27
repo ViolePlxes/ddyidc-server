@@ -101,3 +101,29 @@ func (s *Service) ConfigureMaintenance() error {
 	}
 	return nil
 }
+
+// PrepareWorkerEnvironment keeps privileged subprocess scratch files out of
+// application-owned directories. Never call runtimepaths.Prepare as root here.
+func (s *Service) PrepareWorkerEnvironment() error {
+	if s.privateRoot == "" {
+		return errors.New("维护目录未初始化")
+	}
+	if err := checkRootPath(s.privateRoot, true); err != nil {
+		return err
+	}
+	for _, name := range []string{"tmp", "home", "cache"} {
+		path := filepath.Join(s.privateRoot, name)
+		if err := os.MkdirAll(path, 0700); err != nil {
+			return err
+		}
+		if err := checkRootPath(path, true); err != nil {
+			return err
+		}
+	}
+	for key, name := range map[string]string{"TMPDIR": "tmp", "TMP": "tmp", "TEMP": "tmp", "HOME": "home", "XDG_CACHE_HOME": "cache"} {
+		if err := os.Setenv(key, filepath.Join(s.privateRoot, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}

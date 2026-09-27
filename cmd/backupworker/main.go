@@ -36,7 +36,9 @@ func main() {
 	if e != nil {
 		os.Exit(1)
 	}
-	if e = paths.Prepare(); e != nil {
+	// The privileged worker must not create application-owned runtime paths.
+	// Those are prepared by installation/the application identity.
+	if e = paths.Within(paths.Root); e != nil {
 		fmt.Fprintln(os.Stderr, "backup data directory unavailable")
 		os.Exit(1)
 	}
@@ -67,8 +69,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "root-only maintenance directory or independent signing key unavailable")
 		os.Exit(1)
 	}
-	if e = service.PreparePaths(); e != nil {
-		fmt.Fprintln(os.Stderr, "backup schema unavailable")
+	if e = service.PrepareWorkerEnvironment(); e != nil {
+		fmt.Fprintln(os.Stderr, "backup private environment unavailable")
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Minute)
