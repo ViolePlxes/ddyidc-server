@@ -16,7 +16,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Install isolated test prerequisites
-        run: sudo apt-get update && sudo apt-get install -y redis-server nginx openssl mysql-server
+        run: sudo apt-get update && sudo apt-get install -y redis-server nginx openssl mysql-server python3-yaml
       - name: Build, race and protocol regression
         run: |
           go test -json ./... > go-test.jsonl
@@ -31,6 +31,7 @@ jobs:
           bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1
           bash deploy/linux/tests/test_finance_recovery.sh > finance-recovery.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
+          python3 -m unittest discover -s deploy/linux -p 'test_production_preflight.py'
       - name: Source and artifact vulnerability checks
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
