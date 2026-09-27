@@ -147,7 +147,11 @@ func failedResult(plan update.HelperPlan, logLines []string, rollbackStatus stri
 }
 
 func rollback(plan update.HelperPlan, logLines []string, cause error) update.HelperResult {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	return rollbackContext(context.Background(), plan, logLines, cause)
+}
+
+func rollbackContext(parent context.Context, plan update.HelperPlan, logLines []string, cause error) update.HelperResult {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	defer cancel()
 	rollbackErrors := make([]string, 0, 4)
 	if err := systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "stop", plan.ServiceName); err != nil {
@@ -164,8 +168,15 @@ func rollback(plan update.HelperPlan, logLines []string, cause error) update.Hel
 	if len(rollbackErrors) == 0 {
 		if err := systemctl(ctx, plan.SudoPath, plan.SystemctlPath, "start", plan.ServiceName); err != nil {
 			rollbackErrors = append(rollbackErrors, "重启旧后端: "+safeError(err))
-		} else if err = waitHealth(ctx, plan.HealthURL); err != nil {
-			rollbackErrors = append(rollbackErrors, "旧后端健康检查: "+safeError(err))
+		} else if err = waitHealthAndVersion(ctx, plan.HealthURL, plan.VersionURL, plan.SmokeURL, plan.BeforeCommit); err != nil {
+			rollbackErrors = append(rollbackErrors, "旧后端健康、版本和关键接口检查: "+safeError(err))
+			// An expired verification context must not prevent stopping an
+			// unverified process. Never leave a failed rollback serving traffic.
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if stopErr := systemctl(stopCtx, plan.SudoPath, plan.SystemctlPath, "stop", plan.ServiceName); stopErr != nil {
+				rollbackErrors = append(rollbackErrors, "停止未验证回退版本: "+safeError(stopErr))
+			}
+			stopCancel()
 		}
 	}
 	status := "success"

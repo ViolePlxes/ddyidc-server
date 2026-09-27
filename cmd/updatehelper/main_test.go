@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"ddyidc/internal/update"
 )
@@ -62,6 +66,7 @@ func TestHealthFailureRollsBackExecutableAndRestartsService(t *testing.T) {
 		data, _ := os.ReadFile(current)
 		if string(data) == "old" {
 			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte(`{"commit":"before"}`))
 			return
 		}
 		writer.WriteHeader(http.StatusServiceUnavailable)
@@ -79,6 +84,46 @@ func TestHealthFailureRollsBackExecutableAndRestartsService(t *testing.T) {
 		t.Fatalf("expected successful rollback, got status=%s rollback=%s error=%s", result.Status, result.RollbackStatus, result.Error)
 	}
 	assertTestFile(t, current, "old")
+}
+
+func TestRollbackRejectsHealthyWrongVersionAndFailedSmoke(t *testing.T) {
+	for _, mode := range []string{"wrong-version", "failed-smoke"} {
+		t.Run(mode, func(t *testing.T) {
+			root := t.TempDir()
+			current, backup := filepath.Join(root, "server"), filepath.Join(root, "previous")
+			writeTestFile(t, current, "failed-new")
+			writeTestFile(t, backup, "old")
+			ctl, sudo, git := filepath.Join(root, "systemctl"), filepath.Join(root, "sudo"), filepath.Join(root, "git")
+			writeTestFile(t, ctl, "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"$0.calls\"\n")
+			writeTestFile(t, sudo, "#!/bin/sh\nshift\nexec \"$@\"\n")
+			writeTestFile(t, git, "#!/bin/sh\nexit 0\n")
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/version" {
+					if mode == "wrong-version" {
+						_, _ = w.Write([]byte(`{"commit":"unexpected"}`))
+					} else {
+						_, _ = w.Write([]byte(`{"commit":"before"}`))
+					}
+					return
+				}
+				if r.URL.Path == "/smoke" && mode == "failed-smoke" {
+					w.WriteHeader(http.StatusServiceUnavailable)
+					return
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			defer server.Close()
+			plan := update.HelperPlan{TaskID: "rollback-check", CurrentExecutable: current, BackupExecutable: backup, Workspace: root, BeforeCommit: "before", GitPath: git, SudoPath: sudo, SystemctlPath: ctl, ServiceName: "ddyidc.service", HealthURL: server.URL + "/health", VersionURL: server.URL + "/version", SmokeURL: server.URL + "/smoke"}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			result := rollbackContext(ctx, plan, nil, errors.New("isolated failed deployment"))
+			if !strings.HasPrefix(result.RollbackStatus, "failed:") {
+				t.Fatalf("invalid rollback declared successful: %+v", result)
+			}
+			assertTestFile(t, current, "old")
+			assertTestFile(t, ctl+".calls", "stop\nstart\nstop\n")
+		})
+	}
 }
 
 func writeTestFile(t *testing.T, path, value string) {
