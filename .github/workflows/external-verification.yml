@@ -1,0 +1,23 @@
+name: External configuration focused checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Targeted regression without external credentials or purchases
+        run: |
+          go test -race -count=1 ./internal/notify ./internal/payment/service ./internal/upstream/provider/zjmf ./internal/upstream/testpolicy
+          go vet ./internal/notify ./internal/payment/service ./internal/upstream/provider/zjmf ./internal/upstream/testpolicy
+          go build ./...
