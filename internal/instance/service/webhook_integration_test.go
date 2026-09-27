@@ -11,12 +11,14 @@ import (
 	um "ddyidc/internal/upstream/model"
 	upstream "ddyidc/internal/upstream/service"
 	crypt "ddyidc/pkg/crypto"
+	"ddyidc/pkg/outbound"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +72,12 @@ func TestWebhookIsolationMySQL(t *testing.T) {
 		}
 	}))
 	defer server.Close()
+	// Only this controlled loopback listener is permitted in the test process.
+	port := server.Listener.Addr().(*net.TCPAddr).Port
+	if err := outbound.Configure(outbound.Config{PrivateCIDRs: []string{"127.0.0.1/32"}, Ports: []int{port}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = outbound.Configure(outbound.Config{}) })
 	key := []byte("0123456789abcdef0123456789abcdef")
 	secret := "isolated-webhook-key"
 	cipher, err := crypt.Encrypt(secret, key)
