@@ -1,5 +1,16 @@
 package payment
 
+type ReceiptReview struct {
+	PaymentID  string `json:"paymentId"`
+	PayNo      string `json:"payNo"`
+	BusinessID string `json:"businessId"`
+	CustomerID string `json:"customerId"`
+	Channel    string `json:"channel"`
+	Amount     string `json:"amount"`
+	Reason     string `json:"reason"`
+	Status     string `json:"status"`
+}
+
 type CreateRequest struct {
 	Channel string `json:"channel"`
 	Mode    string `json:"mode"`

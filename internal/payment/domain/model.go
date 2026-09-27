@@ -23,6 +23,7 @@ const (
 	StatusClosed   Status = "closed"
 	StatusFailed   Status = "failed"
 	StatusRefunded Status = "refunded"
+	StatusReview   Status = "received_review" // Channel paid; no entitlement delivered. Needs original-channel refund review.
 )
 
 // Payment is the local source of truth for one channel transaction. AmountFen

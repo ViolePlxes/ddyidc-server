@@ -25,6 +25,10 @@ type handler struct {
 func RegisterHandlers(server *rest.Server, service *svc.Service, manager *auth.Manager) {
 	h := &handler{service: service, auth: manager}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodPost, Path: "/admin/v1/payment/delivery-tasks/:id/reconcile", Handler: h.reconcileDeliveryTask},
+		{Method: http.MethodGet, Path: "/admin/v1/payment/delivery-tasks", Handler: h.deliveryTasks},
+		{Method: http.MethodGet, Path: "/admin/v1/payment/receipt-reviews", Handler: h.receiptReviews},
+		{Method: http.MethodPost, Path: "/admin/v1/payment/refund", Handler: h.refund},
 		{Method: http.MethodPost, Path: "/api/v1/payment/order/:orderId/create", Handler: h.createOrder},
 		{Method: http.MethodPost, Path: "/api/v1/payment/recharge/create", Handler: h.createRecharge},
 		{Method: http.MethodGet, Path: "/api/v1/payment/order/:orderId/status", Handler: h.orderStatus},
@@ -37,7 +41,89 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, manager *auth.M
 		{Method: http.MethodPost, Path: "/api/v1/payment/alipay/notify", Handler: h.alipayNotify},
 		{Method: http.MethodPost, Path: "/api/v1/payment/alipay/query", Handler: h.alipayQuery},
 		{Method: http.MethodPost, Path: "/admin/v1/payment/alipay/query", Handler: h.alipayQuery},
+		{Method: http.MethodPost, Path: "/admin/v1/payment/wechat/query", Handler: h.wechatQuery},
 	})
+}
+
+func (h *handler) reconcileDeliveryTask(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	id := parsePathID(w, r, "id")
+	if id == 0 {
+		return
+	}
+	cookie, err := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	if err != nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	claims, err := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if err != nil || claims == nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	var input struct {
+		Reason           string `json:"reason"`
+		RemoteInstanceID string `json:"remoteInstanceId"`
+		Action           string `json:"action"`
+		ExpectedAttempt  *int   `json:"expectedAttempt"`
+	}
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	if input.Action == "record_review" {
+		if input.ExpectedAttempt == nil || input.RemoteInstanceID != "" {
+			writeError(w, 400, 40000, "记录核对需提供任务代次，不能同时提交实例关联")
+			return
+		}
+		err = h.service.RecordDeliveryReview(r.Context(), id, claims.UserID, *input.ExpectedAttempt, clientip.FromRequest(r), input.Reason)
+		writeResult(w, map[string]bool{"recorded": err == nil, "remainsPaused": true}, err)
+		return
+	}
+	if input.Action != "" {
+		writeError(w, 400, 40000, "不支持的核对操作")
+		return
+	}
+	if input.RemoteInstanceID != "" {
+		err = h.service.ReconcileRemoteDeliveryTask(r.Context(), id, claims.UserID, clientip.FromRequest(r), input.Reason, input.RemoteInstanceID)
+	} else {
+		err = h.service.ReconcileDeliveryTask(r.Context(), id, claims.UserID, clientip.FromRequest(r), input.Reason)
+	}
+	writeResult(w, map[string]bool{"reconciled": err == nil}, err)
+}
+
+func (h *handler) receiptReviews(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		var err error
+		page, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, 400, 40000, "分页参数无效")
+			return
+		}
+	}
+	rows, err := h.service.ReceiptReviews(r.Context(), page)
+	writeResult(w, rows, err)
+}
+func (h *handler) deliveryTasks(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		var err error
+		page, err = strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, 400, 40000, "分页参数无效")
+			return
+		}
+	}
+	rows, err := h.service.DeliveryTasks(r.Context(), page)
+	writeResult(w, rows, err)
 }
 
 func (h *handler) createOrder(w http.ResponseWriter, r *http.Request) {
@@ -183,6 +269,18 @@ func (h *handler) alipayQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response, err := h.service.QueryAlipay(r.Context(), input.PayNo)
+	writeResult(w, response, err)
+}
+
+func (h *handler) wechatQuery(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	var input types.QueryRequest
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	response, err := h.service.QueryWechat(r.Context(), input.PayNo)
 	writeResult(w, response, err)
 }
 

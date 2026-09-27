@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"ddyidc/internal/shared/tasks"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,6 +20,62 @@ type BusinessError struct {
 	Message string
 }
 
+func (s *Service) ReceiptReviews(ctx context.Context, page int) ([]types.ReceiptReview, error) {
+	repo, ok := s.repo.(interface {
+		ReceiptReviews(context.Context, int) ([]types.ReceiptReview, error)
+	})
+	if !ok {
+		return nil, errors.New("receipt review unavailable")
+	}
+	if page < 1 || page > 100000 {
+		return nil, &BusinessError{Code: 40000, Message: "分页参数无效"}
+	}
+	return repo.ReceiptReviews(ctx, page)
+}
+
+func (s *Service) ReconcileDeliveryTask(ctx context.Context, id, adminID int64, ip, reason string) error {
+	repo, ok := s.repo.(interface {
+		ReconcileDeliveryTask(context.Context, int64, int64, string, string) error
+	})
+	if !ok {
+		return errors.New("delivery tasks unavailable")
+	}
+	err := repo.ReconcileDeliveryTask(ctx, id, adminID, ip, reason)
+	if errors.Is(err, tasks.ErrReconcile) && s.renewalRecovery != nil {
+		err = s.renewalRecovery(ctx, id, adminID, ip, reason)
+	}
+	if errors.Is(err, tasks.ErrReconcile) {
+		return &BusinessError{Code: 40000, Message: err.Error()}
+	}
+	return err
+}
+func (s *Service) DeliveryTasks(ctx context.Context, page int) ([]tasks.View, error) {
+	repo, ok := s.repo.(interface {
+		DeliveryTasks(context.Context, int) ([]tasks.View, error)
+	})
+	if !ok {
+		return nil, errors.New("delivery tasks unavailable")
+	}
+	if page < 1 || page > 100000 {
+		return nil, &BusinessError{Code: 40000, Message: "分页参数无效"}
+	}
+	return repo.DeliveryTasks(ctx, page)
+}
+
+func (s *Service) RecordDeliveryReview(ctx context.Context, id, adminID int64, attempt int, ip, reason string) error {
+	repo, ok := s.repo.(interface {
+		RecordDeliveryReview(context.Context, int64, int64, int, string, string) error
+	})
+	if !ok {
+		return errors.New("delivery review unavailable")
+	}
+	err := repo.RecordDeliveryReview(ctx, id, adminID, attempt, ip, reason)
+	if errors.Is(err, tasks.ErrReconcile) {
+		return &BusinessError{Code: 40000, Message: "任务状态或执行代次已变化，或核对记录无效；请刷新后重试"}
+	}
+	return err
+}
+
 func (e *BusinessError) Error() string { return e.Message }
 
 type PostPaymentCoordinator interface {
@@ -29,34 +86,6 @@ type PostPaymentCoordinator interface {
 
 type Dispatcher interface {
 	Dispatch(*dom.Payment)
-}
-
-type AsyncDispatcher struct{ coordinator PostPaymentCoordinator }
-
-func NewAsyncDispatcher(coordinator PostPaymentCoordinator) *AsyncDispatcher {
-	return &AsyncDispatcher{coordinator: coordinator}
-}
-
-func (d *AsyncDispatcher) Dispatch(payment *dom.Payment) {
-	if d == nil || d.coordinator == nil || payment == nil {
-		return
-	}
-	copyPayment := *payment
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		var err error
-		if copyPayment.BizType == dom.BizOrder {
-			err = d.coordinator.ProvisionAfterPayment(ctx, copyPayment.CustomerID, copyPayment.BizID, copyPayment.Channel)
-		} else if copyPayment.BizType == dom.BizRecharge {
-			err = d.coordinator.AfterRechargePayment(ctx, copyPayment.BizID, copyPayment.CustomerID, copyPayment.AmountFen)
-		} else if copyPayment.BizType == dom.BizMarketplace {
-			err = d.coordinator.AfterMarketplacePayment(ctx, copyPayment.BizID, copyPayment.CustomerID)
-		}
-		if err != nil {
-			logx.Errorf("post-payment action failed payment_id=%d biz_type=%s biz_id=%d", copyPayment.ID, copyPayment.BizType, copyPayment.BizID)
-		}
-	}()
 }
 
 func (s *Service) CreateMarketplace(ctx context.Context, customerID, orderID int64, channelName, mode string) (*types.CheckoutResponse, error) {
@@ -76,11 +105,31 @@ func (s *Service) CreateMarketplace(ctx context.Context, customerID, orderID int
 }
 
 type Service struct {
-	repo       rep.Repository
-	config     Config
-	channels   map[string]Channel
-	dispatcher Dispatcher
-	now        func() time.Time
+	renewalRecovery        func(context.Context, int64, int64, string, string) error
+	remoteDeliveryRecovery func(context.Context, int64, int64, string, string, string) error
+	repo                   rep.Repository
+	config                 Config
+	channels               map[string]Channel
+	dispatcher             Dispatcher
+	now                    func() time.Time
+}
+
+func (s *Service) SetRenewalRecovery(fn func(context.Context, int64, int64, string, string) error) {
+	s.renewalRecovery = fn
+}
+
+func (s *Service) SetRemoteDeliveryRecovery(fn func(context.Context, int64, int64, string, string, string) error) {
+	s.remoteDeliveryRecovery = fn
+}
+func (s *Service) ReconcileRemoteDeliveryTask(ctx context.Context, id, adminID int64, ip, reason, hostID string) error {
+	if s.remoteDeliveryRecovery == nil {
+		return &BusinessError{Code: 40000, Message: "远端关联核对暂不可用"}
+	}
+	err := s.remoteDeliveryRecovery(ctx, id, adminID, ip, reason, hostID)
+	if errors.Is(err, tasks.ErrReconcile) {
+		return &BusinessError{Code: 40000, Message: "未取得匹配的账单、产品及有效实例证据，未恢复任务；核对依据最多100字"}
+	}
+	return err
 }
 
 func NewService(repo rep.Repository, config Config, channels map[string]Channel, dispatcher Dispatcher) *Service {
@@ -150,7 +199,7 @@ func (s *Service) Status(ctx context.Context, customerID int64, bizType dom.BizT
 		return nil, &BusinessError{Code: 40001, Message: "支付单不存在"}
 	}
 	if payment.Status == dom.StatusPending && !payment.ExpireAt.After(s.now()) {
-		if closed, closeErr := s.Close(ctx, customerID, bizType, bizID); closeErr == nil {
+		if closed, closeErr := s.closePayment(ctx, customerID, payment); closeErr == nil {
 			payment = closed
 		}
 	}
@@ -173,7 +222,7 @@ func (s *Service) StatusByPayNo(ctx context.Context, customerID int64, payNo str
 		return nil, &BusinessError{Code: 40002, Message: "无权查询该支付单"}
 	}
 	if payment.Status == dom.StatusPending && !payment.ExpireAt.After(s.now()) {
-		if closed, closeErr := s.Close(ctx, customerID, payment.BizType, payment.BizID); closeErr == nil {
+		if closed, closeErr := s.closePayment(ctx, customerID, payment); closeErr == nil {
 			payment = closed
 		}
 	}
@@ -184,14 +233,41 @@ func (s *Service) StatusByPayNo(ctx context.Context, customerID int64, payNo str
 	return response, nil
 }
 
+func (s *Service) closePayment(ctx context.Context, customerID int64, payment *dom.Payment) (*dom.Payment, error) {
+	closer, ok := s.repo.(interface {
+		ClosePayment(context.Context, int64, int64) (*dom.Payment, error)
+	})
+	if !ok {
+		return nil, errors.New("exact payment close unavailable")
+	}
+	closed, err := closer.ClosePayment(ctx, customerID, payment.ID)
+	if err != nil {
+		return nil, err
+	}
+	if channel := s.channels[closed.Channel]; channel != nil {
+		if err := channel.Close(ctx, closed); err != nil {
+			logx.Errorf("channel close unconfirmed payment_id=%d", closed.ID)
+		}
+	}
+	return closed, nil
+}
+
 func (s *Service) QueryAlipay(ctx context.Context, payNo string) (*types.QueryResponse, error) {
+	return s.queryPayment(ctx, "alipay", payNo)
+}
+
+func (s *Service) QueryWechat(ctx context.Context, payNo string) (*types.QueryResponse, error) {
+	return s.queryPayment(ctx, "wechat", payNo)
+}
+
+func (s *Service) queryPayment(ctx context.Context, channelName, payNo string) (*types.QueryResponse, error) {
 	payNo = strings.TrimSpace(payNo)
 	if payNo == "" || len(payNo) > 64 {
 		return nil, &BusinessError{Code: 40000, Message: "支付单号格式错误"}
 	}
-	channel, ok := s.channels["alipay"].(QueryableChannel)
+	channel, ok := s.channels[channelName].(QueryableChannel)
 	if !ok {
-		return nil, &BusinessError{Code: 40003, Message: "支付宝通道尚未配置"}
+		return nil, &BusinessError{Code: 40003, Message: "支付通道尚未配置或不支持查询"}
 	}
 	payment, err := s.repo.FindByPaymentNo(ctx, payNo)
 	if err != nil {
@@ -199,13 +275,16 @@ func (s *Service) QueryAlipay(ctx context.Context, payNo string) (*types.QueryRe
 	}
 	outTradeNo := payNo
 	if payment != nil {
+		if payment.Channel != channelName {
+			return nil, &BusinessError{Code: 40005, Message: "支付单渠道不匹配"}
+		}
 		outTradeNo = payment.OutTradeNo
 	}
 	platform, err := channel.Query(ctx, outTradeNo)
 	if err != nil {
 		var queryErr *PlatformQueryError
 		if errors.As(err, &queryErr) {
-			message := "支付宝查询失败（" + queryErr.Code
+			message := "支付平台查询失败（" + queryErr.Code
 			if queryErr.SubCode != "" {
 				message += "/" + queryErr.SubCode
 			}
@@ -218,16 +297,17 @@ func (s *Service) QueryAlipay(ctx context.Context, payNo string) (*types.QueryRe
 	if !platform.Found || payment == nil {
 		return response, nil
 	}
-	if payment.Channel != "alipay" || platform.OutTradeNo != payment.OutTradeNo || platform.AmountFen != payment.AmountFen || platform.Currency != payment.Currency {
-		return nil, &BusinessError{Code: 40005, Message: "支付宝查询结果与本地支付单不一致"}
+	if payment.Channel != channelName || platform.OutTradeNo != payment.OutTradeNo || platform.AmountFen != payment.AmountFen || platform.Currency != payment.Currency {
+		return nil, &BusinessError{Code: 40005, Message: "支付平台查询结果与本地支付单不一致"}
 	}
-	if platform.Status != "TRADE_SUCCESS" && platform.Status != "TRADE_FINISHED" {
+	paid := channelName == "alipay" && (platform.Status == "TRADE_SUCCESS" || platform.Status == "TRADE_FINISHED") || channelName == "wechat" && platform.Status == "SUCCESS"
+	if !paid {
 		return response, nil
 	}
 	completed, transitioned, err := s.repo.Complete(ctx, dom.VerifiedNotification{
-		Channel: "alipay", OutTradeNo: platform.OutTradeNo, TransactionID: platform.TransactionID,
+		Channel: channelName, OutTradeNo: platform.OutTradeNo, TransactionID: platform.TransactionID,
 		AmountFen: platform.AmountFen, Currency: platform.Currency, PaidAt: platform.PaidAt,
-		SafeRaw: `{"source":"alipay.trade.query","verified":true}`,
+		SafeRaw: `{"source":"` + channelName + `.trade.query","verified":true}`,
 	})
 	if err != nil {
 		return nil, err
@@ -261,10 +341,12 @@ func (s *Service) HandleNotification(channelName string, request *http.Request) 
 	}
 	notification, err := channel.ParseNotification(request)
 	if err != nil {
+		logx.Errorf("payment notification rejected channel=%s stage=parse", channelName)
 		return err
 	}
 	payment, err := s.repo.FindByOutTradeNo(request.Context(), notification.OutTradeNo)
 	if err != nil {
+		logx.Errorf("payment notification rejected channel=%s stage=lookup", channelName)
 		return err
 	}
 	if payment == nil {
@@ -282,6 +364,7 @@ func (s *Service) HandleNotification(channelName string, request *http.Request) 
 	}
 	completed, transitioned, err := s.repo.Complete(request.Context(), notification)
 	if err != nil {
+		logx.Errorf("payment notification rejected channel=%s stage=complete payment_id=%d", channelName, payment.ID)
 		return err
 	}
 	if transitioned && s.dispatcher != nil {

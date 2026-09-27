@@ -12,6 +12,7 @@ import (
 	dom "ddyidc/internal/payment/domain"
 	rep "ddyidc/internal/payment/repository"
 	svc "ddyidc/internal/payment/service"
+	"ddyidc/pkg/auth"
 )
 
 type notifyRepository struct{ payment *dom.Payment }
@@ -62,5 +63,15 @@ func TestAlipayNotifyReturnsPlainFailureWhenVerificationFails(t *testing.T) {
 
 	if strings.TrimSpace(response.Body.String()) != "failure" {
 		t.Fatalf("unexpected callback response %q", response.Body.String())
+	}
+}
+
+func TestWechatQueryRequiresAdminSession(t *testing.T) {
+	h := &handler{auth: &auth.Manager{}}
+	request := httptest.NewRequest(http.MethodPost, "/admin/v1/payment/wechat/query", strings.NewReader(`{"payNo":"TEST"}`))
+	response := httptest.NewRecorder()
+	h.wechatQuery(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatal("anonymous platform reconciliation accepted")
 	}
 }

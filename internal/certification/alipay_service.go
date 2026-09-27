@@ -3,6 +3,7 @@ package certification
 import (
 	"context"
 	orderdom "ddyidc/internal/order/domain"
+	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/snowflake"
 	crypt "ddyidc/pkg/crypto"
 	"encoding/json"
@@ -258,8 +259,12 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, customer, orderID 
 		if order.Status != orderdom.OrderStatusPaid {
 			return errors.New("认证订单尚未支付")
 		}
-		if err := tx.Model(&order).Updates(map[string]any{"status": orderdom.OrderStatusCompleted, "updated_at": time.Now()}).Error; err != nil {
+		changed, err := orderstate.CompletePaidTx(tx, orderID, customer, time.Now())
+		if err != nil {
 			return err
+		}
+		if !changed {
+			return errors.New("认证订单状态已变化")
 		}
 		return audit(tx, customer, false, "fee_paid", customer, map[string]any{"orderId": orderID, "method": strings.TrimSpace(method)}, "")
 	})

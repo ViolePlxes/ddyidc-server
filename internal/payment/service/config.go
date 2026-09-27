@@ -14,16 +14,20 @@ import (
 )
 
 const defaultAlipaySecretPath = "/etc/ddyidc/secrets/alipay.json"
+const defaultWechatPublicKeyPath = "/etc/ddyidc/secrets/wechatpay_public_key.pem"
+const defaultWechatPublicKeyIDPath = "/etc/ddyidc/secrets/wechatpay_public_key_id"
 
 type WechatConfig struct {
-	Enabled    bool
-	AppID      string
-	MchID      string
-	APIV3Key   string
-	PrivateKey string
-	CertSerial string
-	BaseURL    string
-	NotifyURL  string
+	Enabled     bool
+	AppID       string
+	MchID       string
+	APIV3Key    string
+	PrivateKey  string
+	CertSerial  string
+	BaseURL     string
+	NotifyURL   string
+	PublicKeyID string
+	PublicKey   string
 }
 
 type AlipayConfig struct {
@@ -117,6 +121,10 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 		cfg.Wechat.NotifyURL = cfg.Wechat.BaseURL + "/api/v1/payment/notify/wechat"
 	}
 	if cfg.Wechat.Enabled {
+		cfg.Wechat.PublicKeyID, cfg.Wechat.PublicKey, err = loadWechatVerificationFiles(defaultWechatPublicKeyIDPath, defaultWechatPublicKeyPath)
+		if err != nil {
+			return Config{}, err
+		}
 		if err := validateWechatConfig(cfg.Wechat); err != nil {
 			return Config{}, err
 		}
@@ -127,6 +135,29 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 		}
 	}
 	return cfg, nil
+}
+
+// Optional pinned WeChat Pay verification material. Never obtain a key from an
+// incoming callback URL or trust a key supplied alongside the notification.
+func loadWechatVerificationFiles(idPath, keyPath string) (string, string, error) {
+	idRaw, idErr := os.ReadFile(idPath)
+	keyRaw, keyErr := os.ReadFile(keyPath)
+	if errors.Is(idErr, os.ErrNotExist) && errors.Is(keyErr, os.ErrNotExist) {
+		return "", "", nil // Existing certificate-mode installations remain valid.
+	}
+	if idErr != nil || keyErr != nil {
+		return "", "", errors.New("微信支付公钥及公钥ID文件须配套配置")
+	}
+	id, key := strings.TrimSpace(string(idRaw)), strings.TrimSpace(string(keyRaw))
+	if !strings.HasPrefix(id, "PUB_KEY_ID_") || len(id) > 128 || len(id) <= len("PUB_KEY_ID_") || key == "" || len(key) > 16*1024 {
+		return "", "", errors.New("微信支付公钥配置格式无效")
+	}
+	for _, ch := range strings.TrimPrefix(id, "PUB_KEY_ID_") {
+		if ch < '0' || ch > '9' {
+			return "", "", errors.New("微信支付公钥ID格式无效")
+		}
+	}
+	return id, key, nil
 }
 
 func loadAlipaySecrets(path string) (alipaySecretFile, bool, error) {

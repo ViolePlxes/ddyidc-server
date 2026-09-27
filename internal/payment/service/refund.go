@@ -27,7 +27,7 @@ func (s *Service) Refund(ctx context.Context, paymentID, adminID int64, amount, 
 	}
 	p, refund, err := repo.PrepareRefund(ctx, paymentID, adminID, fmt.Sprintf("%d.%02d", cents/100, cents%100), reason, ip)
 	if err != nil {
-		return nil, &BusinessError{Code: 40004, Message: "仅支持未交付普通商品订单的全额原路退款，请检查订单状态"}
+		return nil, &BusinessError{Code: 40004, Message: "仅支持待核对收款或未开始交付的普通订单全额原路退款；采购中、结果未知或已交付订单需先核对服务状态"}
 	}
 	if refund.Status == "refunded" {
 		return refund, nil

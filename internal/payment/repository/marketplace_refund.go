@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"ddyidc/internal/marketplace"
+	orderstate "ddyidc/internal/order/repository"
 	dom "ddyidc/internal/payment/domain"
 	"errors"
 	"fmt"
@@ -79,8 +80,12 @@ func (r *GormRepository) CompleteMarketplaceRefund(ctx context.Context, paymentI
 			return err
 		}
 		if order.SettlementMode == "balance" {
-			if err := tx.Table("order.orders").Where("id=?", order.ID).Updates(map[string]any{"status": 4, "updated_at": now}).Error; err != nil {
+			changed, err := orderstate.RefundPaidTx(tx, order.ID, order.BuyerID, now)
+			if err != nil {
 				return err
+			}
+			if !changed {
+				return ErrInvalidState
 			}
 		}
 		if err := tx.Model(&p).Updates(map[string]any{"status": dom.StatusRefunded, "updated_at": now}).Error; err != nil {

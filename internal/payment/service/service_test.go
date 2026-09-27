@@ -211,3 +211,43 @@ func TestStatusByPayNoRejectsOtherCustomer(t *testing.T) {
 		t.Fatalf("expected ownership rejection, got %v", err)
 	}
 }
+
+func TestWechatQueryReconciliationBoundaries(t *testing.T) {
+	for _, name := range []string{"success", "wrong amount", "wrong currency", "wrong trade", "not paid", "wrong channel"} {
+		t.Run(name, func(t *testing.T) {
+			p := pendingPayment()
+			p.PaymentNo, p.OutTradeNo, p.Channel = "WX-QUERY", "WX-QUERY", "wechat"
+			q := PlatformQuery{Found: true, OutTradeNo: p.OutTradeNo, TransactionID: "WX-TX", Status: "SUCCESS", AmountFen: p.AmountFen, Currency: p.Currency, PaidAt: time.Now()}
+			switch name {
+			case "wrong amount":
+				q.AmountFen++
+			case "wrong currency":
+				q.Currency = "USD"
+			case "wrong trade":
+				q.OutTradeNo = "other"
+			case "not paid":
+				q.Status = "NOTPAY"
+			case "wrong channel":
+				p.Channel = "alipay"
+			}
+			dispatcher := &fakeDispatcher{}
+			svc := NewService(&fakeRepository{payment: p}, Config{}, map[string]Channel{"wechat": &fakeQueryableChannel{query: q}}, dispatcher)
+			_, err := svc.QueryWechat(context.Background(), p.PaymentNo)
+			if name == "success" {
+				if err != nil || p.Status != dom.StatusPaid || dispatcher.calls != 1 {
+					t.Fatal("verified trade not reconciled")
+				}
+				if _, err = svc.QueryWechat(context.Background(), p.PaymentNo); err != nil || dispatcher.calls != 1 {
+					t.Fatal("repeat query not idempotent")
+				}
+			} else {
+				if p.Status != dom.StatusPending || dispatcher.calls != 0 {
+					t.Fatal("unverified trade changed payment")
+				}
+				if name != "not paid" && err == nil {
+					t.Fatal("mismatched trade accepted")
+				}
+			}
+		})
+	}
+}

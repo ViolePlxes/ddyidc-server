@@ -3,11 +3,13 @@ package payment
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	orderstate "ddyidc/internal/order/repository"
 	"errors"
 	"fmt"
 	"time"
 
 	"ddyidc/internal/marketplace"
+	"ddyidc/internal/order/inventory"
 	dom "ddyidc/internal/payment/domain"
 	"ddyidc/internal/shared/snowflake"
 	"gorm.io/gorm"
@@ -264,19 +266,29 @@ func (r *GormRepository) FindByBiz(ctx context.Context, customerID int64, bizTyp
 }
 
 func (r *GormRepository) Complete(ctx context.Context, notification dom.VerifiedNotification) (*dom.Payment, bool, error) {
-	var completed dom.Payment
+	identity, err := r.FindByOutTradeNo(ctx, notification.OutTradeNo)
+	if err != nil {
+		return nil, false, err
+	}
+	if identity == nil {
+		return nil, false, ErrBizNotFound
+	}
+	completed := *identity
 	transitioned := false
-	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table(completed.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("out_trade_no = ?", notification.OutTradeNo).First(&completed).Error; err != nil {
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := r.lockPayment(tx, &completed); err != nil {
 			return err
 		}
 		if completed.Channel != notification.Channel || completed.AmountFen != notification.AmountFen || completed.Currency != notification.Currency {
 			return ErrInvalidState
 		}
-		if completed.Status == dom.StatusPaid || completed.Status == dom.StatusRefunded {
+		if completed.Status == dom.StatusPaid || completed.Status == dom.StatusRefunded || completed.Status == dom.StatusReview {
+			if completed.TransactionID != notification.TransactionID || notification.TransactionID == "" {
+				return ErrInvalidState
+			}
 			return nil
 		}
-		if completed.Status != dom.StatusPending {
+		if completed.Status != dom.StatusPending && completed.Status != dom.StatusClosed && completed.Status != dom.StatusFailed {
 			return ErrInvalidState
 		}
 		if completed.Channel != notification.Channel || completed.AmountFen != notification.AmountFen || completed.Currency != notification.Currency {
@@ -286,27 +298,44 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		if paidAt.IsZero() {
 			paidAt = time.Now()
 		}
+		if err := recordReceipt(tx, &completed, notification, paidAt); err != nil {
+			return err
+		}
 		switch completed.BizType {
 		case dom.BizOrder:
-			result := tx.Table("order.orders").Where("id = ? AND customer_id = ? AND status = 1", completed.BizID, completed.CustomerID).
-				Updates(map[string]any{"status": 2, "pay_type": channelPayType(completed.Channel), "paid_at": paidAt, "updated_at": paidAt})
-			if result.Error != nil {
-				return result.Error
+			if err := tx.SavePoint("before_order_receipt").Error; err != nil {
+				return err
 			}
-			if result.RowsAffected != 1 {
-				return ErrInvalidState
+			changed, err := orderstate.AcceptPaymentTx(tx, completed.BizID, completed.CustomerID, completed.AmountFen, channelPayType(completed.Channel), paidAt)
+			if err != nil {
+				return err
+			}
+			if !changed {
+				return reviewReceipt(tx, &completed, notification, paidAt, "order_not_payable")
+			}
+			if err := inventory.Consume(tx, completed.BizID); err != nil {
+				if !errors.Is(err, inventory.ErrReleased) {
+					return err
+				}
+				if err := tx.RollbackTo("before_order_receipt").Error; err != nil {
+					return err
+				}
+				return reviewReceipt(tx, &completed, notification, paidAt, "stock_reservation_released")
 			}
 		case dom.BizRecharge:
-			result := tx.Table("payment.recharge_orders").Where("id = ? AND customer_id = ? AND status = 1", completed.BizID, completed.CustomerID).
+			result := tx.Table("payment.recharge_orders").Where("id = ? AND customer_id = ? AND status = 1 AND amount = ?", completed.BizID, completed.CustomerID, completed.AmountFen).
 				Updates(map[string]any{"status": 2, "channel": completed.Channel, "paid_at": paidAt, "updated_at": paidAt})
 			if result.Error != nil {
 				return result.Error
 			}
 			if result.RowsAffected != 1 {
-				return ErrInvalidState
+				return reviewReceipt(tx, &completed, notification, paidAt, "recharge_not_payable")
 			}
 
 		case dom.BizMarketplace:
+			if completed.Status != dom.StatusPending {
+				return reviewReceipt(tx, &completed, notification, paidAt, "marketplace_late_receipt")
+			}
 			if err := tx.SavePoint("before_marketplace_transfer").Error; err != nil {
 				return err
 			}
@@ -315,9 +344,12 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 					return errors.Join(err, rollbackErr)
 				}
 				if compensateErr := marketplace.CompensateFailedExternalPaymentTx(tx, completed.BizID, completed.CustomerID, paidAt, err.Error()); compensateErr != nil {
-					return errors.Join(err, compensateErr)
+					if rollbackErr := tx.RollbackTo("before_marketplace_transfer").Error; rollbackErr != nil {
+						return errors.Join(compensateErr, rollbackErr)
+					}
+					return reviewReceipt(tx, &completed, notification, paidAt, "marketplace_compensation_conflict")
 				}
-				result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, dom.StatusPending).Updates(map[string]any{
+				result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, completed.Status).Updates(map[string]any{
 					"status": dom.StatusPaid, "transaction_id": notification.TransactionID,
 					"notify_raw": notification.SafeRaw, "paid_at": paidAt, "updated_at": paidAt,
 				})
@@ -329,12 +361,12 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 				}
 				completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusPaid, notification.TransactionID, notification.SafeRaw, &paidAt
 				transitioned = true
-				return nil
+				return enqueuePaid(tx, &completed)
 			}
 		default:
 			return ErrInvalidState
 		}
-		result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, dom.StatusPending).Updates(map[string]any{
+		result := tx.Table(completed.TableName()).Where("id = ? AND status = ?", completed.ID, completed.Status).Updates(map[string]any{
 			"status": dom.StatusPaid, "transaction_id": notification.TransactionID,
 			"notify_raw": notification.SafeRaw, "paid_at": paidAt, "updated_at": paidAt,
 		})
@@ -351,7 +383,7 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 			}
 		}
 		transitioned = true
-		return nil
+		return enqueuePaid(tx, &completed)
 	})
 	return &completed, transitioned, err
 }
@@ -361,9 +393,20 @@ func creditRecharge(tx *gorm.DB, payment *dom.Payment, now time.Time) error {
 	return err
 }
 func (r *GormRepository) Close(ctx context.Context, customerID int64, bizType dom.BizType, bizID int64) (*dom.Payment, error) {
+	payment, err := r.FindByBiz(ctx, customerID, bizType, bizID)
+	if err != nil {
+		return nil, err
+	}
+	if payment == nil {
+		return nil, ErrBizNotFound
+	}
+	return r.ClosePayment(ctx, customerID, payment.ID)
+}
+
+func (r *GormRepository) ClosePayment(ctx context.Context, customerID, paymentID int64) (*dom.Payment, error) {
 	var payment dom.Payment
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table(payment.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("customer_id = ? AND biz_type = ? AND biz_id = ?", customerID, bizType, bizID).First(&payment).Error; err != nil {
+		if err := tx.Table(payment.TableName()).Clauses(clause.Locking{Strength: "UPDATE"}).Where("customer_id = ? AND id = ?", customerID, paymentID).First(&payment).Error; err != nil {
 			return err
 		}
 		if payment.BizType == dom.BizMarketplace {
