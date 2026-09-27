@@ -28,20 +28,28 @@ type wechatChannel struct {
 	notify *wxnotify.Handler
 }
 
-func newWechatChannel(ctx context.Context, cfg WechatConfig) (Channel, error) {
+func wechatKeys(cfg WechatConfig) (*rsa.PrivateKey, *rsa.PublicKey, error) {
 	privateKey, err := utils.LoadPrivateKey(cfg.PrivateKey)
 	if err != nil {
-		return nil, errors.New("微信商户私钥格式无效")
+		return nil, nil, errors.New("微信商户私钥格式无效")
 	}
 	var publicKey *rsa.PublicKey
 	if cfg.PublicKeyID != "" || cfg.PublicKey != "" {
 		if cfg.PublicKeyID == "" || cfg.PublicKey == "" {
-			return nil, errors.New("微信支付公钥配置不完整")
+			return nil, nil, errors.New("微信支付公钥配置不完整")
 		}
 		publicKey, err = utils.LoadPublicKey(cfg.PublicKey)
 		if err != nil || publicKey == nil || publicKey.N.BitLen() < 2048 {
-			return nil, errors.New("微信支付公钥格式无效")
+			return nil, nil, errors.New("微信支付公钥格式无效")
 		}
+	}
+	return privateKey, publicKey, nil
+}
+
+func newWechatChannel(ctx context.Context, cfg WechatConfig) (Channel, error) {
+	privateKey, publicKey, err := wechatKeys(cfg)
+	if err != nil {
+		return nil, err
 	}
 	manager := downloader.MgrInstance()
 	certificateCtx, cancel := context.WithTimeout(ctx, 20*time.Second)

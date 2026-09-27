@@ -142,7 +142,7 @@ func BuildChannels(ctx context.Context, config Config) (map[string]Channel, erro
 	}
 	channels := make(map[string]Channel, 2)
 	if config.Wechat.Enabled {
-		channel, err := newWechatChannel(ctx, config.Wechat)
+		channel, err := newDeferredWechatChannel(config.Wechat)
 		if err != nil {
 			return nil, fmt.Errorf("初始化微信支付: %w", err)
 		}
