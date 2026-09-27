@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"log"
 	"time"
 )
 
@@ -233,8 +234,11 @@ func (s *Service) renewalTick(ctx context.Context) {
 	// Paid renewals execute only through their transactional durable intention.
 	// Unknown outcomes remain visible for reconciliation, not minute-by-minute
 	// unbounded provider calls or a second execution path.
-	var hosts []dom.Host
-	s.db.WithContext(ctx).Table("instance.instances i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4,5) AND i.expires_at<=? AND i.expires_at>? AND r.updated_at<=?", time.Now().Add(72*time.Hour), time.Now().Add(-7*24*time.Hour), time.Now().Add(-15*time.Minute)).Limit(50).Find(&hosts)
+	hosts, err := s.autoRenewalCandidates(ctx)
+	if err != nil {
+		log.Print("RENEWAL candidate scan failed; no renewal initiated")
+		return
+	}
 	for _, h := range hosts {
 		if ctx.Err() != nil {
 			return
@@ -254,4 +258,12 @@ func (s *Service) renewalTick(ctx context.Context) {
 		oid := parseHostID(o.OrderID)
 		s.PayRenewalBalance(ctx, h.CustomerID, h.ID, oid, "system_job")
 	}
+}
+
+func (s *Service) autoRenewalCandidates(ctx context.Context) ([]dom.Host, error) {
+	var hosts []dom.Host
+	// GORM requires explicit AS with a schema-qualified table to scope its
+	// implicit soft-delete predicate to i instead of the model table name.
+	err := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4,5) AND i.expires_at<=? AND i.expires_at>? AND r.updated_at<=?", time.Now().Add(72*time.Hour), time.Now().Add(-7*24*time.Hour), time.Now().Add(-15*time.Minute)).Limit(50).Find(&hosts).Error
+	return hosts, err
 }

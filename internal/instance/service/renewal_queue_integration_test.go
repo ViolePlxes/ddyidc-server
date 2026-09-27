@@ -57,6 +57,34 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	}
 	service := NewService(repo.NewRepository(db), nil)
 	service.db = db
+	// Exercise the real joined candidate query without running the renewal loop
+	// or contacting a supplier. Schema-qualified aliases must retain soft deletes.
+	if err := db.Model(&host).Update("expires_at", time.Now().Add(24*time.Hour)).Error; err != nil {
+		t.Fatal(err)
+	}
+	setting := RenewalSettings{InstanceID: host.ID, CustomerID: 77, Enabled: true, UpdatedAt: time.Now().Add(-time.Hour)}
+	if err := db.Create(&setting).Error; err != nil {
+		t.Fatal(err)
+	}
+	candidates, e := service.autoRenewalCandidates(ctx)
+	if e != nil || len(candidates) != 1 || candidates[0].ID != host.ID {
+		t.Fatalf("candidate query: count=%d err=%v", len(candidates), e)
+	}
+	if err := db.Model(&setting).Update("customer_id", 78).Error; err != nil {
+		t.Fatal(err)
+	}
+	candidates, e = service.autoRenewalCandidates(ctx)
+	if e != nil || len(candidates) != 0 {
+		t.Fatal("foreign renewal settings selected", e)
+	}
+	if err := db.Model(&setting).Updates(map[string]any{"customer_id": 77, "enabled": false}).Error; err != nil {
+		t.Fatal(err)
+	}
+	candidates, e = service.autoRenewalCandidates(ctx)
+	if e != nil || len(candidates) != 0 {
+		t.Fatal("disabled renewal selected", e)
+	}
+	t.Log("real MySQL auto-renewal candidate join: eligible selected; ownership mismatch/disabled rejected; no supplier call")
 	if err := db.Model(&o).Update("pay_amount", 101).Error; err != nil {
 		t.Fatal(err)
 	}
