@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"ddyidc/internal/shared/filebarrier"
 	"encoding/json"
 	"errors"
 	"time"
@@ -26,6 +27,10 @@ type Upload struct {
 }
 
 func (Upload) TableName() string { return "ticket.uploads" }
+
+func (r *Repository) WithFileSnapshot(ctx context.Context, fn func(context.Context) error) error {
+	return filebarrier.With(ctx, r.db, fn)
+}
 
 func (r *Repository) ReserveUpload(ctx context.Context, u *Upload) error {
 	if u.OwnerID <= 0 || (u.OwnerType != dom.ActorClient && u.OwnerType != dom.ActorAdmin) || u.Size <= 0 || u.Size > 10<<20 {

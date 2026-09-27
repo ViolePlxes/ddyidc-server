@@ -68,6 +68,21 @@ Downloads force attachment, `nosniff` and private/no-store.
 
 ## Evidence boundaries
 
+The public reset and authenticated first-mobile-binding forms use the existing
+SMS scenes `reset` and `bindMobile`; they do not bypass verification. Binding
+requires the current password and a non-delegated customer session, and rejects
+an already-bound phone. Reset consumes the one-time code before resolving a
+unique active phone owner; ambiguous cross-tenant matches are rejected rather
+than selecting an arbitrary account. Both mutations lock the customer, compare
+the observed identity version, and commit a non-sensitive audit in the same
+transaction. Password changes retain the database `auth_version` revocation
+contract. Secrets remain in component memory, never in draft persistence.
+
+`TestIdentityMutationMySQL` in the independent finance suite checks audit-failure
+rollback, repeated binding, stale writes, password session invalidation and
+ambiguous phone rejection. VM negative HTTP checks and rendered forms have been
+verified; a successful real SMS delivery/consumption flow is still outstanding.
+
 `deploy/linux/tests/test_order_transactions.sh` uses independent real MySQL and
 Redis to verify account transitions, the issuance/disable barrier, delegated
 parent revocation, atomic attachment ownership/binding and quota/expiry behavior.

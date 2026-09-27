@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"ddyidc/internal/shared/distsync"
 	"log"
 	"os"
 	"path/filepath"
@@ -23,13 +24,16 @@ func (s *Service) DiscardUpload(ctx context.Context, id, root string) {
 	if _, err := uuid.Parse(id); err != nil {
 		return
 	}
-	ok, err := s.repo.DiscardUpload(ctx, id)
-	if err != nil || !ok {
-		return
-	}
-	if err = os.Remove(filepath.Join(root, id)); err == nil || os.IsNotExist(err) {
-		_ = s.repo.FinishDelete(ctx, id)
-	}
+	_ = s.repo.WithFileSnapshot(ctx, func(ctx context.Context) error {
+		ok, err := s.repo.DiscardUpload(ctx, id)
+		if err != nil || !ok {
+			return nil
+		}
+		if err = os.Remove(filepath.Join(root, id)); err == nil || os.IsNotExist(err) {
+			_ = s.repo.FinishDelete(ctx, id)
+		}
+		return nil
+	})
 }
 
 // Only registered, unbound, expired files are collected. Never scan/delete
@@ -44,25 +48,29 @@ func (s *Service) StartUploadMaintenance(ctx context.Context, root string) {
 		case <-ticker.C:
 		}
 		batchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		items, err := s.repo.ExpiredUploads(batchCtx)
-		if err != nil {
-			log.Print("ticket_upload_gc database_unavailable")
-			cancel()
-			continue
-		}
-		for _, item := range items {
-			if batchCtx.Err() != nil {
-				break
-			}
-			if _, err := uuid.Parse(item.ID); err != nil {
-				continue
-			}
-			if err := os.Remove(filepath.Join(root, item.ID)); err == nil || os.IsNotExist(err) {
-				_ = s.repo.FinishDelete(batchCtx, item.ID)
-			} else {
-				log.Print("ticket_upload_gc file_remove_failed")
-			}
-		}
+		_ = distsync.Work(batchCtx, func(batchCtx context.Context) error {
+			return s.repo.WithFileSnapshot(batchCtx, func(batchCtx context.Context) error {
+				items, err := s.repo.ExpiredUploads(batchCtx)
+				if err != nil {
+					log.Print("ticket_upload_gc database_unavailable")
+					return err
+				}
+				for _, item := range items {
+					if batchCtx.Err() != nil {
+						break
+					}
+					if _, err := uuid.Parse(item.ID); err != nil {
+						continue
+					}
+					if err := os.Remove(filepath.Join(root, item.ID)); err == nil || os.IsNotExist(err) {
+						_ = s.repo.FinishDelete(batchCtx, item.ID)
+					} else {
+						log.Print("ticket_upload_gc file_remove_failed")
+					}
+				}
+				return nil
+			})
+		})
 		cancel()
 	}
 }
