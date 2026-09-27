@@ -49,6 +49,12 @@ func TestHasProductConfigOptions(t *testing.T) {
 }
 
 func TestCreateOrderRejectsInsufficientBalanceIntegration(t *testing.T) {
+	// Read-only provider credentials must never implicitly authorize a purchase.
+	// This legacy probe can actually buy when the account has sufficient funds;
+	// run it only under a separate, explicitly approved live-order exercise.
+	if os.Getenv("MOEBUN_ALLOW_LIVE_ORDER") != "1374:1:monthly:28" {
+		t.Skip("live order mutation requires separate authorization and MOEBUN_ALLOW_LIVE_ORDER=1374:1:monthly:28; credentials alone are read-only test permission")
+	}
 	username, token := os.Getenv("MOEBUN_TEST_USERNAME"), os.Getenv("MOEBUN_TEST_TOKEN")
 	if username == "" || token == "" {
 		t.Skip("set MOEBUN_TEST_USERNAME and MOEBUN_TEST_TOKEN to run live provider verification")
