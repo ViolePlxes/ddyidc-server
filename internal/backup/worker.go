@@ -2,7 +2,10 @@ package backup
 
 import (
 	"context"
+	"ddyidc/internal/shared/filebarrier"
+	"ddyidc/internal/shared/workgate"
 	"ddyidc/pkg/cache"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"golang.org/x/sys/unix"
@@ -25,10 +28,18 @@ func safeCommand(ctx context.Context, exe string, args ...string) error {
 	return nil
 }
 func (s *Service) businessPayload(ctx context.Context, destination string) error {
-	return safeCommand(ctx, "/opt/ddyidc/deploy/backup.sh", "--business", destination)
+	return filebarrier.With(ctx, s.db, func(ctx context.Context) error {
+		if err := safeCommand(ctx, "/opt/ddyidc/deploy/backup.sh", "--business", destination); err != nil {
+			return err
+		}
+		return copyStorage(ctx, s.Root, filepath.Join(destination, "storage"))
+	})
 }
 func (s *Service) Worker(ctx context.Context) error {
-	lock, e := os.OpenFile(filepath.Join(s.Root, "backups/.backup.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if s.privateRoot == "" || len(s.signingKey) != 32 {
+		return errors.New("维护目录与独立签名密钥未初始化")
+	}
+	lock, e := os.OpenFile(filepath.Join(s.privateRoot, ".backup.lock"), os.O_CREATE|os.O_RDWR, 0600)
 	if e != nil {
 		return e
 	}
@@ -37,6 +48,9 @@ func (s *Service) Worker(ctx context.Context) error {
 		return ErrBusy
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	if e = s.pendingRecovery(); e != nil {
+		return e
+	}
 	// MySQL connection-level lock also excludes workers on a second application host.
 	sqlDB, e := s.db.DB()
 	if e != nil {
@@ -100,8 +114,11 @@ func (s *Service) Worker(ctx context.Context) error {
 	return nil
 }
 func (s *Service) backup(ctx context.Context, j *Job) error {
-	var e error
-	payload := filepath.Join(s.Root, "backups/jobs", j.ID)
+	metadata, e := s.snapshotMetadata(ctx)
+	if e != nil {
+		return e
+	}
+	payload := filepath.Join(s.privateRoot, "jobs", j.ID)
 	if e = os.MkdirAll(payload, 0700); e != nil {
 		return errors.New("无法创建备份工作目录")
 	}
@@ -110,10 +127,30 @@ func (s *Service) backup(ctx context.Context, j *Job) error {
 		return e
 	}
 	archive := filepath.Join(s.Root, "backups/daily", "business-"+j.ID+".tar.gz")
-	if e = pack(payload, archive, s.key); e != nil {
+	finished, e := s.snapshotMetadata(ctx)
+	if e != nil {
+		return e
+	}
+	metadata.FinishedAt = finished.StartedAt
+	if metadata.ApplicationSHA256 != finished.ApplicationSHA256 {
+		return errors.New("备份期间应用产物发生变化，请在升级完成后重试")
+	}
+	if len(metadata.Schemas) != len(finished.Schemas) {
+		return errors.New("备份期间数据库版本变化")
+	}
+	for n, v := range metadata.Schemas {
+		if v != finished.Schemas[n] {
+			return errors.New("备份期间数据库版本变化")
+		}
+	}
+	if finished.IDHighWater > metadata.IDHighWater {
+		metadata.IDHighWater = finished.IDHighWater
+	}
+	privateArchive := filepath.Join(payload, "business.tar.gz")
+	if e = packMetadata(payload, privateArchive, s.key, s.signingKey, metadata); e != nil {
 		return errors.New("业务备份打包失败（检查附件特殊文件及磁盘空间）")
 	}
-	if e = readableByService(archive); e != nil {
+	if e = s.publishArchive(privateArchive, filepath.Join("backups/daily", filepath.Base(archive))); e != nil {
 		return e
 	}
 	j.LocalPath = archive
@@ -147,33 +184,35 @@ func (s *Service) backup(ctx context.Context, j *Job) error {
 	}
 	return nil
 }
-func readableByService(path string) error {
-	u, e := user.Lookup("ddyidc")
-	if e != nil {
-		return errors.New("缺少 ddyidc 服务账号")
-	}
-	uid, _ := strconv.Atoi(u.Uid)
-	gid, _ := strconv.Atoi(u.Gid)
-	if e = os.Chown(path, uid, gid); e != nil {
-		return errors.New("设置备份读取权限失败")
-	}
-	return os.Chmod(path, 0600)
-}
 func (s *Service) retainLocal(archive string) error {
+	root, e := os.OpenRoot(s.Root)
+	if e != nil {
+		return e
+	}
+	defer root.Close()
+	archiveRel, e := filepath.Rel(s.Root, archive)
+	if e != nil {
+		return e
+	}
 	now := time.Now()
 	for _, entry := range []struct {
 		name string
 		days int
 		copy bool
 	}{{"daily", 7, false}, {"weekly", 28, now.Weekday() == time.Sunday}, {"monthly", 370, now.Day() == 1}} {
-		dir := filepath.Join(s.Root, "backups", entry.name)
+		dir := filepath.Join("backups", entry.name)
 		if entry.copy {
 			target := filepath.Join(dir, filepath.Base(archive))
-			if e := os.Link(archive, target); e != nil && !os.IsExist(e) {
+			if e := root.Link(archiveRel, target); e != nil && !os.IsExist(e) {
 				return e
 			}
 		}
-		files, e := os.ReadDir(dir)
+		directory, e := root.Open(dir)
+		if e != nil {
+			return e
+		}
+		files, e := directory.ReadDir(-1)
+		directory.Close()
 		if e != nil {
 			return e
 		}
@@ -186,7 +225,7 @@ func (s *Service) retainLocal(archive string) error {
 				return e
 			}
 			if info.ModTime().Before(now.AddDate(0, 0, -entry.days)) {
-				if e = os.Remove(filepath.Join(dir, f.Name())); e != nil {
+				if e = root.Remove(filepath.Join(dir, f.Name())); e != nil {
 					return e
 				}
 			}
@@ -219,30 +258,96 @@ func (s *Service) restore(ctx context.Context, j *Job, restart *bool) (result er
 	if filepath.Dir(archive) == filepath.Join(s.Root, "backups/downloads") {
 		defer os.Remove(archive)
 	}
-	base := filepath.Join(s.Root, "backups/restore", j.ID)
+	base := filepath.Join(s.privateRoot, "restore", j.ID)
 	payload := filepath.Join(base, "incoming")
 	rollback := filepath.Join(base, "rollback")
 	if e = os.MkdirAll(payload, 0700); e != nil {
 		return errors.New("创建恢复目录失败")
 	}
-	if e = unpack(archive, payload, s.key); e != nil {
+	var savedMetadata *SnapshotMetadata
+	if e = unpackSigned(archive, payload, s.key, s.signingKey, &savedMetadata); e != nil {
 		os.RemoveAll(base)
 		return e
 	}
+	currentMetadata, e := s.snapshotMetadata(ctx)
+	if e != nil {
+		return e
+	}
+	if e = metadataCompatible(savedMetadata, currentMetadata); e != nil {
+		return e
+	}
 	// Durable journal lives outside MySQL so interrupted restores remain diagnosable.
-	phase := func(value string) { _ = os.WriteFile(filepath.Join(base, "phase"), []byte(value), 0600) }
-	phase("validated")
+	phase := func(value string) error { return writeDurable(filepath.Join(base, "phase"), []byte(value)) }
+	if e = phase("validated"); e != nil {
+		return errors.New("无法持久保存恢复日志，未修改业务数据")
+	}
+	accounts, e := runtimeAccounts(ctx, s.db, s.runtimeAccount)
+	if e != nil {
+		return e
+	}
+	rawAccounts, e := json.Marshal(accounts)
+	if e != nil {
+		return e
+	}
+	if e = writeDurable(filepath.Join(base, "runtime-accounts.json"), rawAccounts); e != nil {
+		return errors.New("账户隔离计划未持久保存")
+	}
+	if e = writeReview(base, nil, nil); e != nil {
+		return errors.New("恢复核对清单未持久保存")
+	}
+	pool, e := s.db.DB()
+	if e != nil {
+		return e
+	}
+	drainCtx, drainCancel := context.WithTimeout(ctx, 5*time.Minute)
+	e = (&workgate.Gate{DB: pool}).Pause(drainCtx, "restore:"+j.ID)
+	drainCancel()
+	if e != nil {
+		return errors.New("全节点工作排空失败，未导入；请检查维护屏障状态")
+	}
+	if e = phase("drained"); e != nil {
+		return errors.New("工作已暂停但阶段日志写入失败，禁止导入")
+	}
+	if e = fenceAccounts(ctx, s.db, accounts); e != nil {
+		return e
+	}
+	if e = phase("runtime_accounts_fenced"); e != nil {
+		return errors.New("账户已隔离但日志写入失败，禁止导入")
+	}
+	// Keep accounts locked after every outcome until explicit fact reconciliation.
+	*restart = false
 	if e = safeCommand(ctx, "/usr/bin/systemctl", "stop", "ddyidc.service"); e != nil {
 		return e
 	}
-	*restart = true
+	*restart = false
+	frozenMetadata, e := s.snapshotMetadata(ctx)
+	if e != nil {
+		return errors.New("账户隔离后读取ID高水位失败")
+	}
+	highWater := frozenMetadata.IDHighWater
+	if savedMetadata.IDHighWater > highWater {
+		highWater = savedMetadata.IDHighWater
+	}
+	beforeFacts, e := s.recoveryFacts(ctx)
+	if e != nil {
+		return e
+	}
+	factsJSON, e := json.Marshal(beforeFacts)
+	if e != nil {
+		return e
+	}
+	if e = writeDurable(filepath.Join(base, "before-facts.json"), factsJSON); e != nil {
+		return errors.New("恢复前核对事实未持久保存")
+	}
 	if e = os.MkdirAll(rollback, 0700); e != nil {
 		return errors.New("无法创建恢复前回滚目录")
 	}
 	if e = s.businessPayload(ctx, rollback); e != nil {
 		return errors.New("恢复前本地备份失败，已取消恢复")
 	}
-	phase("rollback_ready")
+	if e = phase("rollback_ready"); e != nil {
+		return errors.New("回滚准备日志写入失败，应用账户保持隔离")
+	}
 	live := filepath.Join(s.Root, "storage")
 	old := filepath.Join(base, "storage-before")
 	swapped := false
@@ -251,7 +356,7 @@ func (s *Service) restore(ctx context.Context, j *Job, restart *bool) (result er
 		defer cancel()
 		if e := importSQL(recovery, filepath.Join(rollback, "mysql.sql")); e != nil {
 			*restart = false
-			phase("rollback_failed_service_stopped")
+			_ = phase("rollback_failed_service_stopped")
 			return errors.New("恢复及数据库回滚失败，服务保持停止；请使用本地回滚副本恢复")
 		}
 		if swapped {
@@ -264,12 +369,36 @@ func (s *Service) restore(ctx context.Context, j *Job, restart *bool) (result er
 				return errors.New("附件回滚失败，服务保持停止")
 			}
 		}
-		phase("rolled_back")
+		rolledFacts, err := s.recoveryFacts(recovery)
+		if err != nil {
+			return errors.New("回滚后事实读取失败，账户保持隔离")
+		}
+		if err = writeReview(base, beforeFacts, rolledFacts); err != nil {
+			return errors.New("回滚后核对清单失败，账户保持隔离")
+		}
+		if err := phase("rolled_back"); err != nil {
+			return errors.New("数据已回滚但日志写入失败，账户保持隔离")
+		}
 		return fmt.Errorf("%s；已回滚到恢复前数据", cause.Error())
 	}
-	phase("importing_mysql")
+	if e = phase("importing_mysql"); e != nil {
+		return errors.New("导入阶段日志写入失败，禁止导入")
+	}
 	if e = importSQL(ctx, filepath.Join(payload, "mysql.sql")); e != nil {
 		return rollbackData(e)
+	}
+	if e = s.db.WithContext(ctx).Exec("UPDATE system.id_sequences SET high_water=GREATEST(high_water,?) WHERE name='global'", highWater).Error; e != nil {
+		return rollbackData(errors.New("ID高水位恢复保护失败"))
+	}
+	if e = s.db.WithContext(ctx).Exec("UPDATE system.durable_tasks SET status='unknown',lease_token='',lease_until=NULL,safe_error='数据库恢复后等待外部事实核对' WHERE status IN ('pending','running')").Error; e != nil {
+		return rollbackData(errors.New("恢复后任务隔离失败"))
+	}
+	restoredFacts, e := s.recoveryFacts(ctx)
+	if e != nil {
+		return rollbackData(e)
+	}
+	if e = writeReview(base, beforeFacts, restoredFacts); e != nil {
+		return rollbackData(errors.New("恢复差异清单保存失败"))
 	}
 	if e = os.Rename(live, old); e != nil {
 		return rollbackData(errors.New("附件切换失败"))
@@ -325,7 +454,9 @@ func (s *Service) restore(ctx context.Context, j *Job, restart *bool) (result er
 			}
 		}
 	}
-	phase("completed")
-	j.Warning = "恢复前回滚副本保留在本地 backups/restore/" + j.ID
+	if e = phase("awaiting_reconciliation"); e != nil {
+		return errors.New("导入完成但日志写入失败，应用账户保持隔离")
+	}
+	j.Warning = "数据导入完成，应用账户保持隔离，须核对外部交易后人工放行；维护记录 /var/lib/ddyidc-maintenance/restore/" + j.ID
 	return nil
 }

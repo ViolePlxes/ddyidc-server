@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,8 @@ import (
 )
 
 type Manifest struct {
+	Metadata       *SnapshotMetadata `json:"metadata,omitempty"`
+	MAC            string            `json:"mac,omitempty"`
 	Version        int               `json:"version"`
 	CreatedAt      time.Time         `json:"createdAt"`
 	KeyFingerprint string            `json:"keyFingerprint"`
@@ -44,7 +47,16 @@ func allowedMember(name string) bool {
 
 // Archive members are an allowlist, never the entire local disaster backup.
 func pack(payload, destination string, key []byte) error {
-	manifest := Manifest{Version: 1, CreatedAt: time.Now(), KeyFingerprint: fingerprint(key), Files: map[string]string{}}
+	return packMetadata(payload, destination, key, key, nil)
+}
+func packMetadata(payload, destination string, key, signingKey []byte, metadata *SnapshotMetadata) error {
+	if len(signingKey) != 32 {
+		return errors.New("独立备份签名密钥未配置")
+	}
+	if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+		return errors.New("备份签名密钥未配置")
+	}
+	manifest := Manifest{Version: 2, Metadata: metadata, CreatedAt: time.Now(), KeyFingerprint: fingerprint(key), Files: map[string]string{}}
 	paths := []string{"mysql.sql"}
 	if e := filepath.WalkDir(filepath.Join(payload, "storage"), func(p string, d fs.DirEntry, e error) error {
 		if e != nil {
@@ -75,6 +87,7 @@ func pack(payload, destination string, key []byte) error {
 		}
 		manifest.Files[name] = sum
 	}
+	manifest.MAC = manifestMAC(manifest, signingKey)
 	raw, _ := json.Marshal(manifest)
 	output, e := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
@@ -129,7 +142,13 @@ func pack(payload, destination string, key []byte) error {
 
 // Reject traversal, links, unexpected configuration files, duplicate members and
 // decompression bombs before any database or live storage mutation.
-func unpack(archive, destination string, key []byte) error {
+func unpack(archive, destination string, key []byte, metadata ...**SnapshotMetadata) error {
+	return unpackSigned(archive, destination, key, key, metadata...)
+}
+func unpackSigned(archive, destination string, key, signingKey []byte, metadata ...**SnapshotMetadata) error {
+	if len(signingKey) != 32 {
+		return errors.New("独立备份签名密钥未配置")
+	}
 	input, e := os.Open(archive)
 	if e != nil {
 		return e
@@ -191,8 +210,11 @@ func unpack(archive, destination string, key []byte) error {
 		seen[h.Name] = hex.EncodeToString(hash.Sum(nil))
 	}
 	delete(seen, "manifest.json")
-	if !hasManifest || manifest.Version != 1 || manifest.KeyFingerprint != fingerprint(key) {
+	if !hasManifest || manifest.Version != 2 || manifest.KeyFingerprint != fingerprint(key) {
 		return errors.New("备份版本或本机 AES 密钥不匹配，禁止恢复")
+	}
+	if !hmac.Equal([]byte(manifest.MAC), []byte(manifestMAC(manifest, signingKey))) {
+		return errors.New("备份签名校验失败，禁止恢复")
 	}
 	if len(manifest.Files) != len(seen) || manifest.Files["mysql.sql"] == "" {
 		return errors.New("备份内容不完整")
@@ -201,6 +223,9 @@ func unpack(archive, destination string, key []byte) error {
 		if seen[name] != sum {
 			return errors.New("备份文件哈希校验失败")
 		}
+	}
+	if len(metadata) > 0 && metadata[0] != nil {
+		*metadata[0] = manifest.Metadata
 	}
 	return os.MkdirAll(filepath.Join(destination, "storage"), 0700)
 }

@@ -15,6 +15,6 @@ IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/ddyidc
+ReadWritePaths=/var/lib/ddyidc /var/lib/ddyidc-maintenance
 ReadOnlyPaths=/etc/ddyidc /tmp /var/tmp
 Environment=TMPDIR=/var/lib/ddyidc/tmp HOME=/var/lib/ddyidc/home

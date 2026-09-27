@@ -10,17 +10,19 @@ fi
 # Invoked only by the privileged fixed backup worker, which owns the flock.
 if [[ "${1:-}" == --business ]]; then
   destination="${2:?missing business payload directory}"
-  case "$destination" in /var/lib/ddyidc/backups/jobs/*|/var/lib/ddyidc/backups/restore/*) ;; *) echo "invalid backup work directory" >&2; exit 1;; esac
+  case "$destination" in /var/lib/ddyidc-maintenance/jobs/*|/var/lib/ddyidc-maintenance/restore/*) ;; *) echo "invalid backup work directory" >&2; exit 1;; esac
   resolved="$(realpath -m -- "$destination")"
   [[ "$resolved" == "$destination" && ! -L "$destination" ]] || exit 1
   install -d -m 0700 "$destination" "$destination/storage"
-  mysqldump --protocol=socket --user=root --all-databases \
-    --single-transaction --quick --routines --events --triggers --hex-blob \
+  # Business schemas only. mysql.* contains database identities and must never
+  # be included in the OSS business archive. Local disaster backups below are
+  # a separate, root-only artifact and are never uploaded by this worker.
+  mysqldump --protocol=socket --user=root --databases \
+    agency billing common customer instance marketing order payment product system ticket \
+    --ignore-table=system.operation_barrier --single-transaction --quick --routines --events --triggers --hex-blob \
     --set-gtid-purged=OFF >"$destination/mysql.sql"
-  if [[ -d /var/lib/ddyidc/storage ]]; then
-    if find /var/lib/ddyidc/storage -type l -print -quit | grep -q .; then echo "storage symlinks rejected" >&2; exit 1; fi
-    cp -a /var/lib/ddyidc/storage/. "$destination/storage/"
-  fi
+  # The Go maintenance worker copies storage through pinned os.Root handles.
+  # Do not use find-then-cp here: app-controlled path replacement is a TOCTOU.
   exit 0
 fi
 

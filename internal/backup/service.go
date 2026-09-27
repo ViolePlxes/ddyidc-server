@@ -63,10 +63,15 @@ type Audit struct {
 func (Audit) TableName() string { return "system.backup_audit" }
 
 type Service struct {
-	db   *gorm.DB
-	key  []byte
-	Root string
+	db             *gorm.DB
+	key            []byte
+	Root           string
+	runtimeAccount string
+	privateRoot    string
+	signingKey     []byte
 }
+
+func (s *Service) SetRuntimeAccount(user string) { s.runtimeAccount = user }
 
 func New(db *gorm.DB, key []byte, root string) *Service {
 	return &Service{db: db, key: key, Root: root}
@@ -205,6 +210,9 @@ func (s *Service) finish(j *Job, cause error, start time.Time) error {
 	j.FinishedAt = &now
 	j.DurationMS = time.Since(start).Milliseconds()
 	j.Status = "success"
+	if j.Kind == "restore" && cause == nil {
+		j.Status = "awaiting_review"
+	}
 	if cause != nil {
 		j.Status = "failed"
 		j.Error = cause.Error()
@@ -212,6 +220,9 @@ func (s *Service) finish(j *Job, cause error, start time.Time) error {
 	// Restore may have replaced these tables; reconstruct the final audit state.
 	// Keep a durable, non-secret result if the database is unavailable.
 	resultDir := filepath.Join(s.Root, "backups/results")
+	if s.privateRoot != "" {
+		resultDir = filepath.Join(s.privateRoot, "results")
+	}
 	if err := os.MkdirAll(resultDir, 0700); err != nil {
 		return errors.New("无法写入备份结果记录")
 	}
@@ -219,7 +230,7 @@ func (s *Service) finish(j *Job, cause error, start time.Time) error {
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filepath.Join(resultDir, j.ID+".json"), raw, 0600); err != nil {
+	if err = writeDurable(filepath.Join(resultDir, j.ID+".json"), raw); err != nil {
 		return errors.New("无法保存备份结果记录")
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
