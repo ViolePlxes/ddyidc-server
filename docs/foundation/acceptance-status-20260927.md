@@ -19,14 +19,36 @@ foundation packages or production acceptance are complete.
 - Deleted instances cannot create new renewal orders or receive control actions.
   Already-paid renewal work remains for manual review rather than issuing another
   external action. Local billing dates are not silently replaced by supplier dates.
-- Five authorized isolated restore exercises are exhausted. Recovery remains
-  fenced; no additional restore or business release is implied by these commits.
+- The isolated restore has completed external-fact reconciliation and explicit
+  audited release. Its persistent outbound DROP policy and disabled cron remain;
+  this is not production release. Thirty-three restored facts were checked; the
+  deleted supplier instance was corrected only in the recovery database. No new
+  restore is implied. Root maintenance workers now use separate private runtime
+  directories; application directories remain application-owned.
 - The latest candidate was upgraded on an empty isolated installation VM. An
   acceptance-harness execute-bit error was corrected before configuration checks
   passed. This is not a fresh production deployment or final tagged-artifact test.
-- Live procurement/renewal/SMS, complete role and business matrices, alert delivery,
-  real VNC, external recovery reconciliation and GitHub CI activation still require
-  their own evidence or prerequisites. No credentials are included in this tree.
+- Live procurement and renewal have explicit limits (one each, 30 yuan each), but
+  no charge has occurred: the supplier invoice read returned 403 and the actual
+  pre-payment amount cap cannot yet be established. Authorization is not evidence
+  of a successful transaction.
+- Supplier HTTP and remote-console connections now enforce destination/DNS/port,
+  redirect and response-size boundaries. The development VM's proxy DNS supplied
+  a reserved fake IP; authenticated DNS-over-TLS resolves the real public endpoint
+  without allowing the reserved range. A real read-only product request passed.
+- Actual MySQL regression found and corrected the schema-qualified automatic
+  renewal alias and asynchronous KILL cleanup timing. Candidate queries reject
+  foreign/disabled settings; recovery waits at most five seconds for zero sessions
+  and remains closed on failure. Database diagnostics include compiled callsites,
+  never query values or driver error text.
+- Ordinary sales ownership/field visibility/session revocation passed real HTTP;
+  navigation drag and same/new-tab links passed the browser. Product image, cycle
+  and quantity updated the real bill. Full cart access remains behind mobile
+  binding; no SMS or identity bypass was used. Ticket reads passed; no external
+  notification was sent by this read-only browser check.
+- Live procurement/renewal/SMS, remaining business matrices, alert delivery, real
+  VNC and GitHub CI activation still require their own evidence or prerequisites.
+  No credentials are included in this tree.
 
 The pending external checks do not authorize new payments, supplier purchases,
 renewals, messages, destructive recovery, or cloud deployment.
