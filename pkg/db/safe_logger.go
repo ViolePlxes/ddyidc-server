@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"runtime"
+	"strings"
 	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
@@ -33,5 +35,24 @@ func (l safeLogger) Trace(_ context.Context, begin time.Time, _ func() (string, 
 	if errors.As(err, &mysqlError) {
 		code = mysqlError.Number
 	}
-	log.Printf("DB_QUERY failed=%t mysql_code=%d duration_ms=%d", failed, code, elapsed.Milliseconds())
+	caller, line := queryCaller()
+	log.Printf("DB_QUERY failed=%t mysql_code=%d duration_ms=%d caller=%s line=%d", failed, code, elapsed.Milliseconds(), caller, line)
+}
+
+// Identify the application callsite without formatting SQL or driver messages.
+// Runtime symbols contain compiled identifiers, never query values or request data.
+func queryCaller() (string, int) {
+	var pcs [32]uintptr
+	n := runtime.Callers(2, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		frame, more := frames.Next()
+		if strings.HasPrefix(frame.Function, "ddyidc/") && !strings.HasPrefix(frame.Function, "ddyidc/pkg/db.") {
+			return frame.Function, frame.Line
+		}
+		if !more {
+			break
+		}
+	}
+	return "unknown", 0
 }
