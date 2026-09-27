@@ -14,6 +14,7 @@ import (
 )
 
 const lossGuardKey = "upstream.loss_guard"
+const procurementOrders = "(SELECT order_id,supplier_id,upstream_product_id,SUM(cost) AS cost FROM (SELECT order_id,supplier_id,upstream_product_id,cost FROM `order`.upstream_orders UNION ALL SELECT order_id,supplier_id,upstream_product_id,cost FROM `order`.unit_procurements) all_procurements GROUP BY order_id,supplier_id,upstream_product_id)"
 
 type ProductListQuery struct {
 	Page, PageSize            int
@@ -126,7 +127,7 @@ func (s *Store) deleteProtected(product model.UpstreamProduct) error {
 	var count int64
 	// The upstream order link remains present even where a legacy order did not
 	// persist an order_item, so it is the authoritative order-retention check.
-	if err := s.db.Table("order.upstream_orders AS uo").Joins("JOIN `order`.orders AS o ON o.id = uo.order_id").Where("uo.supplier_id = ? AND uo.upstream_product_id = ? AND o.status NOT IN ?", product.SupplierID, product.UpstreamProductID, []int{3, 4}).Count(&count).Error; err != nil {
+	if err := s.db.Table(procurementOrders+" AS uo").Joins("JOIN `order`.orders AS o ON o.id = uo.order_id").Where("uo.supplier_id = ? AND uo.upstream_product_id = ? AND o.status NOT IN ?", product.SupplierID, product.UpstreamProductID, []int{3, 4}).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
@@ -275,7 +276,7 @@ func (s *Store) ListAdminOrders(page, pageSize int, keyword, status string) (Ups
 	if pageSize < 1 || pageSize > 100 {
 		pageSize = 10
 	}
-	base := s.db.Table("order.upstream_orders AS uo").Joins("JOIN `order`.orders AS o ON o.id = uo.order_id").Joins("JOIN customer.customers AS c ON c.id = o.customer_id").Joins("JOIN product.upstream_products AS up ON up.supplier_id = uo.supplier_id AND up.upstream_product_id = uo.upstream_product_id")
+	base := s.db.Table(procurementOrders + " AS uo").Joins("JOIN `order`.orders AS o ON o.id = uo.order_id").Joins("JOIN customer.customers AS c ON c.id = o.customer_id").Joins("JOIN product.upstream_products AS up ON up.supplier_id = uo.supplier_id AND up.upstream_product_id = uo.upstream_product_id")
 	if status == "paid" {
 		base = base.Where("o.status IN ?", []int{2, 6})
 	}
@@ -305,7 +306,7 @@ func (s *Store) ListAdminOrders(page, pageSize int, keyword, status string) (Ups
 		Products int64
 		Hosts    int64
 	}
-	if err := s.db.Raw("SELECT COALESCE(SUM(o.pay_amount)/100.0,0) sales, COALESCE(SUM(uo.cost),0) cost, (SELECT COUNT(*) FROM product.upstream_products) products, (SELECT COUNT(*) FROM instance.upstream_hosts) hosts FROM order.upstream_orders uo JOIN `order`.orders o ON o.id=uo.order_id JOIN product.upstream_products up ON up.supplier_id=uo.supplier_id AND up.upstream_product_id=uo.upstream_product_id WHERE o.status NOT IN (3,4)").Scan(&metric).Error; err != nil {
+	if err := s.db.Raw("SELECT COALESCE(SUM(o.pay_amount)/100.0,0) sales, COALESCE(SUM(uo.cost),0) cost, (SELECT COUNT(*) FROM product.upstream_products) products, (SELECT COUNT(*) FROM instance.upstream_hosts) hosts FROM " + procurementOrders + " uo JOIN `order`.orders o ON o.id=uo.order_id JOIN product.upstream_products up ON up.supplier_id=uo.supplier_id AND up.upstream_product_id=uo.upstream_product_id WHERE o.status NOT IN (3,4)").Scan(&metric).Error; err != nil {
 		return UpstreamOrderResult{}, err
 	}
 	return UpstreamOrderResult{Metrics: UpstreamOrderMetrics{Sales: metric.Sales, Profit: metric.Sales - metric.Cost, ProductCount: metric.Products, HostCount: metric.Hosts}, Items: rows, Total: total}, nil

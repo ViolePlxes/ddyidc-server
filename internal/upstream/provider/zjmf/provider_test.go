@@ -207,14 +207,15 @@ func TestExtractProvisionResult(t *testing.T) {
 }
 
 func TestQKIDCSafetyPolicyBlocksCatalogueAndOtherProducts(t *testing.T) {
+	configureLocalProductPolicy(t)
 	provider := New(contracts.Supplier{URL: "https://www.qkidc.cn/", Username: "user", Token: "token"})
 	if _, err := provider.GetProductList(); err == nil || !strings.Contains(err.Error(), "forbids full catalogue") {
 		t.Fatalf("catalogue guard = %v", err)
 	}
-	if err := provider.enforceQKIDCProduct(488); err == nil {
+	if err := provider.enforceTestProductPolicy(488); err == nil {
 		t.Fatal("product 488 was not blocked")
 	}
-	if err := provider.enforceQKIDCProduct(489); err != nil {
+	if err := provider.enforceTestProductPolicy(489); err != nil {
 		t.Fatalf("product 489 was blocked: %v", err)
 	}
 }

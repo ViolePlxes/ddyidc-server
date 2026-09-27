@@ -207,3 +207,35 @@ func TestRedisOutageCancelsRunningTask(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBlockingScannerDoesNotBlockLeadershipCancellation(t *testing.T) {
+	client, stop, _ := redisForTest(t)
+	l := NewLeader(client)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !l.Elect(ctx) {
+		t.Fatal("election failed")
+	}
+	first, second, stopped := make(chan struct{}), make(chan struct{}), make(chan struct{}, 2)
+	go l.Run(ctx, []func(context.Context){
+		func(term context.Context) { close(first); <-term.Done(); stopped <- struct{}{} },
+		func(term context.Context) { close(second); <-term.Done(); stopped <- struct{}{} },
+	})
+	for _, ready := range []chan struct{}{first, second} {
+		select {
+		case <-ready:
+		case <-time.After(2 * time.Second):
+			t.Fatal("blocking scanner prevented another starter")
+		}
+	}
+	stop()
+	l.renew(ctx)
+	for n := 0; n < 2; n++ {
+		select {
+		case <-stopped:
+		case <-time.After(2 * time.Second):
+			t.Fatal("blocking scanner prevented loss-of-leadership cancellation")
+		}
+	}
+	t.Log("blocking scanner starts concurrently with other scanners; actual Redis outage cancels both term contexts")
+}

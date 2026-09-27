@@ -5,66 +5,37 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	instance "ddyidc/internal/instance/domain"
+	orderrepo "ddyidc/internal/order/repository"
 	orderservice "ddyidc/internal/order/service"
 	"ddyidc/internal/shared/snowflake"
-	"ddyidc/pkg/db"
-	"github.com/zeromicro/go-zero/core/conf"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-type integrationOrders struct {
-	db  *gorm.DB
-	mu  sync.Mutex
-	ids []int64
-}
-
-func (f *integrationOrders) CreateOrder(ctx context.Context, customerID int64, input *orderservice.CreateOrderInput) (*orderservice.OrderView, error) {
-	productID, _ := strconv.ParseInt(input.ProductID, 10, 64)
-	orderID, itemID := snowflake.GenID(), snowflake.GenID()
-	now := time.Now()
-	err := f.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec("INSERT INTO `order`.orders (id,order_no,customer_id,total_amount,pay_amount,status,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?)", orderID, fmt.Sprintf("GBT%d", orderID), customerID, 1000, 1000, now, now).Error; err != nil {
-			return err
-		}
-		return tx.Exec("INSERT INTO `order`.order_items (id,order_id,product_id,product_name,module_type,config_snapshot,duration_months,qty,unit_price,subtotal,delivery_status,created_at,updated_at) VALUES (?,?,?,?,?,'{}',1,1,1000,1000,0,?,?)", itemID, orderID, productID, "拼团测试商品", "test", now, now).Error
-	})
-	if err != nil {
-		return nil, err
-	}
-	f.mu.Lock()
-	f.ids = append(f.ids, orderID)
-	f.mu.Unlock()
-	return &orderservice.OrderView{ID: strconv.FormatInt(orderID, 10)}, nil
-}
-
-func (f *integrationOrders) ProvisionAfterPayment(ctx context.Context, _ int64, orderID int64, _ string) error {
-	instanceID := snowflake.GenID()
-	return f.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table("order.order_items").Where("order_id=?", orderID).Updates(map[string]any{"instance_id": instanceID, "delivery_status": 2}).Error; err != nil {
-			return err
-		}
-		return tx.Table("order.orders").Where("id=?", orderID).Update("status", 6).Error
-	})
-}
-
 func openIntegrationDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	if os.Getenv("DDYIDC_GROUPBUY_INTEGRATION") != "1" {
-		t.Skip("set DDYIDC_GROUPBUY_INTEGRATION=1 to run MySQL lifecycle tests")
+	socket := os.Getenv("FOUNDATION_MYSQL_SOCKET")
+	if socket == "" {
+		t.Skip("isolated MySQL lifecycle test required")
 	}
-	var c struct{ MySQL db.Config }
-	conf.MustLoad(filepath.Join("..", "..", "etc", "config.yaml"), &c)
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true", c.MySQL.User, c.MySQL.Password, c.MySQL.Host, c.MySQL.Port, c.MySQL.Database)
+	if !strings.HasPrefix(socket, "/tmp/ddyidc-foundation-") || !strings.HasSuffix(socket, "/mysql.sock") {
+		t.Fatal("unsafe MySQL socket")
+	}
+	dsn := "root@unix(" + socket + ")/?parseTime=true"
 	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
+		t.Fatal(err)
+	}
+	pool, _ := database.DB()
+	t.Cleanup(func() { pool.Close() })
+	if err := snowflake.Configure(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
 	return database
@@ -73,8 +44,13 @@ func openIntegrationDB(t *testing.T) *gorm.DB {
 func TestIntegrationLifecycle(t *testing.T) {
 	database := openIntegrationDB(t)
 	ctx := context.Background()
-	fake := &integrationOrders{db: database}
-	service := NewService(database, fake, nil)
+	service := NewService(database, orderservice.NewService(orderrepo.NewRepository(database), nil), nil)
+	if err := database.Exec("UPDATE system.system_configs SET value='1' WHERE `key`='groupbuy.enabled'").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("UPDATE system.system_configs SET value='{\"enabled\":false}' WHERE `key`='certification.settings'").Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := service.EnsureSchema(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -86,9 +62,8 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}
 	activityIDs := make([]int64, 0, 3)
 	defer func() {
-		fake.mu.Lock()
-		orderIDs := append([]int64(nil), fake.ids...)
-		fake.mu.Unlock()
+		var orderIDs []int64
+		database.Table("order.orders").Where("customer_id IN ?", clientIDs).Pluck("id", &orderIDs)
 		if len(orderIDs) > 0 {
 			database.Exec("DELETE FROM `order`.order_items WHERE order_id IN ?", orderIDs)
 			database.Exec("DELETE FROM `order`.orders WHERE id IN ?", orderIDs)
@@ -102,7 +77,10 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}()
 
 	now := time.Now()
-	if err := database.Exec("INSERT INTO product.products (id,tenant_id,group_id,name,module_type,pay_type,stock,sold_count,status,hidden,created_at,updated_at) VALUES (?,0,0,'拼团测试商品','test',1,20,0,1,0,?,?)", productID, now, now).Error; err != nil {
+	if err := database.Exec("INSERT INTO product.products (id,tenant_id,group_id,name,module_type,pay_type,stock,sold_count,status,hidden,created_at,updated_at) VALUES (?,0,0,'拼团测试商品','cloud',1,20,0,1,0,?,?)", productID, now, now).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO product.product_specs(id,product_id,name,vcpu,memory,price_mode,price) VALUES(?,?,'isolated',1,'1 GB','fixed',10.00)", snowflake.GenID(), productID).Error; err != nil {
 		t.Fatal(err)
 	}
 	for index, id := range clientIDs {
@@ -158,6 +136,28 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}
 	if _, err = service.JoinGroup(ctx, clientIDs[4], leader.ID, "", nil); err != nil {
 		t.Fatal(err)
+	}
+	if err = service.CompleteGroup(ctx, leader.ID); err != nil {
+		t.Fatal(err)
+	}
+	var delivering []Record
+	if err = database.Where("leader_id=?", leader.ID).Find(&delivering).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, member := range delivering {
+		if member.Status != 4 || member.OrderID == nil {
+			t.Fatal("group skipped durable delivery state")
+		}
+		if err = database.Table("order.orders").Where("id=?", *member.OrderID).Update("status", 6).Error; err != nil {
+			t.Fatal(err)
+		}
+		hostID := snowflake.GenID()
+		if err = database.Create(&instance.Host{ID: hostID, InstanceNo: fmt.Sprint("GBTEST", hostID), CustomerID: member.ClientID, OrderID: *member.OrderID, ProductID: productID, ModuleType: "cloud", ConfigSnapshot: "{}", Status: 3}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err = service.SyncDeliveredOrder(ctx, member.ClientID, *member.OrderID); err != nil {
+			t.Fatal(err)
+		}
 	}
 	detail, err := service.Group(ctx, leader.ID, 0, true)
 	if err != nil || detail.Leader.Status != 2 || len(detail.Members) != 5 {

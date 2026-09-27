@@ -2,6 +2,7 @@ package cdnsell
 
 import (
 	"context"
+	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/distsync"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
@@ -280,6 +281,23 @@ func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int
 func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderID int64, method string) (bool, error) {
 	matched := false
 	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Identify the module without taking its row lock, then follow the
+		// platform-order -> module-order lock order used by payment recovery.
+		var candidate struct{ ID int64 }
+		if err := tx.Table(ordersTable).Select("id").Where("ref_order_id=?", mainOrderID).Take(&candidate).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		matched = true
+		var platform orderdom.Order
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", mainOrderID, userID).Take(&platform).Error; err != nil {
+			return err
+		}
+		if platform.Status != orderdom.OrderStatusPaid && platform.Status != orderdom.OrderStatusCompleted {
+			return errors.New("平台订单未支付或状态已变化，不能发放流量")
+		}
 		var row struct {
 			ID, UserID, ProductID, TrafficBytes int64
 			Status                              string
@@ -288,7 +306,7 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 		}
 		e := tx.Table(ordersTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("ref_order_id=?", mainOrderID).Take(&row).Error
 		if errors.Is(e, gorm.ErrRecordNotFound) {
-			return nil
+			return errors.New("流量订单已变更，请核对后继续交付")
 		}
 		if e != nil {
 			return e
@@ -298,7 +316,13 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 			return errors.New("CDN 订单归属不匹配")
 		}
 		if row.Status == "paid" && row.BatchID != nil {
-			return nil
+			if platform.Status == orderdom.OrderStatusCompleted {
+				return nil
+			}
+			return errors.New("流量交付与平台订单状态不一致，请核对")
+		}
+		if row.Status != "pending" || platform.Status != orderdom.OrderStatusPaid {
+			return errors.New("流量订单状态已变化，不能重复交付")
 		}
 		var snap struct {
 			ValidDays int `json:"validDays"`
@@ -322,7 +346,14 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 		if e := tx.Table("order.order_items").Where("order_id=? AND module_type='cdnsell'", mainOrderID).Updates(map[string]any{"delivery_status": 2, "updated_at": now}).Error; e != nil {
 			return e
 		}
-		return tx.Table("order.orders").Where("id=?", mainOrderID).Updates(map[string]any{"status": orderdom.OrderStatusCompleted, "updated_at": now}).Error
+		changed, err := orderstate.CompletePaidTx(tx, mainOrderID, userID, now)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return errors.New("平台订单状态已变化，交付已回滚")
+		}
+		return nil
 	})
 	_ = method
 	return matched, e

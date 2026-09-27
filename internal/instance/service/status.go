@@ -35,6 +35,13 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 		return nil, err
 	}
 	view := &StatusView{Status: h.Status, PowerStatus: normalizePower(h.PowerStatus)}
+	readStarted := time.Now()
+	// One database clock orders reads across nodes with different wall clocks.
+	if s.db != nil {
+		if err := s.db.WithContext(ctx).Raw("SELECT CURRENT_TIMESTAMP(6)").Row().Scan(&readStarted); err != nil {
+			return nil, err
+		}
+	}
 	p, w := s.providerContext(ctx, h)
 	if w != "" {
 		view.Warning = w
@@ -42,8 +49,14 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 	}
 	raw, err := p.GetInstanceStatus(parseHostID(h.UpstreamInstanceID))
 	if err != nil || raw == "" {
-		view.Warning = "实时状态同步失败或超时，显示上次状态；请稍后刷新"
-		return view, nil
+		// Deleted/suspended hosts may no longer have a working power endpoint.
+		// Only a matching, explicit lifecycle result may replace the old snapshot.
+		detail, detailErr := p.GetInstanceDetail(parseHostID(h.UpstreamInstanceID))
+		raw = unavailableLifecycle(detail, h.UpstreamInstanceID)
+		if detailErr != nil || raw == "" {
+			view.Warning = "实时状态同步失败或超时，显示上次状态；请稍后刷新"
+			return view, nil
+		}
 	}
 	power := normalizePower(raw)
 	if power == "operating" {
@@ -62,10 +75,22 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 	view.PowerStatus = power
 	view.RawStatus = raw
 	view.Status = statusCode(power, h.Status)
-	view.SyncedAt = time.Now().UTC().Format(time.RFC3339)
-	fields := map[string]any{"status": view.Status, "power_status": power, "last_synced_at": time.Now()}
+	view.SyncedAt = readStarted.UTC().Format(time.RFC3339)
+	fields := map[string]any{"status": view.Status, "power_status": power, "last_synced_at": readStarted}
 	if s.db != nil {
-		err = s.db.WithContext(ctx).Model(&dom.Host{}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=? AND power_status=?", h.ID, customerID, h.OwnershipVersion, h.UpstreamInstanceID, h.PowerStatus).Updates(fields).Error
+		result := s.db.WithContext(ctx).Model(&dom.Host{}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_provider_id <=> ? AND upstream_instance_id=? AND power_status=? AND (last_synced_at IS NULL OR last_synced_at<=?)", h.ID, customerID, h.OwnershipVersion, h.UpstreamProviderID, h.UpstreamInstanceID, h.PowerStatus, readStarted).Updates(fields)
+		err = result.Error
+		if err == nil && result.RowsAffected == 0 {
+			current, loadErr := s.owned(ctx, customerID, instanceID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			warning := "状态已被更新，本次较早的查询未覆盖新结果"
+			if current.Status == view.Status && normalizePower(current.PowerStatus) == view.PowerStatus {
+				warning = ""
+			}
+			return &StatusView{Status: current.Status, PowerStatus: normalizePower(current.PowerStatus), Warning: warning}, nil
+		}
 	} else {
 		err = s.repo.UpdateFields(ctx, h.ID, fields)
 	}
@@ -73,6 +98,17 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 		return nil, err
 	}
 	return view, nil
+}
+func unavailableLifecycle(detail *contracts.InstanceDetail, expectedID string) string {
+	if detail == nil || detail.ID != expectedID {
+		return ""
+	}
+	switch state := normalizePower(detail.Status); state {
+	case "deleted", "expired", "suspended":
+		return state
+	default:
+		return ""
+	}
 }
 func actionPower(action string) string {
 	switch action {

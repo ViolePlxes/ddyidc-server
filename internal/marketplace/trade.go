@@ -4,8 +4,10 @@ import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
 	orderdom "ddyidc/internal/order/domain"
+	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/distsync"
+	"ddyidc/internal/shared/tasks"
 	"errors"
 	"fmt"
 	"strconv"
@@ -131,9 +133,6 @@ func (s *Service) PayBalance(ctx context.Context, buyerID, orderID int64) (*Orde
 		}
 		return tx.Table(ordersTable).Where("id=?", orderID).First(&out).Error
 	})
-	if err == nil {
-		s.notifyTrade(&out)
-	}
 	return &out, err
 }
 
@@ -208,8 +207,16 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 		refundEnd = settleAt
 	}
 	if order.SettlementMode == "balance" {
-		if err := tx.Table("order.orders").Where("id=? AND status=1", order.ID).Updates(map[string]any{"status": 2, "paid_at": paidAt, "updated_at": paidAt}).Error; err != nil {
+		amount, err := parsePositiveMoney(order.PayAmount)
+		if err != nil {
 			return err
+		}
+		changed, err := orderstate.AcceptModulePaymentTx(tx, order.ID, order.BuyerID, amount, paidAt)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return ErrInvalid
 		}
 		if err := tx.Table("order.order_items").Where("order_id=?", order.ID).Updates(map[string]any{"delivery_status": 2, "instance_id": listing.ProductID}).Error; err != nil {
 			return err
@@ -224,7 +231,19 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 	if err := appendFlow(tx, order.BuyerID, "buyer_paid", "out", order.PayAmount, "0.00", order.ID, "买家支付", paidAt); err != nil {
 		return err
 	}
-	return appendFlow(tx, order.SellerID, "seller_pending", "in", order.SellerIncome, wallet.Balance, order.ID, "卖家待结算", paidAt)
+	if err := appendFlow(tx, order.SellerID, "seller_pending", "in", order.SellerIncome, wallet.Balance, order.ID, "卖家待结算", paidAt); err != nil {
+		return err
+	}
+	params := map[string]string{"order_no": order.OrderNo, "product_name": listing.ProductName}
+	for _, recipient := range []struct {
+		scene    string
+		customer int64
+	}{{"marketplace_trade_success", order.BuyerID}, {"marketplace_transfer_complete", order.BuyerID}, {"marketplace_transfer_complete", order.SellerID}} {
+		if err := enqueueMarketNotice(tx, recipient.scene, recipient.customer, order.ID, params); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // CompensateFailedExternalPaymentTx queues an original-channel refund after rollback.
@@ -243,7 +262,6 @@ func (s *Service) AfterExternalPayment(ctx context.Context, orderID, buyerID int
 		}
 		return s.refunder.RefundMarketplace(ctx, orderID)
 	}
-	s.notifyTrade(&row)
 	return nil
 }
 
@@ -366,18 +384,25 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 		}
 		out.Status = nextStatus
 		if nextStatus == "refunded" && out.SettlementMode == "balance" {
-			if err := tx.Table("order.orders").Where("id=?", out.ID).Update("status", 4).Error; err != nil {
+			changed, err := orderstate.RefundPaidTx(tx, out.ID, out.BuyerID, s.now())
+			if err != nil {
 				return err
+			}
+			if !changed {
+				return ErrInvalid
+			}
+		}
+		if nextStatus == "refunded" {
+			for _, customer := range []int64{out.BuyerID, out.SellerID} {
+				if err := enqueueMarketNotice(tx, "marketplace_refund", customer, out.ID, map[string]string{"order_no": out.OrderNo}); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
 	})
 	if err == nil && out.Status == "refund_pending" && s.refunder != nil {
 		err = s.refunder.RefundMarketplace(ctx, out.ID)
-	}
-	if err == nil && out.Status == "refunded" {
-		s.notify("marketplace_refund", out.BuyerID, out.ID, map[string]string{"order_no": out.OrderNo})
-		s.notify("marketplace_refund", out.SellerID, out.ID, map[string]string{"order_no": out.OrderNo})
 	}
 	return &out, err
 }
@@ -517,11 +542,8 @@ func (s *Service) AuditWithdrawal(ctx context.Context, adminID, id int64, approv
 			return err
 		}
 		out.Status = "rejected"
-		return nil
+		return enqueueMarketNotice(tx, "marketplace_withdraw_result", out.UserID, out.ID, map[string]string{"withdraw_no": out.WithdrawNo, "status": out.Status})
 	})
-	if err == nil {
-		s.notify("marketplace_withdraw_result", out.UserID, out.ID, map[string]string{"withdraw_no": out.WithdrawNo, "status": out.Status})
-	}
 	return &out, err
 }
 
@@ -546,7 +568,10 @@ func (s *Service) completeWithdrawalTx(tx *gorm.DB, row *Withdrawal, adminID int
 		return err
 	}
 	row.Status = "paid"
-	return appendFlow(tx, row.UserID, "withdraw", "out", row.Amount, wallet.Balance, row.ID, "提现已处理", s.now())
+	if err := appendFlow(tx, row.UserID, "withdraw", "out", row.Amount, wallet.Balance, row.ID, "提现已处理", s.now()); err != nil {
+		return err
+	}
+	return enqueueMarketNotice(tx, "marketplace_withdraw_result", row.UserID, row.ID, map[string]string{"withdraw_no": row.WithdrawNo, "status": row.Status})
 }
 
 func (s *Service) CreateReport(ctx context.Context, userID int64, row *Report) (*Report, error) {
@@ -611,11 +636,13 @@ func (s *Service) AuditListing(ctx context.Context, adminID, id int64, pass bool
 			return ErrInvalid
 		}
 		seller, no = row.SellerID, row.ListingNo
+		if pass {
+			if err := enqueueMarketNotice(tx, "marketplace_listing_passed", seller, id, map[string]string{"listing_no": no}); err != nil {
+				return err
+			}
+		}
 		return tx.Table(listingsTable).Where("id=?", id).Updates(map[string]any{"status": status, "audit_status": audit, "audit_remark": strings.TrimSpace(remark), "auditor_id": adminID, "updated_at": s.now()}).Error
 	})
-	if err == nil && pass {
-		s.notify("marketplace_listing_passed", seller, id, map[string]string{"listing_no": no})
-	}
 	return err
 }
 func (s *Service) RecommendListing(ctx context.Context, id int64, on bool) error {
@@ -662,8 +689,12 @@ func (s *Service) RunMaintenance(ctx context.Context) error {
 		}
 		for _, o := range expired {
 			if o.SettlementMode == "balance" {
-				if err := tx.Table("order.orders").Where("id=? AND status=1", o.ID).Updates(map[string]any{"status": 3, "cancel_reason": "市场支付超时", "cancelled_at": now}).Error; err != nil {
+				changed, err := orderstate.CancelPendingTx(tx, o.ID, o.BuyerID, "市场支付超时", now)
+				if err != nil {
 					return err
+				}
+				if !changed {
+					return ErrInvalid
 				}
 			}
 			if err := tx.Table(ordersTable).Where("id=? AND status='pending_pay'", o.ID).Updates(map[string]any{"status": "cancelled", "updated_at": now}).Error; err != nil {
@@ -724,8 +755,12 @@ func settleOrderTx(tx *gorm.DB, o *Order, now time.Time) error {
 			}
 			after = int64(account.Balance)
 		}
-		if err := tx.Table("order.orders").Where("id=? AND status=2", o.ID).Update("status", 6).Error; err != nil {
+		changed, err := orderstate.CompletePaidTx(tx, o.ID, o.BuyerID, now)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			return ErrInvalid
 		}
 	}
 	if err := appendFlow(tx, 0, "platform_commission", "in", o.Fee, "0.00", o.ID, "市场佣金（四舍五入至分）", now); err != nil {
@@ -781,21 +816,8 @@ func (s *Service) acquire(ctx context.Context, key string, ttl time.Duration) (f
 		_, _ = s.redis.Eval(context.Background(), "if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end", []string{key}, token).Result()
 	}, nil
 }
-func (s *Service) notify(scene string, userID, businessID int64, params map[string]string) {
-	if s.notifier == nil {
-		return
-	}
-	go func() {
-		_ = s.notifier.NotifyCustomer(context.Background(), scene, userID, strconv.FormatInt(businessID, 10), params)
-	}()
-}
-func (s *Service) notifyTrade(o *Order) {
-	var listing Listing
-	_ = s.db.Table(listingsTable).Where("id=?", o.ListingID).First(&listing).Error
-	params := map[string]string{"order_no": o.OrderNo, "product_name": listing.ProductName}
-	s.notify("marketplace_trade_success", o.BuyerID, o.ID, params)
-	s.notify("marketplace_transfer_complete", o.BuyerID, o.ID, params)
-	s.notify("marketplace_transfer_complete", o.SellerID, o.ID, params)
+func enqueueMarketNotice(tx *gorm.DB, scene string, customerID, businessID int64, params map[string]string) error {
+	return tasks.EnqueueNotice(tx, tasks.NoticePayload{CustomerID: customerID, BusinessID: businessID, Scene: scene, Params: params})
 }
 
 func MoneyToCents(v string) (int64, error) { return parsePositiveMoney(v) }

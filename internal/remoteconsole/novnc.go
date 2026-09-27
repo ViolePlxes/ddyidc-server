@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ type NoVNCProvider struct {
 
 	mu       sync.Mutex
 	sessions map[int64]*cachedSession
+	nodeID   string
 }
 
 type cachedSession struct {
@@ -59,6 +61,23 @@ func NewNoVNCProvider(source UpstreamSource) *NoVNCProvider {
 }
 
 func (p *NoVNCProvider) Engine() string { return "novnc" }
+
+var nodeName = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
+
+// SetNodeID is startup-only routing configuration. A token keeps its full
+// random entropy; the public prefix selects a fixed proxy upstream, never a URL.
+func (p *NoVNCProvider) SetNodeID(node string) error {
+	if node != "" && !nodeName.MatchString(node) {
+		return ErrEngineUnavailable
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.sessions) != 0 {
+		return ErrSessionBusy
+	}
+	p.nodeID = node
+	return nil
+}
 
 func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerID int64) (*RemoteSession, error) {
 	if p.source == nil || instanceID <= 0 || customerID <= 0 {
@@ -94,6 +113,12 @@ func (p *NoVNCProvider) CreateSession(ctx context.Context, instanceID, customerI
 		return nil, ErrUpstreamUnavailable
 	}
 	token := hex.EncodeToString(secret)
+	p.mu.Lock()
+	node := p.nodeID
+	p.mu.Unlock()
+	if node != "" {
+		token = node + "." + token
+	}
 	session := &RemoteSession{
 		ownershipVersion: version,
 		Type:             "novnc",

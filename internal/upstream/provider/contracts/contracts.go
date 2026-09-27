@@ -112,6 +112,8 @@ type OrderInfo struct {
 	DownstreamURL    string            `json:"downstreamUrl"`
 	DownstreamToken  string            `json:"downstreamToken"`
 	DownstreamHostID string            `json:"downstreamHostId"`
+	// Checkpoint must persist remote identifiers before the next financial step.
+	Checkpoint func(stage, invoiceID, hostID string) error `json:"-"`
 }
 type UpstreamOrderResult struct {
 	OrderID, Status, HostID string

@@ -27,6 +27,7 @@ import (
 
 	"ddyidc/internal/upstream/metrics"
 	"ddyidc/internal/upstream/provider/contracts"
+	"ddyidc/internal/upstream/testpolicy"
 )
 
 const (
@@ -94,20 +95,8 @@ func (p *Provider) tokenKey() string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (p *Provider) isQKIDC() bool {
-	parsed, err := url.Parse(strings.TrimSpace(p.Supplier.URL))
-	if err != nil {
-		return false
-	}
-	host := strings.ToLower(parsed.Hostname())
-	return host == "qkidc.cn" || strings.HasSuffix(host, ".qkidc.cn")
-}
-
-func (p *Provider) enforceQKIDCProduct(id int) error {
-	if p.isQKIDC() && id != 489 && id != 353 {
-		return fmt.Errorf("qkidc safety policy only permits products 353 and 489")
-	}
-	return nil
+func (p *Provider) enforceTestProductPolicy(id int) error {
+	return testpolicy.CheckProduct(p.Supplier.URL, id)
 }
 
 func (p *Provider) cachedToken() string {
@@ -184,8 +173,8 @@ func jwtExpiry(token string) time.Time {
 // GetProductList calls the public finance catalogue endpoint. Product listing
 // intentionally does not authenticate, matching the upstream protocol.
 func (p *Provider) GetProductList() ([]contracts.UpstreamProduct, error) {
-	if p.isQKIDC() {
-		return nil, errors.New("qkidc safety policy forbids full catalogue sync")
+	if err := testpolicy.CheckCatalogue(p.Supplier.URL); err != nil {
+		return nil, err
 	}
 	base, err := p.baseURL()
 	if err != nil {
@@ -245,7 +234,7 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	if id <= 0 {
 		return nil, errors.New("upstream product ID must be positive")
 	}
-	if err := p.enforceQKIDCProduct(id); err != nil {
+	if err := p.enforceTestProductPolicy(id); err != nil {
 		return nil, err
 	}
 	product, err := p.getFinanceProduct(id)
@@ -255,14 +244,29 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	return product.toContract(id), nil
 }
 
-func (p *Provider) InvalidateProduct(id int) {
+func (p *Provider) InvalidateProduct(id int) error {
+	if _, err := p.productGeneration(id, true); err != nil {
+		return err
+	}
 	financeCache.Lock()
 	defer financeCache.Unlock()
-	delete(financeCache.products, p.tokenKey()+":product:"+strconv.Itoa(id))
-	delete(financeCache.pages, p.tokenKey()+":page:"+strconv.Itoa(id))
+	for key := range financeCache.products {
+		if strings.HasPrefix(key, p.tokenKey()+":product:"+strconv.Itoa(id)+":") {
+			delete(financeCache.products, key)
+		}
+	}
+	for key := range financeCache.pages {
+		if strings.HasPrefix(key, p.tokenKey()+":page:"+strconv.Itoa(id)+":") {
+			delete(financeCache.pages, key)
+		}
+	}
+	return nil
 }
 func (p *Provider) getFinanceProduct(id int) (financeProduct, error) {
-	cacheKey := p.tokenKey() + ":product:" + strconv.Itoa(id)
+	cacheKey, err := p.productCacheKey(id, "product")
+	if err != nil {
+		return financeProduct{}, err
+	}
 	financeCache.Lock()
 	if cached, ok := financeCache.products[cacheKey]; ok && time.Now().Before(cached.expiresAt) {
 		financeCache.Unlock()
@@ -290,6 +294,11 @@ func (p *Provider) getFinanceProduct(id int) (financeProduct, error) {
 		return financeProduct{}, upstreamError("product detail", payload.Message)
 	}
 	financeCache.Lock()
+	for key, entry := range financeCache.products {
+		if time.Now().After(entry.expiresAt) {
+			delete(financeCache.products, key)
+		}
+	}
 	financeCache.products[cacheKey] = cachedFinanceProduct{value: payload.Data.Product, expiresAt: time.Now().Add(10 * time.Minute)}
 	financeCache.Unlock()
 	return payload.Data.Product, nil
@@ -326,10 +335,13 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 	if productID <= 0 {
 		return nil, errors.New("upstream product ID must be positive")
 	}
-	if err := p.enforceQKIDCProduct(productID); err != nil {
+	if err := p.enforceTestProductPolicy(productID); err != nil {
 		return nil, err
 	}
-	cacheKey := p.tokenKey() + ":page:" + strconv.Itoa(productID)
+	cacheKey, err := p.productCacheKey(productID, "page")
+	if err != nil {
+		return nil, err
+	}
 	financeCache.Lock()
 	if cached, ok := financeCache.pages[cacheKey]; ok && time.Now().Before(cached.expiresAt) {
 		page := cached.value
@@ -359,6 +371,11 @@ func (p *Provider) cacheOrderPage(key string, page *contracts.OrderPage) {
 		return
 	}
 	financeCache.Lock()
+	for oldKey, entry := range financeCache.pages {
+		if time.Now().After(entry.expiresAt) {
+			delete(financeCache.pages, oldKey)
+		}
+	}
 	financeCache.pages[key] = cachedOrderPage{value: *page, expiresAt: time.Now().Add(10 * time.Minute)}
 	financeCache.Unlock()
 }
@@ -1072,7 +1089,7 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if order.ProductID <= 0 || order.Quantity <= 0 || order.Cycle == "" {
 		return nil, errors.New("product ID, quantity and billing cycle are required")
 	}
-	if err := p.enforceQKIDCProduct(order.ProductID); err != nil {
+	if err := p.enforceTestProductPolicy(order.ProductID); err != nil {
 		return nil, err
 	}
 	// Amount is loaded by Store from the persisted supplier mapping, never from
@@ -1099,7 +1116,15 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if err := requireUpstreamSuccess(addBody, "cart add"); err != nil {
 		return nil, err
 	}
+	if order.Checkpoint != nil {
+		if err := order.Checkpoint("cart_added", "", ""); err != nil {
+			return nil, err
+		}
+	}
 	cartPosition := firstJSONValue(addBody, "i")
+	if _, err := strconv.ParseUint(cartPosition, 10, 32); err != nil {
+		return nil, errors.New("供应商未返回可确认的购物车位置，停止结算并转人工核对")
+	}
 	settleBody, err := p.authorizedFormPost("/cart/settle", settlementForm(order, cartPosition))
 	if err != nil {
 		return nil, fmt.Errorf("settle upstream cart: %w", err)
@@ -1116,7 +1141,6 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 		return nil, fmt.Errorf("decode upstream cart settlement: %w", err)
 	}
 	if settle.Status != http.StatusOK {
-		p.clearDirtyCart(order)
 		return nil, upstreamError("cart settlement", settle.Message)
 	}
 	invoiceID := fmt.Sprint(settle.Data.InvoiceID)
@@ -1124,18 +1148,20 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 		invoiceID = fmt.Sprint(settle.Data.ID)
 	}
 	if invoiceID == "<nil>" || invoiceID == "" {
-		p.clearDirtyCart(order)
 		return nil, errors.New("upstream settlement did not return an invoice ID")
+	}
+	if order.Checkpoint != nil {
+		if err := order.Checkpoint("invoice_created", invoiceID, ""); err != nil {
+			return nil, err
+		}
 	}
 	payBody, err := p.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
 	if err != nil {
 		return nil, fmt.Errorf("pay upstream invoice: %w", err)
 	}
 	if err := requireUpstreamStatus(payBody, "upstream balance payment", 1001); err != nil {
-		// The verified finance implementation releases the pending credit hold by
-		// posting use_credit=0. This is not a payment retry and cannot create a
-		// second order; it only prevents a dirty unpaid invoice.
-		_, _ = p.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, false))
+		// An unexpected reply does not prove that credit was not consumed.
+		// Preserve the invoice for reconciliation; do not issue another write.
 		return nil, err
 	}
 	hostID := firstJSONValue(settleBody, "hostid", "host_id", "serviceid", "service_id")
@@ -1146,18 +1172,16 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if hostID != "" {
 		status = "active"
 	}
+	if order.Checkpoint != nil {
+		if err := order.Checkpoint(status, invoiceID, hostID); err != nil {
+			return nil, err
+		}
+	}
 	balanceAfter := balance - requiredAmount
 	if value := firstJSONNumber(payBody, "credit", "balance", "remaining_credit"); value >= 0 {
 		balanceAfter = value
 	}
 	return &contracts.UpstreamOrderResult{OrderID: invoiceID, Status: status, HostID: hostID, Cost: requiredAmount, BalanceBefore: balance, BalanceAfter: balanceAfter}, nil
-}
-
-func (p *Provider) clearDirtyCart(order contracts.OrderInfo) {
-	// Cleanup is best effort and is only reached after add_to_shop succeeded but
-	// settlement produced a normal HTTP response that cannot be used. Transport
-	// and risk-control failures return earlier and never trigger extra traffic.
-	_, _ = p.authorizedFormPost("/cart/clear", downstreamForm(order))
 }
 
 // orderForm serializes the legacy finance cart format without performing I/O.

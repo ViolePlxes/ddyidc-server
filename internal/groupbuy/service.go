@@ -14,11 +14,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	orderservice "ddyidc/internal/order/service"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/tasks"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -41,11 +41,10 @@ type Notifier interface {
 }
 
 type Service struct {
-	db         *gorm.DB
-	orders     OrderService
-	notifier   Notifier
-	now        func() time.Time
-	completion sync.Map
+	db       *gorm.DB
+	orders   OrderService
+	notifier Notifier
+	now      func() time.Time
 }
 
 func NewService(database *gorm.DB, orders OrderService, notifier Notifier) *Service {
@@ -213,13 +212,13 @@ func (s *Service) ListActivities(ctx context.Context, keyword string, status *ui
 		return nil, 0, err
 	}
 	var rows []ActivityView
-	err := q.Select("a.*, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.is_leader=1 AND r.status=1) AS active_groups, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.status IN (1,2)) AS joined_members").Order("a.sort ASC,a.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error
+	err := q.Select("a.*, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.is_leader=1 AND r.status=1) AS active_groups, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.status IN (1,2,4)) AS joined_members").Order("a.sort ASC,a.id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error
 	return rows, total, err
 }
 
 func (s *Service) Activity(ctx context.Context, id int64, publicOnly bool) (*ActivityView, error) {
 	var row ActivityView
-	q := s.db.WithContext(ctx).Table(activityTable+" AS a").Select("a.*, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.is_leader=1 AND r.status=1) AS active_groups, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.status IN (1,2)) AS joined_members").Where("a.id=?", id)
+	q := s.db.WithContext(ctx).Table(activityTable+" AS a").Select("a.*, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.is_leader=1 AND r.status=1) AS active_groups, (SELECT COUNT(*) FROM system.groupbuy_records r WHERE r.activity_id=a.id AND r.status IN (1,2,4)) AS joined_members").Where("a.id=?", id)
 	if publicOnly {
 		q = q.Where("a.status=1 AND a.end_time>?", s.now())
 	}
@@ -368,7 +367,7 @@ func (s *Service) JoinGroup(ctx context.Context, clientID, leaderID int64, recom
 			return err
 		}
 		var duplicate int64
-		if err := tx.Table(recordTable).Where("leader_id=? AND client_id=? AND status IN (1,2)", leaderID, clientID).Count(&duplicate).Error; err != nil {
+		if err := tx.Table(recordTable).Where("leader_id=? AND client_id=? AND status IN (1,2,4)", leaderID, clientID).Count(&duplicate).Error; err != nil {
 			return err
 		}
 		if duplicate > 0 {
@@ -394,20 +393,28 @@ func (s *Service) JoinGroup(ctx context.Context, clientID, leaderID int64, recom
 		}
 		leader.CurrentNum++
 		full = leader.CurrentNum >= leader.NeedNum
-		return tx.Table(recordTable).Where("id=?", leader.ID).Update("current_num", leader.CurrentNum).Error
+		if err := tx.Table(recordTable).Where("id=?", leader.ID).Update("current_num", leader.CurrentNum).Error; err != nil {
+			return err
+		}
+		if full {
+			return tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-plan:%d", leader.ID), tasks.PaymentPayload{CustomerID: leader.ClientID, BusinessID: leader.ID, BusinessType: "groupbuy_plan", Channel: "balance"})
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
-	}
-	if full {
-		if err := s.completeGroup(ctx, leaderID); err != nil {
-			return nil, err
-		}
 	}
 	return &created, nil
 }
 
 func lockedActivity(tx *gorm.DB, id int64, now time.Time) (*Activity, error) {
+	var enabled struct{ Value string }
+	if err := tx.Table("system.system_configs").Select("value").Where("`key`='groupbuy.enabled'").Take(&enabled).Error; err != nil {
+		return nil, err
+	}
+	if enabled.Value != "1" && enabled.Value != "true" {
+		return nil, ErrClosed
+	}
 	var activity Activity
 	err := tx.Table(activityTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).Take(&activity).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -439,7 +446,7 @@ func (s *Service) validateMember(tx *gorm.DB, activity *Activity, clientID int64
 	}
 	if activity.PurchaseLimit > 0 {
 		var n int64
-		if err := tx.Table(recordTable).Where("activity_id=? AND client_id=? AND status IN (1,2)", activity.ID, clientID).Count(&n).Error; err != nil {
+		if err := tx.Table(recordTable).Where("activity_id=? AND client_id=? AND status IN (1,2,4)", activity.ID, clientID).Count(&n).Error; err != nil {
 			return err
 		}
 		if n >= int64(activity.PurchaseLimit) {
@@ -466,7 +473,7 @@ func (s *Service) validateMember(tx *gorm.DB, activity *Activity, clientID int64
 	}
 	if isNew && settings.NewUserGroupLimit > 0 {
 		var n int64
-		if err := tx.Table(recordTable).Where("client_id=? AND status IN (1,2)", clientID).Count(&n).Error; err != nil {
+		if err := tx.Table(recordTable).Where("client_id=? AND status IN (1,2,4)", clientID).Count(&n).Error; err != nil {
 			return err
 		}
 		if n >= int64(settings.NewUserGroupLimit) {
@@ -517,130 +524,6 @@ func (s *Service) changeBalance(tx *gorm.DB, clientID, delta int64, related stri
 	})
 	return err
 }
-func (s *Service) completeGroup(ctx context.Context, leaderID int64) error {
-	lockValue, _ := s.completion.LoadOrStore(leaderID, &sync.Mutex{})
-	mu := lockValue.(*sync.Mutex)
-	mu.Lock()
-	defer mu.Unlock()
-	defer s.completion.Delete(leaderID)
-	sqlDB, err := s.db.DB()
-	if err != nil {
-		return err
-	}
-	conn, err := sqlDB.Conn(ctx)
-	if err != nil {
-		return err
-	}
-	defer conn.Close()
-	lockName := fmt.Sprintf("ddyidc:groupbuy:%d", leaderID)
-	var acquired int
-	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 10)", lockName).Scan(&acquired); err != nil {
-		return err
-	}
-	if acquired != 1 {
-		return errors.New("拼团正在结算，请稍后查看")
-	}
-	defer conn.ExecContext(context.Background(), "SELECT RELEASE_LOCK(?)", lockName)
-	detail, err := s.Group(ctx, leaderID, 0, true)
-	if err != nil {
-		return err
-	}
-	if detail.Leader.Status != 1 {
-		return nil
-	}
-	if len(detail.Members) < detail.Leader.NeedNum {
-		return nil
-	}
-	if err := s.reserveStock(ctx, detail.Activity.ProductID, len(detail.Members)); err != nil {
-		_ = s.refundGroup(ctx, leaderID)
-		return fmt.Errorf("库存不足，已整团退款: %w", err)
-	}
-	reserved := true
-	releaseStock := func() {
-		if reserved {
-			_ = s.releaseStock(ctx, detail.Activity.ProductID, len(detail.Members))
-			reserved = false
-		}
-	}
-	created := make([]struct{ recordID, clientID, orderID int64 }, 0, len(detail.Members))
-	for _, member := range detail.Members {
-		input, err := orderInput(detail.Activity.ConfigOptions, detail.Activity, member.ID)
-		if err != nil {
-			releaseStock()
-			_ = s.refundGroup(ctx, leaderID)
-			return err
-		}
-		order, err := s.orders.CreateOrder(ctx, member.ClientID, input)
-		if err != nil {
-			releaseStock()
-			_ = s.refundGroup(ctx, leaderID)
-			return fmt.Errorf("成团创建订单失败，已整团退款: %w", err)
-		}
-		orderID, _ := strconv.ParseInt(order.ID, 10, 64)
-		now := s.now()
-		payType := uint8(3)
-		if err = s.db.WithContext(ctx).Table("order.orders").Where("id=? AND status=1", orderID).Updates(map[string]any{"total_amount": member.GroupPrice, "discount_amount": member.LevelDiscountAmount, "pay_amount": member.PayAmount, "balance_amount": member.PayAmount, "status": 2, "pay_type": payType, "paid_at": now, "admin_remark": "groupbuy:" + strconv.FormatInt(member.ID, 10)}).Error; err != nil {
-			releaseStock()
-			_ = s.refundGroup(ctx, leaderID)
-			return err
-		}
-		if err = s.db.WithContext(ctx).Exec("UPDATE `order`.order_items SET config_snapshot=JSON_SET(config_snapshot, '$.orderType', 'groupbuy', '$.groupbuyRecordId', ?) WHERE order_id=?", strconv.FormatInt(member.ID, 10), orderID).Error; err != nil {
-			releaseStock()
-			_ = s.refundGroup(ctx, leaderID)
-			return err
-		}
-		created = append(created, struct{ recordID, clientID, orderID int64 }{member.ID, member.ClientID, orderID})
-	}
-	for _, item := range created {
-		if err := s.orders.ProvisionAfterPayment(ctx, item.clientID, item.orderID, "balance"); err != nil {
-			releaseStock()
-			_ = s.markOrdersRefunded(ctx, created)
-			_ = s.refundGroup(ctx, leaderID)
-			return fmt.Errorf("成团开通失败，已整团退款: %w", err)
-		}
-	}
-	now := s.now()
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		for _, item := range created {
-			var orderItem struct{ InstanceID *int64 }
-			_ = tx.Table("order.order_items").Select("instance_id").Where("order_id=?", item.orderID).Take(&orderItem).Error
-			if err := tx.Table(recordTable).Where("id=? AND status=1", item.recordID).Updates(map[string]any{"status": 2, "order_id": item.orderID, "host_id": orderItem.InstanceID, "success_time": now}).Error; err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		releaseStock()
-		return err
-	}
-	reserved = false
-	for _, m := range detail.Members {
-		s.notify("groupbuy_success", m.ClientID, m.ID, map[string]string{"product_name": detail.Activity.ProductName, "order_no": "已生成"})
-	}
-	return nil
-}
-
-func (s *Service) reserveStock(ctx context.Context, productID int64, quantity int) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var product struct {
-			Stock     *int
-			SoldCount int
-		}
-		if err := tx.Table("product.products").Clauses(clause.Locking{Strength: "UPDATE"}).Select("stock,sold_count").Where("id=?", productID).Take(&product).Error; err != nil {
-			return err
-		}
-		if product.Stock != nil && product.SoldCount+quantity > *product.Stock {
-			return errors.New("剩余库存不足以完成整团开通")
-		}
-		return tx.Table("product.products").Where("id=?", productID).Update("sold_count", gorm.Expr("sold_count + ?", quantity)).Error
-	})
-}
-
-func (s *Service) releaseStock(ctx context.Context, productID int64, quantity int) error {
-	return s.db.WithContext(ctx).Table("product.products").Where("id=?", productID).Update("sold_count", gorm.Expr("GREATEST(sold_count - ?, 0)", quantity)).Error
-}
-
 func orderInput(raw json.RawMessage, activity Activity, recordID int64) (*orderservice.CreateOrderInput, error) {
 	var input orderservice.CreateOrderInput
 	if err := json.Unmarshal(raw, &input); err != nil {
@@ -657,17 +540,13 @@ func orderInput(raw json.RawMessage, activity Activity, recordID int64) (*orders
 		input.Hostname = fmt.Sprintf("gb-%d", recordID)
 	}
 	if input.Password == "" {
-		input.Password = fmt.Sprintf("Aa!%09d", recordID%1_000_000_000)
+		var secret [8]byte
+		if _, err := rand.Read(secret[:]); err != nil {
+			return nil, errors.New("实例密码生成失败")
+		}
+		input.Password = "Aa1!" + hex.EncodeToString(secret[:])
 	}
 	return &input, nil
-}
-
-func (s *Service) markOrdersRefunded(ctx context.Context, items []struct{ recordID, clientID, orderID int64 }) error {
-	ids := make([]int64, 0, len(items))
-	for _, i := range items {
-		ids = append(ids, i.orderID)
-	}
-	return s.db.WithContext(ctx).Table("order.orders").Where("id IN ?", ids).Updates(map[string]any{"status": 4, "cancel_reason": "拼团开通失败退款"}).Error
 }
 
 func (s *Service) refundGroup(ctx context.Context, leaderID int64) error {
@@ -710,6 +589,9 @@ func (s *Service) refund(ctx context.Context, recordID int64, whole bool) error 
 			if err := tx.Table(recordTable).Where("id=?", r.ID).Update("status", 3).Error; err != nil {
 				return err
 			}
+			if err := tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-refund:%d", r.ID), tasks.PaymentPayload{CustomerID: r.ClientID, BusinessID: r.ID, BusinessType: "groupbuy_refund_notice", Channel: "balance"}); err != nil {
+				return err
+			}
 		}
 		if !(whole || selected.IsLeader) {
 			return tx.Table(recordTable).Where("id=?", leaderID).Update("current_num", gorm.Expr("GREATEST(current_num-1,1)")).Error
@@ -718,9 +600,6 @@ func (s *Service) refund(ctx context.Context, recordID int64, whole bool) error 
 	})
 	if err != nil {
 		return err
-	}
-	for _, r := range notices {
-		s.notify("groupbuy_refund", r.ClientID, r.ID, map[string]string{"product_name": "拼团商品", "amount": fmt.Sprintf("¥%.2f", float64(r.PayAmount)/100)})
 	}
 	return nil
 }
@@ -884,10 +763,7 @@ func (s *Service) ListLeaders(ctx context.Context, activityID *int64, status *ui
 }
 
 func (s *Service) RunMaintenance(ctx context.Context) error {
-	enabled, err := s.Enabled(ctx)
-	if err != nil || !enabled {
-		return err
-	}
+	// Closing the entrance cannot abandon already charged groups.
 	settings, err := s.Settings(ctx)
 	if err != nil {
 		return err
@@ -897,7 +773,9 @@ func (s *Service) RunMaintenance(ctx context.Context) error {
 		return err
 	}
 	for _, r := range expired {
-		_ = s.refundGroup(ctx, r.ID)
+		if err := s.refundGroup(ctx, r.ID); err != nil {
+			return err
+		}
 	}
 	deadline := s.now().Add(time.Duration(settings.TimeoutRemindHours) * time.Hour)
 	var reminders []Record
@@ -905,10 +783,21 @@ func (s *Service) RunMaintenance(ctx context.Context) error {
 		return err
 	}
 	for _, r := range reminders {
-		var a Activity
-		_ = s.db.WithContext(ctx).Table(activityTable).Where("id=?", r.ActivityID).Take(&a).Error
-		s.notify("groupbuy_remind", r.ClientID, r.ID, map[string]string{"product_name": a.ProductName, "remaining": strconv.Itoa(r.NeedNum - r.CurrentNum), "timeout_at": r.TimeoutTime.Format("2006-01-02 15:04")})
-		_ = s.db.WithContext(ctx).Table(recordTable).Where("id=?", r.ID).Update("is_notice", true).Error
+		if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var current Record
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", r.ID).Take(&current).Error; err != nil {
+				return err
+			}
+			if current.Status != 1 || current.IsNotice {
+				return nil
+			}
+			if err := tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-remind:%d", r.ID), tasks.PaymentPayload{CustomerID: r.ClientID, BusinessID: r.ID, BusinessType: "groupbuy_remind_notice", Channel: "balance"}); err != nil {
+				return err
+			}
+			return tx.Model(&Record{}).Where("id=?", r.ID).Update("is_notice", true).Error
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -925,15 +814,6 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 				distsync.Task(ctx, "groupbuy_maintenance", time.Minute, s.RunMaintenance)
 			}
 		}
-	}()
-}
-
-func (s *Service) notify(scene string, clientID, businessID int64, params map[string]string) {
-	if s.notifier == nil {
-		return
-	}
-	go func() {
-		_ = s.notifier.NotifyCustomer(context.Background(), scene, clientID, strconv.FormatInt(businessID, 10), params)
 	}()
 }
 

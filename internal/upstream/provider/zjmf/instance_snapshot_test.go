@@ -34,11 +34,12 @@ func TestWriteTransportFailureIsNotRetried(t *testing.T) {
 	}
 }
 func TestQKIDC353ExplicitlyAllowed(t *testing.T) {
+	configureLocalProductPolicy(t)
 	p := New(contracts.Supplier{URL: "https://www.qkidc.cn"})
-	if e := p.enforceQKIDCProduct(353); e != nil {
+	if e := p.enforceTestProductPolicy(353); e != nil {
 		t.Fatal(e)
 	}
-	if e := p.enforceQKIDCProduct(354); e == nil {
+	if e := p.enforceTestProductPolicy(354); e == nil {
 		t.Fatal("unrelated product allowed")
 	}
 }

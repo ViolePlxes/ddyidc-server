@@ -2,26 +2,28 @@ package groupbuy
 
 import (
 	"ddyidc/internal/certification"
+	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/testenv"
 	"errors"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"os"
-	"strconv"
+	"fmt"
 	"testing"
 )
 
 func TestCertificationGateRealDatabase(t *testing.T) {
-	dsn := os.Getenv("CERT_TEST_DSN")
-	if dsn == "" {
-		t.Skip("requires isolated VM certification fixtures")
+	db := testenv.MySQL(t).Begin()
+	if db.Error != nil {
+		t.Fatal(db.Error)
 	}
-	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal("database unavailable")
+	defer db.Rollback()
+	yes, no := snowflake.GenID(), snowflake.GenID()
+	for _, id := range []int64{yes, no} {
+		if err := db.Exec("INSERT INTO customer.customers(id,username,password_hash,status) VALUES(?,?,'disabled-fixture',1)", id, fmt.Sprint("gate-", id)).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
-	yes, _ := strconv.ParseInt(os.Getenv("CERT_APPROVED_ID"), 10, 64)
-	no, _ := strconv.ParseInt(os.Getenv("CERT_UNAPPROVED_ID"), 10, 64)
+	if err := db.Create(&certification.Record{ID: snowflake.GenID(), CustomerID: yes, Type: 1, Name: "isolated gate fixture", DocumentHash: fmt.Sprintf("%064d", yes), Status: 2}).Error; err != nil {
+		t.Fatal(err)
+	}
 	svc := NewService(db, nil, nil)
 	activity := &Activity{RequireCertification: true}
 	if err := svc.validateMember(db, activity, no, true); !errors.Is(err, certification.ErrRequired) {

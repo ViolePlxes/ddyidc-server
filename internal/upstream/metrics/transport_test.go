@@ -25,4 +25,14 @@ func TestActualTransportCountsRedirectsAndFailures(t *testing.T) {
 	if Default.Snapshot()["test"].OneMinute != 2 {
 		t.Fatal("redirect/failure undercount")
 	}
+	if Default.Snapshot()["test"].FailedFifteenMinutes != 1 {
+		t.Fatal("HTTP failure not measured")
+	}
+	server.Close()
+	if _, err = client.Get(server.URL + "/fail"); err == nil {
+		t.Fatal("closed server request unexpectedly succeeded")
+	}
+	if Default.Snapshot()["test"].FailedFifteenMinutes != 2 {
+		t.Fatal("network failure not measured")
+	}
 }

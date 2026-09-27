@@ -68,18 +68,27 @@ func jsonEqual(a, b any) bool {
 	y, _ := json.Marshal(b)
 	return string(x) == string(y)
 }
-func (s *Store) SyncProductWithSummary(key string) (ChangeSummary, error) {
+func (s *Store) SyncProductWithSummary(key string) (result ChangeSummary, retErr error) {
 	v, err := s.findProduct(key)
 	if err != nil {
 		return ChangeSummary{}, err
 	}
-	result := ChangeSummary{SupplierID: v.SupplierID, UpstreamProductID: v.UpstreamProductID}
+	result = ChangeSummary{SupplierID: v.SupplierID, UpstreamProductID: v.UpstreamProductID}
 	p, err := s.ProviderFor(v.SupplierID)
 	if err != nil {
 		return result, err
 	}
-	if fresh, ok := p.(interface{ InvalidateProduct(int) }); ok {
-		fresh.InvalidateProduct(v.UpstreamProductID)
+	if fresh, ok := p.(interface{ InvalidateProduct(int) error }); ok {
+		if err := fresh.InvalidateProduct(v.UpstreamProductID); err != nil {
+			return result, err
+		}
+		// In-flight reads started during this refresh must not publish current
+		// cache entries after the refresh finishes, including failure paths.
+		defer func() {
+			if err := fresh.InvalidateProduct(v.UpstreamProductID); err != nil && retErr == nil {
+				retErr = err
+			}
+		}()
 	}
 	detail, err := p.GetProductDetail(v.UpstreamProductID)
 	if errors.Is(err, contracts.ErrProductUnavailable) {

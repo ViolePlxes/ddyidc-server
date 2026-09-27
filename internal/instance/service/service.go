@@ -311,6 +311,11 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.PowerStatus = detail.PowerStatus
 	}
 	status := statusCode(detail.PowerStatus, host.Status)
+	if lifecycle := unavailableLifecycle(detail, host.UpstreamInstanceID); lifecycle != "" {
+		result.PowerStatus = lifecycle
+		status = statusCode(lifecycle, host.Status)
+		result.Capabilities = contracts.InstanceCapabilities{}
+	}
 	result.Status = status
 	now := time.Now()
 	updates := map[string]any{
@@ -396,6 +401,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
+	}
+	if host.Status == 6 {
+		return nil, ErrUnsupported
 	}
 	locked, err := s.repo.IsMarketplaceLocked(ctx, instanceID)
 	if err != nil {

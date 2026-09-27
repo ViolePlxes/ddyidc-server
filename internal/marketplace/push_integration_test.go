@@ -9,16 +9,9 @@ import (
 	payrepo "ddyidc/internal/payment/repository"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/testenv"
 	"ddyidc/pkg/auth"
-	"ddyidc/pkg/cache"
-	"ddyidc/pkg/db"
 	"fmt"
-	"github.com/redis/go-redis/v9"
-	"github.com/zeromicro/go-zero/core/conf"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"os"
 	"testing"
 	"time"
 )
@@ -26,19 +19,7 @@ import (
 // Real MySQL + Redis test, explicit opt-in. Financial and identity fixtures are
 // rolled back; no provider is called and no real instance is modified.
 func TestPushMarketRealDatabase(t *testing.T) {
-	path := os.Getenv("DDYIDC_PUSH_TEST_CONFIG")
-	if path == "" {
-		t.Skip("VM integration requires DDYIDC_PUSH_TEST_CONFIG")
-	}
-	var cfg struct {
-		MySQL db.Config
-		Redis cache.Config
-	}
-	conf.MustLoad(path, &cfg)
-	database, err := gorm.Open(mysql.Open(fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true", cfg.MySQL.User, cfg.MySQL.Password, cfg.MySQL.Host, cfg.MySQL.Port, cfg.MySQL.Database)), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal("test database unavailable")
-	}
+	database := testenv.MySQL(t)
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
@@ -50,7 +31,7 @@ func TestPushMarketRealDatabase(t *testing.T) {
 	tx := database.Begin()
 	must(tx.Error)
 	defer tx.Rollback()
-	rc := redis.NewClient(&redis.Options{Addr: fmt.Sprintf("%s:%d", cfg.Redis.Host, cfg.Redis.Port), Password: cfg.Redis.Password, DB: cfg.Redis.DB})
+	rc := testenv.Redis(t)
 	defer rc.Close()
 	ctx := context.Background()
 	seller, buyer, unverified := snowflake.GenID(), snowflake.GenID(), snowflake.GenID()
@@ -125,6 +106,17 @@ func TestPushMarketRealDatabase(t *testing.T) {
 	}
 	_, err = marketSvc.PayBalance(ctx, buyer, order.ID)
 	must(err)
+	// A stale module state must not settle money after the platform order changed.
+	must(tx.Table("order.orders").Where("id=?", order.ID).Update("status", 4).Error)
+	if _, err = marketSvc.ConfirmReceipt(ctx, buyer, order.ID); err == nil {
+		t.Fatal("settled a refunded platform order")
+	}
+	var staleIncome int64
+	must(tx.Table("billing.transactions").Where("tx_no=?", fmt.Sprintf("MS:%d", order.ID)).Count(&staleIncome).Error)
+	if staleIncome != 0 {
+		t.Fatal("failed platform transition left seller credit")
+	}
+	must(tx.Table("order.orders").Where("id=?", order.ID).Update("status", 2).Error)
 	_, err = marketSvc.PayBalance(ctx, buyer, order.ID)
 	must(err)
 	must(tx.Table("system.system_configs").Where("`key`='marketplace.enabled'").Update("value", "false").Error)
@@ -151,7 +143,30 @@ func TestPushMarketRealDatabase(t *testing.T) {
 	if timeout.Status != "cancelled" {
 		t.Fatal("timeout not cancelled")
 	}
+	conflict := makeOrder("0.01")
+	must(tx.Model(conflict).Update("lock_expires_at", time.Now().Add(-time.Minute)).Error)
+	must(tx.Table("order.orders").Where("id=?", conflict.ID).Update("status", 2).Error)
+	if err := marketSvc.RunMaintenance(ctx); err == nil {
+		t.Fatal("timeout cancelled a paid platform order")
+	}
+	must(tx.Where("id=?", conflict.ID).Take(conflict).Error)
+	if conflict.Status != "pending_pay" {
+		t.Fatal("failed cancellation committed module state")
+	}
+	must(tx.Table("order.orders").Where("id=?", conflict.ID).Update("status", 1).Error)
+	must(marketSvc.RunMaintenance(ctx))
 	failed := makeOrder("0.01")
+	// The platform amount is authoritative even if a stale module quote differs.
+	must(tx.Table("order.orders").Where("id=?", failed.ID).Update("pay_amount", 2).Error)
+	if _, err := marketSvc.PayBalance(ctx, buyer, failed.ID); err == nil {
+		t.Fatal("paid mismatching platform amount")
+	}
+	var mismatchedDebit int64
+	must(tx.Table("billing.transactions").Where("tx_no=?", fmt.Sprintf("MT:%d", failed.ID)).Count(&mismatchedDebit).Error)
+	if mismatchedDebit != 0 {
+		t.Fatal("rejected payment left a balance debit")
+	}
+	must(tx.Table("order.orders").Where("id=?", failed.ID).Update("pay_amount", 1).Error)
 	repo := payrepo.NewRepository(tx)
 	prepared, err := repo.PrepareMarketplace(ctx, buyer, failed.ID, "alipay", time.Now().Add(time.Minute))
 	must(err)
@@ -192,6 +207,33 @@ func TestPushMarketRealDatabase(t *testing.T) {
 		t.Fatal("refunded callback replay changed state")
 	}
 	t.Log("timeout and real DB original-refund queue/finalization/replay PASS; gateway refund not called")
+	reviewOrder := makeOrder("0.01")
+	prepared, err = repo.PrepareMarketplace(ctx, buyer, reviewOrder.ID, "alipay", time.Now().Add(time.Minute))
+	must(err)
+	// Corrupt only this isolated fixture: neither delivery nor refund compensation
+	// may overwrite a different platform owner. The captured receipt must survive.
+	must(tx.Table("order.orders").Where("id=?", reviewOrder.ID).Update("customer_id", seller).Error)
+	notify = payment.VerifiedNotification{Channel: "alipay", OutTradeNo: prepared.Payment.OutTradeNo, TransactionID: fmt.Sprintf("fixture-review-%d", reviewOrder.ID), AmountFen: 1, Currency: "CNY", PaidAt: time.Now()}
+	reviewed, dispatch, err := repo.Complete(ctx, notify)
+	must(err)
+	if dispatch || reviewed.Status != payment.StatusReview {
+		t.Fatal("conflicting captured payment was not retained for review")
+	}
+	must(tx.Where("id=?", reviewOrder.ID).Take(reviewOrder).Error)
+	if reviewOrder.Status != "pending_pay" {
+		t.Fatal("compensation conflict leaked module changes")
+	}
+	_, dispatch, err = repo.Complete(ctx, notify)
+	must(err)
+	if dispatch {
+		t.Fatal("review receipt replay dispatched")
+	}
+	var reviewCount int64
+	must(tx.Table("payment.receipt_reviews").Where("payment_id=?", reviewed.ID).Count(&reviewCount).Error)
+	if reviewCount != 1 {
+		t.Fatal("review receipt was lost or duplicated", reviewCount)
+	}
+	t.Log("compensation conflict retains one review receipt and rolls back module changes; isolated fixture only")
 	must(balance.New(tx).AssertReconciled(ctx))
 	t.Log("all fixtures rolled back; balances reconcile")
 }

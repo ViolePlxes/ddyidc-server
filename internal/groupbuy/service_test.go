@@ -54,8 +54,8 @@ func TestOrderInputUsesActivitySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if input.ProductID != "42" || input.BillingCycle != "monthly" || input.Hostname != "gb-99" || len(input.Password) != 12 {
-		t.Fatalf("unexpected order input: %#v", input)
+	if input.ProductID != "42" || input.BillingCycle != "monthly" || input.Hostname != "gb-99" || len(input.Password) != 20 {
+		t.Fatal("unexpected product, cycle, hostname or generated password length")
 	}
 }
 

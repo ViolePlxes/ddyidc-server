@@ -147,4 +147,5 @@ func (r *Registry) Discard(session *RemoteSession) {
 
 type Config struct {
 	Engine string `json:",optional"`
+	NodeID string `json:",optional"`
 }

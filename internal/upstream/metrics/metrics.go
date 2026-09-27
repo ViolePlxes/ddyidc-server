@@ -10,6 +10,7 @@ import (
 type bucket struct {
 	Minute      int64
 	Count       int64
+	Failures    int64
 	First, Last time.Time
 }
 type Counter struct {
@@ -18,10 +19,11 @@ type Counter struct {
 	now     func() time.Time
 }
 type Summary struct {
-	OneMinute       int64    `json:"oneMinute"`
-	FiveMinutes     int64    `json:"fiveMinutes"`
-	FifteenMinutes  int64    `json:"fifteenMinutes"`
-	AverageInterval *float64 `json:"averageInterval"`
+	OneMinute            int64    `json:"oneMinute"`
+	FiveMinutes          int64    `json:"fiveMinutes"`
+	FifteenMinutes       int64    `json:"fifteenMinutes"`
+	FailedFifteenMinutes int64    `json:"failedFifteenMinutes"`
+	AverageInterval      *float64 `json:"averageInterval"`
 }
 
 func New() *Counter { return &Counter{windows: make(map[string]*[15]bucket), now: time.Now} }
@@ -43,9 +45,9 @@ func (c *Counter) prune(minute int64) {
 		}
 	}
 }
-func (c *Counter) Record(id string) {
+func (c *Counter) Record(id string) time.Time {
 	if id == "" {
-		return
+		return time.Time{}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -63,6 +65,22 @@ func (c *Counter) Record(id string) {
 	}
 	b.Count++
 	b.Last = now
+	return now
+}
+
+func (c *Counter) failure(id string, started time.Time) {
+	if id == "" || started.IsZero() {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	minute := started.Unix() / 60
+	if window := c.windows[id]; window != nil {
+		b := &window[minute%15]
+		if b.Minute == minute && b.Count > 0 {
+			b.Failures++
+		}
+	}
 }
 func (c *Counter) Snapshot() map[string]Summary {
 	c.mu.Lock()
@@ -82,6 +100,7 @@ func (c *Counter) Snapshot() map[string]Summary {
 				continue
 			}
 			s.FifteenMinutes += b.Count
+			s.FailedFifteenMinutes += b.Failures
 			if age < 5 {
 				s.FiveMinutes += b.Count
 			}
@@ -112,10 +131,14 @@ type Transport struct {
 }
 
 func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
-	Default.Record(t.SupplierID)
+	started := Default.Record(t.SupplierID)
 	base := t.Base
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return base.RoundTrip(r)
+	response, err := base.RoundTrip(r)
+	if err != nil || response == nil || response.StatusCode >= 400 {
+		Default.failure(t.SupplierID, started)
+	}
+	return response, err
 }

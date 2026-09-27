@@ -373,7 +373,7 @@ func (s *Service) startP2(ctx context.Context) {
 				return
 			case <-worker.C:
 				if distsync.IsLeader(ctx) {
-					_ = s.RunP2Tasks(ctx)
+					_ = distsync.Work(ctx, s.RunP2Tasks)
 				}
 			case <-syncTicker.C:
 				distsync.Task(ctx, "cdn_domain_periodic_sync", time.Minute, func(ctx context.Context) error {

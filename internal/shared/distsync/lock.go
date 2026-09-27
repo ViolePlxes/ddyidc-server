@@ -75,7 +75,7 @@ func WithLock(ctx context.Context, key string, ttl time.Duration, fn func(contex
 	if !IsLeader(taskCtx) {
 		return ErrBusy
 	}
-	return fn(taskCtx)
+	return Work(taskCtx, fn)
 }
 func Task(ctx context.Context, name string, ttl time.Duration, fn func(context.Context) error) {
 	if err := WithLock(ctx, name, ttl, fn); err != nil && !errors.Is(err, ErrBusy) && !errors.Is(err, context.Canceled) {

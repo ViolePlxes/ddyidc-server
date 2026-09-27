@@ -23,12 +23,13 @@ const renewScript = `if redis.call('get',KEYS[1])==ARGV[1] then return redis.cal
 const releaseScript = `if redis.call('get',KEYS[1])==ARGV[1] then return redis.call('del',KEYS[1]) else return 0 end`
 
 type Leader struct {
-	client   redis.UniversalClient
-	token    string
-	leader   atomic.Bool
-	degraded atomic.Bool
-	until    atomic.Int64
-	ttl      atomic.Int64
+	admission func(context.Context, func(context.Context) error) error
+	client    redis.UniversalClient
+	token     string
+	leader    atomic.Bool
+	degraded  atomic.Bool
+	until     atomic.Int64
+	ttl       atomic.Int64
 }
 
 func token() string {
@@ -42,6 +43,28 @@ func NewLeader(client redis.UniversalClient) *Leader {
 	l := &Leader{client: client, token: token()}
 	l.ttl.Store(int64(30 * time.Second))
 	return l
+}
+
+// WithAdmission adds the cross-process maintenance barrier before business work.
+// Configure before Run; leader lease renewal itself must remain outside it.
+func (l *Leader) WithAdmission(fn func(context.Context, func(context.Context) error) error) *Leader {
+	l.admission = fn
+	return l
+}
+func Work(ctx context.Context, fn func(context.Context) error) error {
+	l, _ := ctx.Value(contextKey{}).(*Leader)
+	if l == nil || !IsLeader(ctx) {
+		return ErrBusy
+	}
+	if l.admission != nil {
+		return l.admission(ctx, func(scoped context.Context) error {
+			if !IsLeader(scoped) {
+				return ErrBusy
+			}
+			return fn(scoped)
+		})
+	}
+	return fn(ctx)
 }
 func (l *Leader) set(ok, degraded bool) {
 	old := l.leader.Swap(ok)
@@ -151,7 +174,8 @@ func IsLeader(ctx context.Context) bool {
 }
 
 // Run starts scanner loops once per leadership term, and cancels them on loss.
-// The supplied functions only start loops; they must honor the supplied context.
+// Starters may return immediately or run a blocking loop. Neither may block
+// leadership observation; each must honor the supplied term context.
 func (l *Leader) Run(ctx context.Context, starts []func(context.Context)) {
 	heartbeatCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -174,7 +198,7 @@ func (l *Leader) Run(ctx context.Context, starts []func(context.Context)) {
 				term, stop = context.WithCancel(context.WithValue(ctx, contextKey{}, l))
 				log.Printf("CRON 启动 %d 个任务入口", len(starts))
 				for _, start := range starts {
-					start(term)
+					go start(term)
 				}
 			}
 			if !l.IsLeader() && stop != nil {

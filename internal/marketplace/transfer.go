@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/snowflake"
 	"errors"
@@ -127,8 +128,16 @@ func queueFailedRefund(tx *gorm.DB, id, buyer int64, at time.Time) error {
 		return err
 	}
 	if row.SettlementMode == "balance" {
-		if err := tx.Table("order.orders").Where("id=?", id).Updates(map[string]any{"status": 2, "paid_at": at, "updated_at": at}).Error; err != nil {
+		amount, err := parsePositiveMoney(row.PayAmount)
+		if err != nil {
 			return err
+		}
+		changed, err := orderstate.RecordCapturedModulePaymentForRefundTx(tx, id, buyer, amount, at)
+		if err != nil {
+			return err
+		}
+		if !changed {
+			return ErrInvalid
 		}
 	}
 	var listing Listing

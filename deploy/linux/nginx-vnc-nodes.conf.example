@@ -1,0 +1,16 @@
+# Include in nginx http{} after assigning unique RemoteConsole.NodeID values.
+# Addresses are operator-owned constants; never proxy to a token-supplied URL.
+upstream ddyidc_vnc_a { server 127.0.0.1:8080; }
+upstream ddyidc_vnc_b { server 127.0.0.1:8082; }
+map $arg_token $ddyidc_vnc_backend {
+    default "";
+    "~^node-a[.][0-9a-f]{64}$" ddyidc_vnc_a;
+    "~^node-b[.][0-9a-f]{64}$" ddyidc_vnc_b;
+}
+# In BOTH VNC websocket locations of nginx-ddyidc.conf, replace proxy_pass with:
+# if ($ddyidc_vnc_backend = "") { return 403; }
+# proxy_pass http://$ddyidc_vnc_backend;
+# proxy_next_upstream off;
+# Keep existing Upgrade/Connection headers and safe access log (no query).
+# A failed node must NOT fall back to another node: obtain a new authenticated
+# VNC session instead. Ordinary HTTP APIs may use a separate balanced upstream.

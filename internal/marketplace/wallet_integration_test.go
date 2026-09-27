@@ -9,33 +9,16 @@ import (
 	payrepo "ddyidc/internal/payment/repository"
 	points "ddyidc/internal/points"
 	"ddyidc/internal/shared/snowflake"
-	"ddyidc/pkg/db"
+	"ddyidc/internal/shared/testenv"
 	"encoding/json"
 	"fmt"
-	"github.com/zeromicro/go-zero/core/conf"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"os"
 	"testing"
 	"time"
 )
 
 func TestBalanceEngineLifecycle(t *testing.T) {
-	if os.Getenv("DDYIDC_BALANCE_INTEGRATION") != "1" {
-		t.Skip("set DDYIDC_BALANCE_INTEGRATION=1 for real MySQL regression")
-	}
-	var c struct{ MySQL db.Config }
-	path := os.Getenv("DDYIDC_BALANCE_TEST_CONFIG")
-	if path == "" {
-		path = "../../etc/config.yaml"
-	}
-	conf.MustLoad(path, &c)
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local", c.MySQL.User, c.MySQL.Password, c.MySQL.Host, c.MySQL.Port, c.MySQL.Database)
-	database, e := gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if e != nil {
-		t.Fatal(e)
-	}
+	database := testenv.MySQL(t)
+	var e error
 	tx := database.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
