@@ -1099,22 +1099,11 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if err := p.enforceTestProductPolicy(order.ProductID); err != nil {
 		return nil, err
 	}
-	// Amount is loaded by Store from the persisted supplier mapping, never from
-	// the customer request. Reusing that verified value avoids extra catalogue
-	// traffic at payment time (especially important for rate-limited qkidc).
-	requiredAmount := order.Amount
-	if requiredAmount <= 0 {
-		return nil, errors.New("upstream order price is unavailable")
-	}
-	// Avoid placing an unpaid cart/order upstream. This is also the precise,
-	// safe outcome for the supplied moebun account, whose credit is 0.00.
-	balance, err := p.GetBalance()
+	actualAmount, err := p.purchaseQuote(order)
 	if err != nil {
 		return nil, err
 	}
-	if balance+0.000001 < requiredAmount {
-		return nil, fmt.Errorf("upstream balance insufficient: available %.2f, required %.2f", balance, requiredAmount)
-	}
+	requiredAmount := float64(actualAmount) / 100
 	form := orderForm(order)
 	addBody, err := p.authorizedFormPost("/cart/add_to_shop", form)
 	if err != nil {
@@ -1161,6 +1150,11 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 		if err := order.Checkpoint("invoice_created", invoiceID, ""); err != nil {
 			return nil, err
 		}
+	}
+	// Pay once only after the matching configuration quote passed the ceiling.
+	balance, err := p.GetBalance()
+	if err != nil {
+		return nil, err
 	}
 	payBody, err := p.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
 	if err != nil {

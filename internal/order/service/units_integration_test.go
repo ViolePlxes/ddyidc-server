@@ -112,10 +112,12 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 			} else {
 				fmt.Fprintf(w, `{"status":200,"data":{"host_data":{"id":"%s","productid":"353"}}}`, r.URL.Query().Get("host_id"))
 			}
+		case "/cart/get_total":
+			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
 			fmt.Fprint(w, `{"status":200,"data":{"i":1}}`)
 		case "/cart/settle":
-			fmt.Fprintf(w, `{"status":200,"data":{"invoiceid":%d}}`, 200000+invoices.Add(1))
+			fmt.Fprintf(w, `{"status":200,"data":{"invoiceid":%d,"amount":"1.00"}}`, 200000+invoices.Add(1))
 		case "/apply_credit":
 			n := charges.Add(1)
 			if n == 2 {

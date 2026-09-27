@@ -276,6 +276,6 @@ type RenewalQuote struct {
 }
 type RenewalProvider interface {
 	RenewalQuotes(int64) ([]RenewalQuote, error)
-	CreateRenewalInvoice(int64, string, int64) (string, error)
+	CreateRenewalInvoice(int64, string, int64) (string, string, error)
 	PayRenewalInvoice(string) error
 }

@@ -237,6 +237,8 @@ func TestCreateOrderUsesVerifiedLegacyFinanceChain(t *testing.T) {
 		switch r.URL.Path {
 		case "/user_info":
 			_, _ = w.Write([]byte(`{"status":200,"user":{"credit":"60.65"}}`))
+		case "/cart/get_total":
+			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"15.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
 			_ = r.ParseForm()
 			if r.Form.Get("pid") != "489" || r.Form.Get("configoption[1941]") != "13150" || r.Form.Get("upstream_product[config_options][1941]") != "13150" || r.Form.Get("checkout") != "1" {
@@ -248,7 +250,7 @@ func TestCreateOrderUsesVerifiedLegacyFinanceChain(t *testing.T) {
 			if r.Form.Get("pos[]") != "3" || r.Form.Get("downstream_system_type") != "v10" {
 				t.Fatalf("unexpected settle form: %v", r.Form)
 			}
-			_, _ = w.Write([]byte(`{"status":200,"data":{"invoiceid":7001,"hostid":[8002]}}`))
+			_, _ = w.Write([]byte(`{"status":200,"data":{"invoiceid":7001,"hostid":[8002],"amount":"15.00"}}`))
 		case "/apply_credit":
 			_ = r.ParseForm()
 			if r.Form.Get("use_credit") != "1" || r.Form.Get("enough") != "0" || r.Form.Get("invoiceid") != "7001" {
@@ -274,7 +276,7 @@ func TestCreateOrderUsesVerifiedLegacyFinanceChain(t *testing.T) {
 	if result.OrderID != "7001" || result.HostID != "8002" || result.Status != "active" || result.BalanceBefore != 60.65 || result.BalanceAfter != 45.65 {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	want := []string{"/user_info", "/cart/add_to_shop", "/cart/settle", "/apply_credit"}
+	want := []string{"/cart/get_total", "/cart/add_to_shop", "/cart/settle", "/user_info", "/apply_credit"}
 	if fmt.Sprint(paths) != fmt.Sprint(want) {
 		t.Fatalf("paths = %v, want %v", paths, want)
 	}

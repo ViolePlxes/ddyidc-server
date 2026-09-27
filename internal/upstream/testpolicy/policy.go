@@ -3,6 +3,7 @@
 package testpolicy
 
 import (
+	billing "ddyidc/internal/billing/balance"
 	"errors"
 	"net/url"
 	"strings"
@@ -13,6 +14,7 @@ type Rule struct {
 	Host           string
 	ProductIDs     []int
 	BlockCatalogue bool
+	MaxPayment     string `json:",optional"`
 }
 
 type Config struct {
@@ -23,6 +25,7 @@ type Config struct {
 type restriction struct {
 	products       map[int]bool
 	blockCatalogue bool
+	maxPayment     billing.Money
 }
 
 type policy struct{ rules map[string]restriction }
@@ -59,6 +62,13 @@ func Configure(environment string, cfg Config) error {
 			return errors.New("duplicate upstream test policy hostname")
 		}
 		r := restriction{products: make(map[int]bool), blockCatalogue: rule.BlockCatalogue}
+		if rule.MaxPayment != "" {
+			amount, err := billing.ParseMoney(rule.MaxPayment)
+			if err != nil || amount <= 0 {
+				return errors.New("invalid upstream test payment ceiling")
+			}
+			r.maxPayment = amount
+		}
 		for _, id := range rule.ProductIDs {
 			if id <= 0 || r.products[id] {
 				return errors.New("invalid upstream test policy product IDs")
@@ -94,6 +104,17 @@ func CheckProduct(raw string, id int) error {
 func CheckCatalogue(raw string) error {
 	if r, ok := forURL(raw); ok && r.blockCatalogue {
 		return errors.New("local test policy forbids full catalogue sync")
+	}
+	return nil
+}
+
+// A per-payment ceiling is a lab restriction, never a production price rule.
+func CheckPayment(raw string, amount billing.Money) error {
+	if amount <= 0 {
+		return errors.New("unverified upstream payment amount")
+	}
+	if r, ok := forURL(raw); ok && r.maxPayment > 0 && amount > r.maxPayment {
+		return errors.New("供应商订单实际金额超过测试付款上限，未付款")
 	}
 	return nil
 }

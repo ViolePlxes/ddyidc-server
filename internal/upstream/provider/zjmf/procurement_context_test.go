@@ -4,6 +4,8 @@ import (
 	"context"
 	"ddyidc/internal/upstream/provider/contracts"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -17,10 +19,12 @@ func TestProcurementPersistsInvoiceBeforeCharge(t *testing.T) {
 		switch r.URL.Path {
 		case "/user_info":
 			w.Write([]byte(`{"status":200,"user":{"credit":"50"}}`))
+		case "/cart/get_total":
+			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
 			w.Write([]byte(`{"status":200,"data":{"i":1}}`))
 		case "/cart/settle":
-			w.Write([]byte(`{"status":200,"data":{"invoiceid":901}}`))
+			w.Write([]byte(`{"status":200,"data":{"invoiceid":901,"amount":"1.00"}}`))
 		case "/apply_credit":
 			paid.Add(1)
 			w.Write([]byte(`{"status":1001}`))
@@ -53,8 +57,12 @@ func TestProcurementPersistsInvoiceBeforeCharge(t *testing.T) {
 func TestProcurementCancellationStopsNetworkChain(t *testing.T) {
 	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/user_info" {
-			<-r.Context().Done()
+		if r.URL.Path == "/cart/get_total" {
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-r.Context().Done():
+			case <-time.After(2 * time.Second):
+			}
 			return
 		}
 		writes.Add(1)
@@ -83,6 +91,8 @@ func TestProcurementNeverSettlesUnidentifiedCartOrCompensatesUnknownPayment(t *t
 				switch r.URL.Path {
 				case "/user_info":
 					w.Write([]byte(`{"status":200,"user":{"credit":"50"}}`))
+				case "/cart/get_total":
+					fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 				case "/cart/add_to_shop":
 					if missingPosition {
 						w.Write([]byte(`{"status":200,"data":{}}`))
@@ -95,7 +105,7 @@ func TestProcurementNeverSettlesUnidentifiedCartOrCompensatesUnknownPayment(t *t
 					if r.Form.Get("pos[]") != "0" {
 						t.Error("settled unspecified cart")
 					}
-					w.Write([]byte(`{"status":200,"data":{"invoiceid":902}}`))
+					w.Write([]byte(`{"status":200,"data":{"invoiceid":902,"amount":"1.00"}}`))
 				case "/apply_credit":
 					pays.Add(1)
 					_ = r.ParseForm()

@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	billing "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
@@ -100,11 +101,20 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 		if !valid {
 			return true, s.renewalUncertain(ctx, r.ID, "续费成本或周期变化，请人工核对")
 		}
-		invoice, e := rp.CreateRenewalInvoice(parseHostID(r.HostID), r.Cycle, r.Duration)
-		if e != nil {
-			return true, s.renewalUncertain(ctx, r.ID, "创建续费账单结果未确认，请人工核对")
+		invoice, actual, e := rp.CreateRenewalInvoice(parseHostID(r.HostID), r.Cycle, r.Duration)
+		if invoice != "" {
+			if err := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='creating'", r.ID).Update("invoice_id", invoice).Error; err != nil {
+				return true, err
+			}
 		}
-		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='creating'", r.ID).Updates(map[string]any{"invoice_id": invoice, "state": "invoiced", "updated_at": time.Now()})
+		if e != nil {
+			return true, s.renewalUncertain(ctx, r.ID, "创建续费账单或实际金额未确认，未付款，请人工核对")
+		}
+		actualCost, amountErr := billing.ParseMoney(actual)
+		if amountErr != nil || actualCost <= 0 || actualCost > r.Cost {
+			return true, s.renewalUncertain(ctx, r.ID, "续费实际金额超出已确认报价，未付款，请人工核对")
+		}
+		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='creating'", r.ID).Updates(map[string]any{"invoice_id": invoice, "cost": actualCost, "state": "invoiced_verified", "updated_at": time.Now()})
 		if persisted.Error != nil {
 			return true, persisted.Error
 		}
@@ -112,10 +122,14 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 			return true, errors.New("续费状态已变更，账单待核对，未再次支付")
 		}
 		r.InvoiceID = invoice
-		r.State = "invoiced"
+		r.Cost = actualCost
+		r.State = "invoiced_verified"
 	}
 	if r.State == "invoiced" {
-		claim := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='invoiced'", r.ID).Updates(map[string]any{"state": "paying", "updated_at": time.Now()})
+		return true, errors.New("旧续费账单缺少实际金额校验记录，未付款，请人工核对")
+	}
+	if r.State == "invoiced_verified" {
+		claim := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='invoiced_verified'", r.ID).Updates(map[string]any{"state": "paying", "updated_at": time.Now()})
 		if claim.Error != nil {
 			return true, claim.Error
 		}

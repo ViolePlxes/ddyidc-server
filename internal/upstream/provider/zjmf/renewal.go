@@ -3,6 +3,7 @@ package zjmf
 import (
 	"ddyidc/internal/billing/balance"
 	"ddyidc/internal/upstream/provider/contracts"
+	"ddyidc/internal/upstream/testpolicy"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -38,20 +39,37 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 	}
 	return out, nil
 }
-func (p *Provider) CreateRenewalInvoice(id int64, cycle string, duration int64) (string, error) {
+func (p *Provider) CreateRenewalInvoice(id int64, cycle string, duration int64) (string, string, error) {
+	quotes, err := p.RenewalQuotes(id)
+	if err != nil {
+		return "", "", err
+	}
+	var amount billing.Money
+	for _, quote := range quotes {
+		if quote.Cycle == cycle && quote.Duration == duration {
+			amount, err = billing.ParseMoney(quote.Amount)
+			break
+		}
+	}
+	if err != nil || amount <= 0 {
+		return "", "", fmt.Errorf("供应商未返回匹配周期的续费报价，未创建订单")
+	}
+	if err := testpolicy.CheckPayment(p.Supplier.URL, amount); err != nil {
+		return "", "", err
+	}
 	b, e := p.authorizedFormPost("/host/renew", url.Values{"hostid": {strconv.FormatInt(id, 10)}, "billingcycles": {cycle}, "duration": {strconv.FormatInt(duration, 10)}})
 	if e != nil {
-		return "", fmt.Errorf("续费订单结果待核对，禁止重复创建")
+		return "", "", fmt.Errorf("续费订单结果待核对，禁止重复创建")
 	}
 	d, e := businessData(b, "renewal")
 	if e != nil {
-		return "", e
+		return "", "", e
 	}
 	invoice := firstMapString(d, "invoiceid", "invoice_id")
 	if invoice == "" || invoice == "0" {
-		return "", fmt.Errorf("续费订单编号未确认")
+		return "", "", fmt.Errorf("续费订单编号未确认")
 	}
-	return invoice, nil
+	return invoice, amount.String(), nil
 }
 func (p *Provider) PayRenewalInvoice(invoice string) error {
 	b, e := p.authorizedFormPost("/apply_credit", url.Values{"invoiceid": {invoice}, "use_credit": {"1"}})
