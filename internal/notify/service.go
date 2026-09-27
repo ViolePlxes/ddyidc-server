@@ -289,6 +289,10 @@ func templateParams(source string, values map[string]string) (map[string]string,
 }
 
 func (m *Manager) sendChannel(ctx context.Context, template *NotificationTemplate, channel, target string, params map[string]string, businessID string) error {
+	return m.sendChannelWithRetry(ctx, template, channel, target, params, businessID, true)
+}
+
+func (m *Manager) sendChannelWithRetry(ctx context.Context, template *NotificationTemplate, channel, target string, params map[string]string, businessID string, retry bool) error {
 	config, err := m.loadConfig(ctx)
 	if err != nil {
 		return err
@@ -323,7 +327,7 @@ func (m *Manager) sendChannel(ctx context.Context, template *NotificationTemplat
 		return m.mail.Send(ctx, config.Mail, target, title, body)
 	}
 	err = send()
-	if err != nil {
+	if err != nil && retry {
 		if m.retryDelay > 0 {
 			timer := time.NewTimer(m.retryDelay)
 			select {
@@ -339,7 +343,17 @@ func (m *Manager) sendChannel(ctx context.Context, template *NotificationTemplat
 	}
 	status, errorText := StatusSuccess, ""
 	if err != nil {
-		status, errorText = StatusFailed, truncate(err.Error(), 1024)
+		// SDK/SMTP errors can contain request URLs, authentication material or
+		// server-supplied text. Do not persist or return the raw provider error.
+		errorText = "邮件服务发送失败，请检查邮件配置或服务商发送记录"
+		if channel == ChannelSMS {
+			errorText = "短信服务发送失败，请检查短信配置或服务商发送记录"
+		}
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			errorText = "通知请求超时或已取消，发送结果待核对，请勿重复发送"
+		}
+		err = errors.New(errorText)
+		status = StatusFailed
 	}
 	snapshot := content
 	if code := params["code"]; code != "" && validVerificationScene(template.Scene) {
@@ -356,6 +370,16 @@ func (m *Manager) sendChannel(ctx context.Context, template *NotificationTemplat
 }
 
 func (m *Manager) SendNotify(ctx context.Context, scene, target string, params map[string]string) error {
+	return m.sendNotify(ctx, scene, target, params, true)
+}
+
+// SendTestNotify sends at most once: a transport failure does not prove that
+// the provider failed to deliver the administrator's test message.
+func (m *Manager) SendTestNotify(ctx context.Context, scene, target string, params map[string]string) error {
+	return m.sendNotify(ctx, scene, target, params, false)
+}
+
+func (m *Manager) sendNotify(ctx context.Context, scene, target string, params map[string]string, retry bool) error {
 	template, err := m.repo.TemplateByScene(ctx, scene)
 	if err != nil {
 		return err
@@ -378,7 +402,7 @@ func (m *Manager) SendNotify(ctx context.Context, scene, target string, params m
 	businessID := strings.TrimSpace(params["_business_id"])
 	cleanParams := cloneMap(params)
 	delete(cleanParams, "_business_id")
-	return m.sendChannel(ctx, template, channel, target, cleanParams, businessID)
+	return m.sendChannelWithRetry(ctx, template, channel, target, cleanParams, businessID, retry)
 }
 
 func (m *Manager) NotifyCustomer(ctx context.Context, scene string, customerID int64, businessID string, params map[string]string) error {

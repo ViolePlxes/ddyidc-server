@@ -86,6 +86,8 @@ func (c *aliyunSMSChannel) Send(ctx context.Context, config SMSConfig, mobile, t
 type smtpMailChannel struct{}
 
 func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subject, htmlBody string) error {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	port := config.Port
 	if port == 0 {
 		port = 465
@@ -95,10 +97,14 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	var client *smtp.Client
 	if port == 465 {
-		conn, err := tls.DialWithDialer(dialer, "tcp", address, tlsConfig)
+		conn, err := (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", address)
 		if err != nil {
 			return fmt.Errorf("连接 SMTPS: %w", err)
 		}
+		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+		defer stop()
+		deadline, _ := ctx.Deadline()
+		_ = conn.SetDeadline(deadline)
 		created, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			_ = conn.Close()
@@ -110,6 +116,10 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 		if err != nil {
 			return fmt.Errorf("连接 SMTP: %w", err)
 		}
+		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
+		defer stop()
+		deadline, _ := ctx.Deadline()
+		_ = conn.SetDeadline(deadline)
 		created, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			_ = conn.Close()

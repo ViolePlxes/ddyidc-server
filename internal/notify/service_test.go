@@ -174,8 +174,24 @@ func TestFailedDeliveryIsLogged(t *testing.T) {
 	if mail.calls != 2 {
 		t.Fatalf("expected one retry, got %d calls", mail.calls)
 	}
-	if len(repo.logs) != 1 || repo.logs[0].Status != StatusFailed || !strings.Contains(repo.logs[0].Error, "SMTP unavailable") {
+	if len(repo.logs) != 1 || repo.logs[0].Status != StatusFailed || !strings.Contains(repo.logs[0].Error, "邮件服务发送失败") {
 		t.Fatalf("failed log missing: %#v", repo.logs)
+	}
+}
+
+func TestAdminTestDeliveryDoesNotRetry(t *testing.T) {
+	repo := &fakeNotifyRepository{values: map[string]string{}, templates: map[string]*NotificationTemplate{"register": {ID: 3, Scene: "register", Channel: ChannelEmail, Title: "验证码", Content: "验证码 {{code}}", Enabled: true}}}
+	mail := &fakeMailChannel{err: errors.New("delivery outcome unknown Authorization: test-sensitive-password")}
+	manager := testManager(repo, mail)
+	err := manager.SendTestNotify(context.Background(), "register", "user@example.com", map[string]string{"code": "123456"})
+	if err == nil || mail.calls != 1 || len(repo.logs) != 1 || repo.logs[0].Status != StatusFailed {
+		t.Fatal("test delivery must make exactly one attempt and record failure")
+	}
+	if strings.Contains(repo.logs[0].ContentSnapshot, "123456") {
+		t.Fatal("verification code leaked into notification log")
+	}
+	if strings.Contains(err.Error(), "test-sensitive-password") || strings.Contains(repo.logs[0].Error, "Authorization") {
+		t.Fatal("raw provider error leaked to response or audit log")
 	}
 }
 
