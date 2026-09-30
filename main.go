@@ -40,6 +40,7 @@ import (
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/tasks"
 	"ddyidc/internal/shared/workgate"
+	"ddyidc/internal/socialauth"
 	systemrepo "ddyidc/internal/system/repository"
 	tickethandler "ddyidc/internal/ticket/handler"
 	ticketrepo "ddyidc/internal/ticket/repository"
@@ -432,6 +433,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("points schema initialization failed: " + err.Error())
 	}
 	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService)
+	socialauth.Register(server, db.G, jwt, snapshotKey, verificationService)
 	marketinghandler.RegisterUserHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterAdminHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterSalesHandlers(server, marketingSvc, jwt)
