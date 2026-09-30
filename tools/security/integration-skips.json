@@ -150,5 +150,9 @@
   "ddyidc/internal/cdnsell/TestPaidFulfillmentMySQL": {
     "verification": "Run against disposable FOUNDATION_MYSQL_SOCKET fixtures; preserve independent evidence. This skip is not a pass.",
     "disposition": "isolated_suite_required"
+  },
+  "ddyidc/internal/socialauth/TestSocialOAuthMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_social_login.sh with disposable FOUNDATION_MYSQL_SOCKET; OAuth state, uniqueness, mobile verification and session invalidation require isolated MySQL and Redis. A normal-suite skip is not a pass."
   }
 }
