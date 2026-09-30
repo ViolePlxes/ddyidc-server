@@ -9,5 +9,6 @@
   "008_delivery_units.sql": "77834dbb64cfeed31ed8bb46cda6260c73067f15eb279bb834853da92be76aad",
   "009_stock_reservations.sql": "dc0d9ff6bd2f77c20b6cacda5b5d105281474a17642fcbf7faa8b76acd1a5552",
   "010_upstream_event_inbox.sql": "8095ef098a5a3a7fd6203981ce07afb28805bdce3d438afefa1a83077f178f11",
-  "011_operation_barrier.sql": "a3d7bd3219d9924529a952055b4dc817b1ad7a22a12ca7e332a2c75880696253"
+  "011_operation_barrier.sql": "a3d7bd3219d9924529a952055b4dc817b1ad7a22a12ca7e332a2c75880696253",
+  "012_auth_devices.sql": "297de738004f943734192bff91c87211254492bc1e5f7a3439c254d21d556a21"
 }

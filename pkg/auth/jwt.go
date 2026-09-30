@@ -13,6 +13,7 @@ import (
 
 // Claims JWT 载荷
 type Claims struct {
+	DeviceID       string `json:"device_id,omitempty"`
 	AuthVersion    uint64 `json:"auth_version,omitempty"`
 	ActorID        int64  `json:"actor_id,omitempty"`
 	ActorVersion   uint64 `json:"actor_version,omitempty"`
@@ -25,14 +26,15 @@ type Claims struct {
 
 // Manager JWT 管理器
 type Manager struct {
-	accounts      *gorm.DB
-	accountState  func(context.Context, SessionKind, int64) (uint64, error)
-	accessSecret  []byte
-	accessExpire  time.Duration
-	refreshSecret []byte
-	refreshExpire time.Duration
-	security      SecurityConfig
-	clock         func() time.Time
+	devicesEnabled bool
+	accounts       *gorm.DB
+	accountState   func(context.Context, SessionKind, int64) (uint64, error)
+	accessSecret   []byte
+	accessExpire   time.Duration
+	refreshSecret  []byte
+	refreshExpire  time.Duration
+	security       SecurityConfig
+	clock          func() time.Time
 }
 
 // NewManager 创建JWT管理器

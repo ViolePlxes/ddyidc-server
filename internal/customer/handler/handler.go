@@ -78,6 +78,9 @@ func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, 
 	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks, smsCodes: smsCodes}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: h.userLogin},
+		{Method: http.MethodPost, Path: "/api/v1/auth/refresh", Handler: h.refreshLogin},
+		{Method: http.MethodGet, Path: "/api/v1/auth/devices", Handler: h.loginDevices},
+		{Method: http.MethodDelete, Path: "/api/v1/auth/devices/:id", Handler: h.revokeLoginDevice},
 		{Method: http.MethodPost, Path: "/api/v1/auth/logout", Handler: h.userLogout},
 		{Method: http.MethodPost, Path: "/api/v1/auth/register", Handler: h.register},
 		{Method: http.MethodPost, Path: "/api/v1/auth/bind-mobile", Handler: h.bindMobile},
@@ -97,8 +100,9 @@ func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, 
 
 func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Account  string `json:"account"`
-		Password string `json:"password"`
+		RememberMe bool   `json:"rememberMe"`
+		Account    string `json:"account"`
+		Password   string `json:"password"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "登录参数格式错误")
@@ -122,7 +126,7 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 	customer, err := h.findAccount(r, account)
 	if err == nil && customer != nil && customer.Status == 1 && auth.PasswordMatches(customer.PasswordHash, input.Password) {
 		_ = h.jwt.ClearLoginFailures(r.Context(), rateKey)
-		h.writeCustomerLogin(w, r, customer)
+		h.writeCustomerLogin(w, r, customer, input.RememberMe)
 		return
 	}
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -242,7 +246,7 @@ func (h *authHandler) rejectLogin(w http.ResponseWriter, r *http.Request, rateKe
 	writeError(w, http.StatusUnauthorized, "账号或密码错误")
 }
 
-func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request, customer *domain.Customer) {
+func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request, customer *domain.Customer, rememberMe ...bool) {
 	if events, ok := h.hooks.(AuthEventHooks); ok {
 		events.AfterAuthEvent(r.Context(), "login", customer.ID)
 	}
@@ -256,11 +260,23 @@ func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request,
 	if customer.Phone != nil {
 		user["mobile"] = *customer.Phone
 	}
-	h.writeSessionLogin(w, r, auth.SessionUser, customer.ID, customer.Username, "customer", user, customer.Phone == nil || *customer.Phone == "", customer.AuthVersion)
+	h.writeSessionLogin(w, r, auth.SessionUser, customer.ID, customer.Username, "customer", user, customer.Phone == nil || *customer.Phone == "", customer.AuthVersion, rememberMe...)
 }
 
-func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, kind auth.SessionKind, userID int64, account, role string, user map[string]any, needBindMobile bool, version uint64) {
-	token, err := h.jwt.IssueSession(r.Context(), kind, userID, account, role, version)
+func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, kind auth.SessionKind, userID int64, account, role string, user map[string]any, needBindMobile bool, version uint64, rememberMe ...bool) {
+	var token string
+	var pair auth.TokenPair
+	var err error
+	if kind == auth.SessionUser {
+		browser := r.UserAgent()
+		if len(browser) > 512 {
+			browser = browser[:512]
+		}
+		pair, err = h.jwt.IssueDeviceSession(r.Context(), userID, account, version, browser, clientIP(r))
+		token = pair.AccessToken
+	} else {
+		token, err = h.jwt.IssueSession(r.Context(), kind, userID, account, role, version)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "创建登录会话失败")
 		return
@@ -274,13 +290,23 @@ func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, 
 			return tx.Table("customer.customers").Where("id=?", userID).Updates(map[string]any{"last_login_at": now, "last_login_ip": clientIP(r)}).Error
 		})
 		if err != nil {
-			_ = h.jwt.RevokeSession(r.Context(), kind, userID)
+			if claims, parseErr := h.jwt.ParseAccessTokenFor(r.Context(), kind, token); parseErr == nil {
+				_ = h.jwt.RevokeDevice(r.Context(), claims, claims.DeviceID)
+			}
 			writeError(w, 500, "保存登录记录失败")
 			return
 		}
 	}
-	h.jwt.SetSessionCookie(w, kind, token)
-	writeJSON(w, http.StatusOK, map[string]any{"token": "", "user": user, "needBindMobile": needBindMobile})
+	response := map[string]any{"token": "", "user": user, "needBindMobile": needBindMobile}
+	if kind == auth.SessionUser {
+		h.jwt.SetDeviceCookie(w, pair, len(rememberMe) > 0 && rememberMe[0])
+		response["access_token"], response["refresh_token"] = pair.AccessToken, pair.RefreshToken
+		response["expires_in"], response["refresh_expires_in"] = pair.ExpiresIn, pair.RefreshExpiresIn
+	} else {
+		h.jwt.SetSessionCookie(w, kind, token)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, response)
 }
 
 func findAdministrator(account string) (*administrator, error) {
@@ -506,6 +532,9 @@ func (h *authHandler) verifySales(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *authHandler) userLogout(w http.ResponseWriter, r *http.Request) {
+	if _, ok := h.sessionClaims(w, r, auth.SessionUser); !ok {
+		return
+	}
 	h.logoutFor(w, r, auth.SessionUser)
 }
 
@@ -522,7 +551,13 @@ func (h *authHandler) logoutFor(w http.ResponseWriter, r *http.Request, kind aut
 	header := r.Header.Get("Authorization")
 	if strings.HasPrefix(header, "Bearer ") {
 		if claims, err := h.jwt.ParseAccessTokenFor(r.Context(), kind, strings.TrimPrefix(header, "Bearer ")); err == nil && claims != nil {
-			if revokeErr := h.jwt.RevokeSession(r.Context(), kind, claims.UserID); revokeErr != nil {
+			var revokeErr error
+			if claims.DeviceID != "" {
+				revokeErr = h.jwt.RevokeDevice(r.Context(), claims, claims.DeviceID)
+			} else {
+				revokeErr = h.jwt.RevokeSession(r.Context(), kind, claims.UserID)
+			}
+			if revokeErr != nil {
 				writeError(w, http.StatusServiceUnavailable, "退出登录失败，请稍后重试")
 				return
 			}
@@ -551,7 +586,7 @@ func (h *authHandler) userMe(w http.ResponseWriter, r *http.Request) {
 	if customer.Phone != nil {
 		user["mobile"] = *customer.Phone
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": "", "user": user, "needBindMobile": customer.Phone == nil || *customer.Phone == ""})
+	writeJSON(w, http.StatusOK, map[string]any{"token": "", "user": user, "needBindMobile": customer.Phone == nil || *customer.Phone == "", "refreshable": claims.DeviceID != "" && claims.ActorID == 0})
 }
 
 func (h *authHandler) adminMe(w http.ResponseWriter, r *http.Request) {
