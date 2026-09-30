@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
+	marketingdom "ddyidc/internal/marketing/domain"
+	marketingrepo "ddyidc/internal/marketing/repository"
 	"ddyidc/internal/shared/distsync"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
@@ -64,7 +66,10 @@ func (s *Service) Settings(ctx context.Context) (*Settings, error) {
 	return &v, e
 }
 func (s *Service) SaveSettings(ctx context.Context, v *Settings) error {
-	if v.SigninLuckyMin < 0 || v.SigninLuckyMax < v.SigninLuckyMin {
+	if v.CheckoutPointsPerYuan < 1 || v.CheckoutPointsPerYuan > 1000000 || v.CheckoutCouponDays < 1 || v.CheckoutCouponDays > 365 {
+		return errors.New("积分抵扣比例或有效期无效")
+	}
+	if v.SigninStablePoints < 1 || v.SigninStablePoints > 1000000 || v.SigninLuckyMin < 1 || v.SigninLuckyMax < v.SigninLuckyMin || v.SigninLuckyMax > 1000000 || v.PointsExpireDays < 0 {
 		return errors.New("幸运签到积分范围无效")
 	}
 	if v.SigninMode != "normal" && v.SigninMode != "choose" {
@@ -77,10 +82,18 @@ func (s *Service) SaveSettings(ctx context.Context, v *Settings) error {
 	if json.Unmarshal(v.StreakMilestones, &ms) != nil {
 		return errors.New("连续签到里程碑格式无效")
 	}
+	seen := map[int]bool{}
+	for _, m := range ms {
+		if m.Days < 1 || m.Days > 365 || m.Points < 0 || m.Points > 1000000 || seen[m.Days] {
+			return errors.New("连续签到奖励档无效或重复")
+		}
+		seen[m.Days] = true
+	}
 	return s.db.WithContext(ctx).Table(settingsTable).Where("id=1").Updates(map[string]any{
+		"checkout_enabled": v.CheckoutEnabled, "checkout_points_per_yuan": v.CheckoutPointsPerYuan, "checkout_coupon_days": v.CheckoutCouponDays,
 		"enabled": v.Enabled, "points_expire_days": v.PointsExpireDays, "show_mall": v.ShowMall, "show_signin": v.ShowSignin, "show_tasks": v.ShowTasks,
 		"refund_mode": v.RefundMode, "refund_insufficient": v.RefundInsufficient, "recharge_refund_deduct": v.RechargeRefundDeduct,
-		"signin_mode": v.SigninMode, "signin_stable_points": v.SigninStablePoints, "signin_lucky_min": v.SigninLuckyMin, "signin_lucky_max": v.SigninLuckyMax,
+		"signin_mode": v.SigninMode, "signin_progressive": v.SigninProgressive, "signin_stable_points": v.SigninStablePoints, "signin_lucky_min": v.SigninLuckyMin, "signin_lucky_max": v.SigninLuckyMax,
 		"streak_reward_enabled": v.StreakRewardEnabled, "streak_reset_on_break": v.StreakResetOnBreak, "streak_max_mode": v.StreakMaxMode, "streak_milestones": v.StreakMilestones,
 	}).Error
 }
@@ -170,7 +183,7 @@ func (s *Service) calculate(rule *Rule, amountCents int64) int64 {
 		if rule.PointsMax < rule.PointsMin {
 			return 0
 		}
-		return rule.PointsMin + s.random.Int63n(rule.PointsMax-rule.PointsMin+1)
+		return rule.PointsMin + mathrand.Int63n(rule.PointsMax-rule.PointsMin+1)
 	case "ratio":
 		return int64(math.Floor(float64(amountCents) * rule.Ratio / 10000))
 	case "ladder":
@@ -197,9 +210,6 @@ func (s *Service) GrantByEvent(ctx context.Context, event string, userID int64, 
 	var total int64
 	for i := range rules {
 		r := &rules[i]
-		if !s.allowRule(ctx, r, userID) {
-			continue
-		}
 		points := s.calculate(r, meta.AmountCents)
 		if points <= 0 {
 			continue
@@ -212,23 +222,62 @@ func (s *Service) GrantByEvent(ctx context.Context, event string, userID int64, 
 		if remark == "" {
 			remark = r.Name
 		}
+		credited := false
 		e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return s.creditTx(ctx, tx, userID, points, "rule:"+r.Code, event, ref, remark)
+			if err := s.ensureAccountTx(ctx, tx, userID); err != nil {
+				return err
+			}
+			var account Account
+			if err := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", userID).Take(&account).Error; err != nil {
+				return err
+			}
+			var duplicate int64
+			if err := tx.Table(recordsTable).Where("user_id=? AND source=? AND event=? AND ref_id=?", userID, "rule:"+r.Code, event, ref).Count(&duplicate).Error; err != nil {
+				return err
+			}
+			if duplicate > 0 {
+				return nil
+			}
+			if r.LimitType != "none" && r.LimitValue > 0 {
+				q := tx.Table(recordsTable).Where("user_id=? AND source=?", userID, "rule:"+r.Code)
+				now := s.now()
+				start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+				switch r.LimitType {
+				case "day":
+					q = q.Where("created_at>=?", start)
+				case "week":
+					q = q.Where("created_at>=?", start.AddDate(0, 0, -(int(now.Weekday())+6)%7))
+				case "month":
+					q = q.Where("created_at>=?", time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()))
+				}
+				var count int64
+				if err := q.Count(&count).Error; err != nil {
+					return err
+				}
+				if count >= int64(r.LimitValue) {
+					return nil
+				}
+			}
+			if err := s.creditTx(ctx, tx, userID, points, "rule:"+r.Code, event, ref, remark); err != nil {
+				return err
+			}
+			credited = true
+			return nil
 		})
-		if e == nil {
+		if e == nil && credited {
 			total += points
-		} else if !isDuplicate(e) {
+		} else if e != nil && !isDuplicate(e) {
 			return total, e
 		}
 	}
-	if e = s.progressTasks(ctx, event, userID); e != nil {
+	if e = s.progressTasks(ctx, event, userID, meta.RefID); e != nil {
 		return total, e
 	}
-	return total, nil
+	return total, s.referralEvent(ctx, event, userID, meta)
 }
 
 func (s *Service) ensureAccountTx(ctx context.Context, tx *gorm.DB, userID int64) error {
-	return tx.WithContext(ctx).Exec("INSERT IGNORE INTO system.points_accounts (user_id,status) VALUES (?,1)", userID).Error
+	return tx.WithContext(ctx).Exec("INSERT INTO system.points_accounts (user_id,status) VALUES (?,1) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id)", userID).Error
 }
 func (s *Service) creditTx(ctx context.Context, tx *gorm.DB, userID, points int64, source, event, ref, remark string) error {
 	if points <= 0 {
@@ -404,15 +453,11 @@ func (s *Service) Signin(ctx context.Context, userID int64, mode string) (*Signi
 		}
 		points := settings.SigninStablePoints
 		if mode == "lucky" {
-			points = settings.SigninLuckyMin + s.random.Int63n(settings.SigninLuckyMax-settings.SigninLuckyMin+1)
+			points = settings.SigninLuckyMin + mathrand.Int63n(settings.SigninLuckyMax-settings.SigninLuckyMin+1)
 		}
 		bonus := int64(0)
 		if settings.StreakRewardEnabled {
-			for _, m := range milestones {
-				if m.Days == streak {
-					bonus += m.Points
-				}
-			}
+			bonus = signinBonus(milestones, streak, settings.SigninProgressive)
 		}
 		created = Signin{UserID: userID, SigninDate: today, Mode: mode, Points: points + bonus, Streak: streak}
 		if e := tx.Table(signinsTable).Create(&created).Error; e != nil {
@@ -423,7 +468,7 @@ func (s *Service) Signin(ctx context.Context, userID int64, mode string) (*Signi
 	if e != nil {
 		return nil, e
 	}
-	_ = s.progressTasks(ctx, EventSignin, userID)
+	_ = s.progressTasks(ctx, EventSignin, userID, created.SigninDate.Format("2006-01-02"))
 	return &created, nil
 }
 func (s *Service) SigninCalendar(ctx context.Context, userID int64, month string) (*SigninCalendar, error) {
@@ -455,6 +500,9 @@ func (s *Service) SigninCalendar(ctx context.Context, userID int64, month string
 	var latest Signin
 	if s.db.WithContext(ctx).Table(signinsTable).Where("user_id=?", userID).Order("signin_date DESC").Take(&latest).Error == nil {
 		streak = latest.Streak
+		if settings.StreakResetOnBreak && latest.SigninDate.Format("2006-01-02") != s.now().Format("2006-01-02") && latest.SigninDate.Format("2006-01-02") != s.now().AddDate(0, 0, -1).Format("2006-01-02") {
+			streak = 0
+		}
 	}
 	dates := make([]string, 0, len(rows))
 	for _, r := range rows {
@@ -472,20 +520,33 @@ func (s *Service) SigninCalendar(ctx context.Context, userID int64, month string
 	return &SigninCalendar{Account: a, CurrentStreak: streak, MonthCount: int64(len(rows)), TotalCount: total, SignedDates: dates, Entries: rows, Settings: settings, NextMilestone: next}, nil
 }
 
-func (s *Service) progressTasks(ctx context.Context, event string, userID int64) error {
+func (s *Service) progressTasks(ctx context.Context, event string, userID int64, refs ...string) error {
 	var tasks []Task
 	if e := s.db.WithContext(ctx).Table(tasksTable).Where("target_event=? AND enabled=1", event).Find(&tasks).Error; e != nil {
 		return e
 	}
 	now := s.now()
-	for _, t := range tasks {
-		key := periodKey(t.TaskType, now)
-		e := s.db.WithContext(ctx).Exec("INSERT INTO system.points_task_progress (user_id,task_id,period_key,progress) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE progress=LEAST(progress+1,?)", userID, t.ID, key, t.TargetValue).Error
-		if e != nil {
-			return e
-		}
+	ref := fmt.Sprintf("%d", now.UnixNano())
+	if len(refs) > 0 && refs[0] != "" {
+		ref = refs[0]
 	}
-	return nil
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Exec("INSERT IGNORE INTO system.points_events(user_id,event,ref_id) VALUES (?,?,?)", userID, event, ref)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		for _, t := range tasks {
+			key := periodKey(t.TaskType, now)
+			e := tx.Exec("INSERT INTO system.points_task_progress (user_id,task_id,period_key,progress) VALUES (?,?,?,1) ON DUPLICATE KEY UPDATE progress=LEAST(progress+1,?)", userID, t.ID, key, t.TargetValue).Error
+			if e != nil {
+				return e
+			}
+		}
+		return nil
+	})
 }
 func (s *Service) Tasks(ctx context.Context, userID int64, category string) ([]Task, error) {
 	q := s.db.WithContext(ctx).Table(tasksTable).Where("enabled=1")
@@ -681,25 +742,29 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 			if e != nil || couponID <= 0 {
 				return errors.New("代金券商品配置无效")
 			}
-			var coupon struct {
-				ValidDays int
-				Status    int
-			}
-			if e = tx.Table("marketing.coupons").Select("valid_days,status").Where("id=?", couponID).Take(&coupon).Error; e != nil || coupon.Status != 1 {
+			var coupon marketingdom.Coupon
+			if e = tx.Table("marketing.coupons").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND status=1", couponID).Take(&coupon).Error; e != nil {
 				return errors.New("代金券不可发放")
 			}
-			for i := 0; i < quantity; i++ {
-				now := s.now()
-				expire := now.AddDate(0, 0, coupon.ValidDays)
-				if coupon.ValidDays == 0 {
-					expire = now.AddDate(10, 0, 0)
-				}
-				if e = tx.Exec("INSERT INTO marketing.user_coupons (id,user_id,coupon_id,code,source,status,expire_at,created_at,updated_at) VALUES (?,?,?,?,2,0,?,?,?)", snowflake.GenID(), userID, couponID, "PM-"+randomCode(), expire, now, now).Error; e != nil {
-					return e
-				}
+			if coupon.EndAt != nil && coupon.EndAt.Before(s.now()) {
+				return errors.New("代金券已过发放截止时间")
 			}
-			if e = tx.Table("marketing.coupons").Where("id=?", couponID).Update("claimed_count", gorm.Expr("claimed_count+?", quantity)).Error; e != nil {
+			var held int64
+			if e = tx.Table("marketing.user_coupons").Where("user_id=? AND coupon_id=?", userID, couponID).Count(&held).Error; e != nil {
 				return e
+			}
+			if coupon.PerUserLimit > 0 && held+int64(quantity) > int64(coupon.PerUserLimit) {
+				return errors.New("已达每人限领数量")
+			}
+			repo := marketingrepo.NewRepository(tx)
+			for i := 0; i < quantity; i++ {
+				issued, err := repo.ClaimCouponTx(ctx, tx, userID, &coupon, 2)
+				if err != nil {
+					return err
+				}
+				if err = repo.InsertCouponLog(ctx, tx, &marketingdom.CouponLog{CouponID: couponID, UserCouponID: &issued.ID, UserID: &userID, Action: 3, Remark: marketingdom.StrPtr("积分商城兑换")}); err != nil {
+					return err
+				}
 			}
 			out.DeliveryContent = "代金券已发放至账户"
 		}
@@ -917,13 +982,16 @@ func (s *Service) ListRules(ctx context.Context, enabledOnly bool) ([]Rule, erro
 	return rows, e
 }
 func (s *Service) SaveRule(ctx context.Context, v *Rule) error {
+	if v.PointsFixed < 0 || v.PointsFixed > 1000000 || v.PointsMin < 0 || v.PointsMax < v.PointsMin || v.PointsMax > 1000000 || math.IsNaN(v.Ratio) || math.IsInf(v.Ratio, 0) || v.Ratio < 0 || v.Ratio > 9999 || v.LimitValue < 0 {
+		return errors.New("积分奖励金额或次数无效")
+	}
 	if strings.TrimSpace(v.Name) == "" || strings.TrimSpace(v.Code) == "" || !oneOf(v.Type, "fixed", "random", "ratio", "ladder") || !oneOf(v.LimitType, "none", "once", "day", "week", "month") {
 		return errors.New("规则参数无效")
 	}
 	if v.ID == 0 {
 		return s.db.WithContext(ctx).Table(rulesTable).Create(v).Error
 	}
-	return s.db.WithContext(ctx).Table(rulesTable).Where("id=?", v.ID).Updates(v).Error
+	return s.db.WithContext(ctx).Table(rulesTable).Where("id=?", v.ID).Select("name", "code", "event", "type", "points_fixed", "points_min", "points_max", "ratio", "ladder_config", "limit_type", "limit_value", "enabled").Updates(v).Error
 }
 func (s *Service) DeleteRule(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Table(rulesTable).Where("id=?", id).Delete(&Rule{}).Error
@@ -940,7 +1008,7 @@ func (s *Service) SaveTask(ctx context.Context, v *Task) error {
 	if v.ID == 0 {
 		return s.db.WithContext(ctx).Table(tasksTable).Create(v).Error
 	}
-	return s.db.WithContext(ctx).Table(tasksTable).Where("id=?", v.ID).Updates(v).Error
+	return s.db.WithContext(ctx).Table(tasksTable).Where("id=?", v.ID).Select("name", "code", "description", "target_event", "task_type", "category", "points", "target_value", "enabled", "sort").Updates(v).Error
 }
 func (s *Service) DeleteTask(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -956,7 +1024,7 @@ func (s *Service) ListGoodsAdmin(ctx context.Context) ([]Goods, error) {
 	return rows, e
 }
 func (s *Service) SaveGoods(ctx context.Context, v *Goods) error {
-	if strings.TrimSpace(v.Name) == "" || v.PointsCost < 1 || !oneOf(v.Type, "virtual", "physical", "coupon", "balance", "system", "card") {
+	if strings.TrimSpace(v.Name) == "" || v.PointsCost < 1 || v.PointsCost > 1000000000 || v.Stock < -1 || !oneOf(v.Type, "virtual", "physical", "coupon", "balance", "system", "card") {
 		return errors.New("商品参数无效")
 	}
 	if len(v.Config) == 0 {
@@ -965,7 +1033,7 @@ func (s *Service) SaveGoods(ctx context.Context, v *Goods) error {
 	if v.ID == 0 {
 		return s.db.WithContext(ctx).Table(goodsTable).Create(v).Error
 	}
-	return s.db.WithContext(ctx).Table(goodsTable).Where("id=?", v.ID).Updates(v).Error
+	return s.db.WithContext(ctx).Table(goodsTable).Where("id=?", v.ID).Select("category_id", "name", "type", "image", "description", "points_cost", "stock", "status", "config", "is_hot", "sort").Updates(v).Error
 }
 func (s *Service) DeleteGoods(ctx context.Context, id int64) error {
 	var n int64

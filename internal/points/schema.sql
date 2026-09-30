@@ -9,6 +9,10 @@ CREATE TABLE IF NOT EXISTS `system`.`points_settings` (
   `refund_insufficient` enum('cut_to_zero','none') NOT NULL DEFAULT 'cut_to_zero',
   `recharge_refund_deduct` tinyint(1) NOT NULL DEFAULT 1,
   `signin_mode` enum('normal','choose') NOT NULL DEFAULT 'normal',
+  `signin_progressive` tinyint(1) NOT NULL DEFAULT 0,
+  `checkout_enabled` tinyint(1) NOT NULL DEFAULT 1,
+  `checkout_points_per_yuan` bigint NOT NULL DEFAULT 1000,
+  `checkout_coupon_days` int NOT NULL DEFAULT 30,
   `signin_stable_points` int unsigned NOT NULL DEFAULT 5,
   `signin_lucky_min` int unsigned NOT NULL DEFAULT 1,
   `signin_lucky_max` int unsigned NOT NULL DEFAULT 20,
@@ -135,3 +139,15 @@ CREATE TABLE IF NOT EXISTS `system`.`points_risk_logs` (
 
 INSERT IGNORE INTO `system`.`points_settings`
 (`id`,`enabled`,`streak_milestones`) VALUES (1,0,JSON_ARRAY(JSON_OBJECT('days',3,'points',10),JSON_OBJECT('days',7,'points',30),JSON_OBJECT('days',15,'points',60),JSON_OBJECT('days',30,'points',150)));
+
+CREATE TABLE IF NOT EXISTS system.points_events (
+ user_id BIGINT UNSIGNED NOT NULL,event VARCHAR(40) NOT NULL,ref_id VARCHAR(100) NOT NULL,
+ created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ PRIMARY KEY(user_id,event,ref_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS system.points_checkout_coupons (
+ user_id BIGINT UNSIGNED NOT NULL,request_id VARCHAR(64) NOT NULL,points BIGINT NOT NULL,
+ user_coupon_id BIGINT UNSIGNED NOT NULL,amount_yuan DECIMAL(14,2) NOT NULL,
+ PRIMARY KEY(user_id,request_id),UNIQUE KEY points_checkout_coupon(user_coupon_id)
+) ENGINE=InnoDB;

@@ -119,7 +119,10 @@ func (h authEventHooks) VerifySales(ctx context.Context, code string) (string, e
 	return h.marketing.VerifySales(ctx, code)
 }
 func (h authEventHooks) AfterRegister(ctx context.Context, customerID int64, inviteCode, salesCode string) error {
-	return h.marketing.AfterRegister(ctx, customerID, inviteCode, salesCode)
+	if err := h.marketing.AfterRegister(ctx, customerID, inviteCode, salesCode); err != nil {
+		return err
+	}
+	return h.points.AfterInviteAttached(ctx, customerID)
 }
 func (h authEventHooks) AfterAuthEvent(ctx context.Context, event string, customerID int64) {
 	_, _ = h.points.GrantByEvent(ctx, event, customerID, points.EventMeta{RefID: fmt.Sprintf("auth:%s:%d", event, time.Now().UnixNano())})

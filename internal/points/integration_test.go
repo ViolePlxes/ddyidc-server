@@ -149,6 +149,7 @@ func openQA(t *testing.T) *gorm.DB {
 }
 
 func cleanupCore(ctx context.Context, database *gorm.DB, userID int64) {
+	database.WithContext(ctx).Exec("DELETE FROM system.points_events WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_risk_logs WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_user_tags WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_risk_rules WHERE id BETWEEN 9910000 AND 9919999")

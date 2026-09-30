@@ -55,25 +55,29 @@ type Milestone struct {
 }
 
 type Settings struct {
-	ID                   int64           `gorm:"column:id;primaryKey" json:"id,string"`
-	Enabled              bool            `gorm:"column:enabled" json:"enabled"`
-	PointsExpireDays     int             `gorm:"column:points_expire_days" json:"pointsExpireDays"`
-	ShowMall             bool            `gorm:"column:show_mall" json:"showMall"`
-	ShowSignin           bool            `gorm:"column:show_signin" json:"showSignin"`
-	ShowTasks            bool            `gorm:"column:show_tasks" json:"showTasks"`
-	RefundMode           string          `gorm:"column:refund_mode" json:"refundMode"`
-	RefundInsufficient   string          `gorm:"column:refund_insufficient" json:"refundInsufficient"`
-	RechargeRefundDeduct bool            `gorm:"column:recharge_refund_deduct" json:"rechargeRefundDeduct"`
-	SigninMode           string          `gorm:"column:signin_mode" json:"signinMode"`
-	SigninStablePoints   int64           `gorm:"column:signin_stable_points" json:"signinStablePoints"`
-	SigninLuckyMin       int64           `gorm:"column:signin_lucky_min" json:"signinLuckyMin"`
-	SigninLuckyMax       int64           `gorm:"column:signin_lucky_max" json:"signinLuckyMax"`
-	StreakRewardEnabled  bool            `gorm:"column:streak_reward_enabled" json:"streakRewardEnabled"`
-	StreakResetOnBreak   bool            `gorm:"column:streak_reset_on_break" json:"streakResetOnBreak"`
-	StreakMaxMode        string          `gorm:"column:streak_max_mode" json:"streakMaxMode"`
-	StreakMilestones     json.RawMessage `gorm:"column:streak_milestones;type:json" json:"streakMilestones"`
-	CreatedAt            time.Time       `gorm:"column:created_at" json:"createdAt"`
-	UpdatedAt            time.Time       `gorm:"column:updated_at" json:"updatedAt"`
+	ID                    int64           `gorm:"column:id;primaryKey" json:"id,string"`
+	Enabled               bool            `gorm:"column:enabled" json:"enabled"`
+	PointsExpireDays      int             `gorm:"column:points_expire_days" json:"pointsExpireDays"`
+	ShowMall              bool            `gorm:"column:show_mall" json:"showMall"`
+	ShowSignin            bool            `gorm:"column:show_signin" json:"showSignin"`
+	ShowTasks             bool            `gorm:"column:show_tasks" json:"showTasks"`
+	RefundMode            string          `gorm:"column:refund_mode" json:"refundMode"`
+	RefundInsufficient    string          `gorm:"column:refund_insufficient" json:"refundInsufficient"`
+	RechargeRefundDeduct  bool            `gorm:"column:recharge_refund_deduct" json:"rechargeRefundDeduct"`
+	SigninMode            string          `gorm:"column:signin_mode" json:"signinMode"`
+	SigninProgressive     bool            `gorm:"column:signin_progressive" json:"signinProgressive"`
+	CheckoutEnabled       bool            `gorm:"column:checkout_enabled" json:"checkoutEnabled"`
+	CheckoutPointsPerYuan int64           `gorm:"column:checkout_points_per_yuan" json:"checkoutPointsPerYuan"`
+	CheckoutCouponDays    int             `gorm:"column:checkout_coupon_days" json:"checkoutCouponDays"`
+	SigninStablePoints    int64           `gorm:"column:signin_stable_points" json:"signinStablePoints"`
+	SigninLuckyMin        int64           `gorm:"column:signin_lucky_min" json:"signinLuckyMin"`
+	SigninLuckyMax        int64           `gorm:"column:signin_lucky_max" json:"signinLuckyMax"`
+	StreakRewardEnabled   bool            `gorm:"column:streak_reward_enabled" json:"streakRewardEnabled"`
+	StreakResetOnBreak    bool            `gorm:"column:streak_reset_on_break" json:"streakResetOnBreak"`
+	StreakMaxMode         string          `gorm:"column:streak_max_mode" json:"streakMaxMode"`
+	StreakMilestones      json.RawMessage `gorm:"column:streak_milestones;type:json" json:"streakMilestones"`
+	CreatedAt             time.Time       `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt             time.Time       `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 type Rule struct {

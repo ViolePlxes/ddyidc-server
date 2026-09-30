@@ -13,5 +13,6 @@
   "012_auth_devices.sql": "297de738004f943734192bff91c87211254492bc1e5f7a3439c254d21d556a21",
   "013_social_login.sql": "f158aedf407041e0df020f425b155ea165bd3a70806e4196d355174e129fdaee",
   "014_social_identity_compat.sql": "ee6ba5c73fb5869f509c5b0c1127b9c68349fc175ab710a0bb9517b6516b8a8f",
-  "015_admin_todos.sql": "585279344cd57c3df4b52be31390fbbf7d469da75e0595fcc35fcbc2e13b8437"
+  "015_admin_todos.sql": "585279344cd57c3df4b52be31390fbbf7d469da75e0595fcc35fcbc2e13b8437",
+  "016_rewards_center.sql": "30e4268ce24a2b4d7d1af161f3a5e33e8b3c2e110c0ee0bff7080f9afede9362"
 }

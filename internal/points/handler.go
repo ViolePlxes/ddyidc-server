@@ -22,6 +22,10 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 	routes := []rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/points/status", Handler: h.status},
 		{Method: http.MethodGet, Path: "/api/v1/points/account", Handler: h.account},
+		{Method: http.MethodPost, Path: "/api/v1/points/activity", Handler: h.activity},
+		{Method: http.MethodPost, Path: "/api/v1/points/checkout-coupon", Handler: h.checkoutCoupon},
+		{Method: http.MethodGet, Path: "/api/v1/points/referrals", Handler: h.referrals},
+		{Method: http.MethodGet, Path: "/api/v1/points/categories", Handler: h.publicCategories},
 		{Method: http.MethodGet, Path: "/api/v1/points/records", Handler: h.records},
 		{Method: http.MethodPost, Path: "/api/v1/points/signin", Handler: h.signin},
 		{Method: http.MethodGet, Path: "/api/v1/points/signin/calendar", Handler: h.calendar},
@@ -105,7 +109,7 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, e)
 		return
 	}
-	writeOK(w, map[string]any{"enabled": v.Enabled, "showMall": v.ShowMall, "showSignin": v.ShowSignin, "showTasks": v.ShowTasks})
+	writeOK(w, map[string]any{"enabled": v.Enabled, "showMall": v.ShowMall, "showSignin": v.ShowSignin, "showTasks": v.ShowTasks, "checkoutEnabled": v.CheckoutEnabled, "checkoutPointsPerYuan": v.CheckoutPointsPerYuan, "checkoutCouponDays": v.CheckoutCouponDays})
 }
 func (h *Handler) claims(w http.ResponseWriter, r *http.Request, role string) (int64, bool) {
 	head := r.Header.Get("Authorization")
