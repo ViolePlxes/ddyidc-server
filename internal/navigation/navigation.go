@@ -2,6 +2,7 @@ package navigation
 
 import (
 	"context"
+	"ddyidc/internal/admintodo"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"encoding/json"
@@ -30,6 +31,7 @@ var schema string
 var seed []byte
 
 type Node struct {
+	Badge     *string   `json:"badge,omitempty" gorm:"-"`
 	ID        string    `json:"id" gorm:"primaryKey;autoIncrement:false"`
 	Scope     string    `json:"scope"`
 	ParentID  string    `json:"parentId"`
@@ -296,6 +298,9 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 				reply(w, 500, nil, "读取导航失败")
 				return
 			}
+			claims, _ := manager.ParseAccessTokenFor(r.Context(), kind, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			super := scope == "admin" && claims != nil && admintodo.IsSuper(r.Context(), s.db, claims.UserID)
+			out = s.decorateTodos(r.Context(), out, super, true)
 			reply(w, 200, out, "")
 		}
 	}
@@ -310,6 +315,8 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 				return
 			}
 			vars := pathvar.Vars(r)
+			claims, _ := manager.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			super := claims != nil && admintodo.IsSuper(r.Context(), s.db, claims.UserID)
 			scope := vars["scope"]
 			if !validScope(scope) {
 				reply(w, 400, nil, "入口类型无效")
@@ -321,7 +328,7 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 					reply(w, 500, nil, "读取导航失败")
 					return
 				}
-				reply(w, 200, out, "")
+				reply(w, 200, s.decorateTodos(r.Context(), out, super, false), "")
 				return
 			}
 			var in Input
@@ -330,6 +337,23 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 			if decoder.Decode(&in) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 				reply(w, 400, nil, "请求格式无效")
 				return
+			}
+			if !super {
+				out, e := s.List(r.Context(), scope, false)
+				if e != nil {
+					reply(w, 500, nil, "读取导航失败")
+					return
+				}
+				protected := admintodo.Path(in.Href) != ""
+				for _, n := range out.Nodes {
+					if todoNode(n) && (n.ID == vars["id"] || n.ID == in.ParentID) {
+						protected = true
+					}
+				}
+				if protected {
+					reply(w, 403, nil, "仅超级管理员可配置待办事项")
+					return
+				}
 			}
 			err := s.Change(r.Context(), scope, vars["id"], operation, in)
 			if err != nil {

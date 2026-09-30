@@ -31,7 +31,7 @@ func SeedNavigation(db *gorm.DB) error {
 				return err
 			}
 			var group struct{ ID int64 }
-			if err := tx.Table("system.navigation_nodes").Select("id").Where("scope=? AND parent_id=0", scope).Order("sort,id").Take(&group).Error; err != nil {
+			if err := tx.Table("system.navigation_nodes").Select("id").Where("scope=? AND parent_id=0 AND gate<>?", scope, "/admin/todos").Order("sort,id").Take(&group).Error; err != nil {
 				return err
 			}
 			var sort int

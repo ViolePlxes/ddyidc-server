@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"ddyidc/internal/adminread"
+	"ddyidc/internal/admintodo"
 	"ddyidc/internal/backup"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/cdnsell"
@@ -403,6 +404,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
 	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
+	admintodo.Register(server, db.G, jwt)
 	navigationSvc := navigation.New(db.G)
 	if err := navigationSvc.EnsureSchema(context.Background()); err != nil {
 		panic(err)
