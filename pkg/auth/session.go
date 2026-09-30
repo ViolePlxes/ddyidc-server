@@ -70,6 +70,10 @@ func (m *Manager) LoadSecurityConfig(ctx context.Context, database *gorm.DB) err
 		}
 	}
 	m.accounts = database
+	if err := database.WithContext(ctx).Table("customer.auth_devices").Select("id").Limit(1).Scan(new(string)).Error; err != nil {
+		return errors.New("persistent login device migration required")
+	}
+	m.devicesEnabled = true
 	defaults := map[string]string{
 		"security.auth_mode":         "cookie-session",
 		"security.session_ttl":       "604800",
@@ -205,6 +209,9 @@ func (m *Manager) issueSession(ctx context.Context, kind SessionKind, userID int
 }
 
 func (m *Manager) validateSession(ctx context.Context, kind SessionKind, claims *Claims) error {
+	if claims != nil && claims.DeviceID != "" {
+		return m.validateDeviceSession(ctx, kind, claims)
+	}
 	if cache.RDB == nil || claims == nil || claims.IssuedAt == nil || claims.ID == "" {
 		return errors.New("invalid session")
 	}
@@ -270,6 +277,11 @@ func (m *Manager) accountVersion(ctx context.Context, kind SessionKind, id int64
 }
 
 func (m *Manager) RevokeSession(ctx context.Context, kind SessionKind, userID int64) error {
+	if kind == SessionUser && m.devicesEnabled {
+		if err := m.revokeAllDevices(ctx, userID); err != nil {
+			return err
+		}
+	}
 	if cache.RDB == nil {
 		return errors.New("redis is not initialized")
 	}

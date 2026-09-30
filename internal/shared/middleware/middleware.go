@@ -49,6 +49,12 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 				return
 			}
 			r.Header.Del("Authorization")
+			if r.URL.Path == "/api/v1/auth/refresh" && r.Method == http.MethodPost {
+				// Refresh authenticates an explicit rotating credential and enforces
+				// its own same-origin header check even after access/CSRF expiry.
+				next(w, r)
+				return
+			}
 			var sessionClaims *auth.Claims
 			kind, protected := sessionKindForRequest(r.URL.Path)
 			if kind != "" {
@@ -57,7 +63,7 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 					if claims, parseErr := manager.ParseAccessTokenFor(r.Context(), kind, cookie.Value); parseErr == nil {
 						sessionClaims = claims
 						r.Header.Set("Authorization", "Bearer "+cookie.Value)
-					} else {
+					} else if kind != auth.SessionUser {
 						manager.ClearSessionCookie(w, kind)
 					}
 				}
