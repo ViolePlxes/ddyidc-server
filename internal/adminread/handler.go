@@ -105,6 +105,9 @@ type trendPoint struct {
 func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.Manager, dataRoot string) {
 	h := &handler{db: database, auth: authManager, dataRoot: dataRoot}
 	server.AddRoutes([]rest.Route{
+        {Method: http.MethodGet, Path: "/api/v1/wallet/bank-transfer", Handler: h.customerBankTransfer},
+        {Method: http.MethodGet, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
+        {Method: http.MethodPut, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id", Handler: h.clientDetail},
 		{Method: http.MethodPut, Path: "/admin/v1/clients/:id", Handler: h.clientUpdate},
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id/credit", Handler: h.credit},
