@@ -1,0 +1,448 @@
+{
+  "schemaVersion": 1,
+  "revision": 0,
+  "site": {
+    "brand": "DDYIDC",
+    "origin": "https://cloud.ddoidc.com",
+    "consoleOrigin": "https://console.ddoidc.com",
+    "logo": "",
+    "copyright": "DDYIDC 版权所有",
+    "filing": "",
+    "filingUrl": "",
+    "theme": "cloudflare-reference",
+    "enabled": true,
+    "headerEnabled": true,
+    "footerEnabled": true,
+    "llms": true,
+    "seo": {
+      "title": "DDYIDC 云服务平台",
+      "keywords": "DDYIDC,云服务器,云资源,云服务",
+      "description": "了解 DDYIDC 云产品与服务，在统一控制台完成选购、部署、续费和账单管理。",
+      "image": "",
+      "noIndex": false
+    },
+    "navigation": [
+      {
+        "label": "产品",
+        "href": "/products",
+        "children": [
+          {
+            "label": "云产品目录",
+            "href": "/products",
+            "children": []
+          }
+        ]
+      },
+      {
+        "label": "平台介绍",
+        "href": "/about",
+        "children": []
+      },
+      {
+        "label": "新闻公告",
+        "href": "/news",
+        "children": []
+      }
+    ],
+    "footer": [
+      {
+        "label": "开始使用",
+        "href": "",
+        "children": [
+          {
+            "label": "云产品",
+            "href": "/products",
+            "children": []
+          },
+          {
+            "label": "进入控制台",
+            "href": "https://console.ddoidc.com/login",
+            "children": []
+          }
+        ]
+      },
+      {
+        "label": "关于平台",
+        "href": "",
+        "children": [
+          {
+            "label": "平台介绍",
+            "href": "/about",
+            "children": []
+          },
+          {
+            "label": "新闻公告",
+            "href": "/news",
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "pages": [
+    {
+      "id": "home",
+      "path": "/",
+      "title": "首页",
+      "kind": "page",
+      "enabled": true,
+      "seo": {
+        "title": "",
+        "keywords": "",
+        "description": "",
+        "image": "",
+        "noIndex": false
+      },
+      "updatedAt": "",
+      "modules": [
+        {
+          "id": "hero",
+          "type": "hero",
+          "enabled": true,
+          "sort": 10,
+          "eyebrow": "云资源，一处掌握",
+          "title": "让每一份云资源\n更简单地为您工作",
+          "text": "从选购、部署到续费与账单，在一个平台完成您的云服务管理。",
+          "image": "",
+          "alt": "",
+          "href": "/products",
+          "label": "探索云产品",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "banners",
+          "type": "banner_carousel",
+          "enabled": true,
+          "sort": 20,
+          "eyebrow": "开始您的下一步",
+          "title": "从了解产品到管理服务",
+          "text": "",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [
+            {
+              "id": "catalog",
+              "title": "找到适合您的云产品",
+              "text": "浏览公开产品介绍，了解服务与方案。",
+              "image": "",
+              "alt": "",
+              "href": "/products",
+              "label": "查看产品",
+              "category": ""
+            },
+            {
+              "id": "console",
+              "title": "您的云服务控制台",
+              "text": "选购、管理实例、处理续费与账单。",
+              "image": "",
+              "alt": "",
+              "href": "https://console.ddoidc.com/login",
+              "label": "进入控制台",
+              "category": ""
+            }
+          ],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "network",
+          "type": "network_capabilities",
+          "enabled": true,
+          "sort": 30,
+          "eyebrow": "为您的业务而构建",
+          "title": "资源与服务，清晰呈现",
+          "text": "了解产品规格与服务信息，再选择适合业务的配置。",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [
+            {
+              "id": "discover",
+              "title": "按需选择",
+              "text": "从产品目录了解可用服务与配置。",
+              "image": "",
+              "alt": "",
+              "href": "/products",
+              "label": "探索产品",
+              "category": ""
+            },
+            {
+              "id": "manage",
+              "title": "统一管理",
+              "text": "在控制台查看实例、订单与账单。",
+              "image": "",
+              "alt": "",
+              "href": "https://console.ddoidc.com/login",
+              "label": "进入控制台",
+              "category": ""
+            }
+          ],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "customers",
+          "type": "customer_logos",
+          "enabled": false,
+          "sort": 40,
+          "eyebrow": "",
+          "title": "与客户共同成长",
+          "text": "",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "testimonial",
+          "type": "testimonial",
+          "enabled": false,
+          "sort": 50,
+          "eyebrow": "",
+          "title": "客户的声音",
+          "text": "",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "advantages",
+          "type": "advantage_comparison",
+          "enabled": true,
+          "sort": 60,
+          "eyebrow": "为什么选择 DDYIDC",
+          "title": "把精力留给您的业务",
+          "text": "更清晰的服务入口，更连贯的管理体验。",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [
+            {
+              "id": "before",
+              "title": "分散的操作",
+              "text": "在多个入口查找产品、订单与服务信息。",
+              "image": "",
+              "alt": "",
+              "href": "",
+              "label": "",
+              "category": ""
+            },
+            {
+              "id": "after",
+              "title": "连贯的体验",
+              "text": "从产品介绍进入控制台，在统一入口管理服务。",
+              "image": "",
+              "alt": "",
+              "href": "https://console.ddoidc.com/login",
+              "label": "开始使用",
+              "category": ""
+            }
+          ],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "products",
+          "type": "product_solutions",
+          "enabled": true,
+          "sort": 70,
+          "eyebrow": "产品与方案",
+          "title": "找到适合您的云服务",
+          "text": "产品价格与可用信息以当前发布的产品目录为准。",
+          "image": "",
+          "alt": "",
+          "href": "/products",
+          "label": "查看全部产品",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "workflow",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 80,
+          "eyebrow": "从开始，到持续运行",
+          "title": "一个控制台，连接您的日常操作",
+          "text": "选购服务、查看实例、处理订单与账单，让云服务管理更加清晰。",
+          "image": "",
+          "alt": "",
+          "href": "https://console.ddoidc.com/login",
+          "label": "进入控制台",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "news",
+          "type": "news_announcements",
+          "enabled": true,
+          "sort": 90,
+          "eyebrow": "最新动态",
+          "title": "新闻与公告",
+          "text": "已发布的平台动态将在这里显示。",
+          "image": "",
+          "alt": "",
+          "href": "/news",
+          "label": "查看全部公告",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "partners",
+          "type": "partner_logos",
+          "enabled": true,
+          "sort": 100,
+          "eyebrow": "共同连接更多可能",
+          "title": "合作伙伴",
+          "text": "合作信息发布后将在这里展示。",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        },
+        {
+          "id": "cta",
+          "type": "final_cta",
+          "enabled": true,
+          "sort": 110,
+          "eyebrow": "现在开始",
+          "title": "让您的下一步，发生在云端",
+          "text": "探索产品，或进入控制台管理您的云服务。",
+          "image": "",
+          "alt": "",
+          "href": "/products",
+          "label": "探索云产品",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        }
+      ]
+    },
+    {
+      "id": "products",
+      "path": "/products",
+      "title": "云产品",
+      "kind": "products",
+      "enabled": true,
+      "seo": {
+        "title": "云产品目录 | DDYIDC",
+        "keywords": "云产品,云服务器",
+        "description": "了解 DDYIDC 当前公开的云产品、规格与价格。",
+        "image": "",
+        "noIndex": false
+      },
+      "updatedAt": "",
+      "modules": []
+    },
+    {
+      "id": "about",
+      "path": "/about",
+      "title": "平台介绍",
+      "kind": "page",
+      "enabled": true,
+      "seo": {
+        "title": "关于 DDYIDC",
+        "keywords": "",
+        "description": "了解 DDYIDC 云服务平台。",
+        "image": "",
+        "noIndex": false
+      },
+      "updatedAt": "",
+      "modules": [
+        {
+          "id": "about-content",
+          "type": "hero",
+          "enabled": true,
+          "sort": 0,
+          "eyebrow": "关于 DDYIDC",
+          "title": "统一的云服务管理体验",
+          "text": "DDYIDC 提供云产品介绍，并通过统一控制台连接选购、实例管理、续费与账单。",
+          "image": "",
+          "alt": "",
+          "href": "/products",
+          "label": "了解产品",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        }
+      ]
+    },
+    {
+      "id": "news",
+      "path": "/news",
+      "title": "新闻公告",
+      "kind": "page",
+      "enabled": true,
+      "seo": {
+        "title": "新闻公告 | DDYIDC",
+        "keywords": "",
+        "description": "DDYIDC 已发布的平台新闻与公告。",
+        "image": "",
+        "noIndex": false
+      },
+      "updatedAt": "",
+      "modules": [
+        {
+          "id": "news-index",
+          "type": "news_announcements",
+          "enabled": true,
+          "sort": 0,
+          "eyebrow": "平台动态",
+          "title": "新闻与公告",
+          "text": "暂无已发布公告。",
+          "image": "",
+          "alt": "",
+          "href": "",
+          "label": "",
+          "items": [],
+          "limit": 6,
+          "productIds": [],
+          "interval": 6,
+          "autoPlay": true
+        }
+      ]
+    }
+  ]
+}

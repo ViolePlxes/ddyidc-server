@@ -28,6 +28,7 @@ import (
 	paymentrepo "ddyidc/internal/payment/repository"
 	paymentservice "ddyidc/internal/payment/service"
 	"ddyidc/internal/points"
+	"ddyidc/internal/portal"
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
 	"ddyidc/internal/pushtransfer"
@@ -413,6 +414,12 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic(err)
 	}
 	navigation.Register(server, navigationSvc, jwt)
+	portalSvc := portal.New(db.G, paths.Root)
+	if err := portalSvc.Prepare(); err != nil {
+		panic("portal runtime paths unavailable")
+	}
+	portal.Register(server, portalSvc, jwt)
+	*cronStarts = append(*cronStarts, portalSvc.Start)
 	backupSvc := backup.New(db.G, snapshotKey, paths.Root)
 	if err := backupSvc.PreparePaths(); err != nil {
 		panic("backup runtime paths unavailable")
