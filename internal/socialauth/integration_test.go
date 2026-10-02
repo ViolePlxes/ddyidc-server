@@ -3,6 +3,7 @@ package socialauth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +31,7 @@ import (
 type onceSMS struct{ used bool }
 
 func (s *onceSMS) ConsumeSMSCode(_ context.Context, _, scene, code string) error {
-	if s.used || scene != "bindMobile" || code != "123456" {
+	if s.used || (scene != "bindMobile" && scene != "register") || code != "123456" {
 		return fmt.Errorf("SMS rejected")
 	}
 	s.used = true
@@ -103,23 +104,23 @@ func TestSocialOAuthMySQL(t *testing.T) {
 	if strings.Contains(string(encoded), cipher) || strings.Contains(string(encoded), "test-provider-secret") || !c.HasSecret {
 		t.Fatal("config secret leaked")
 	}
-	st := oauthState{Config: fingerprint(c)}
+	st := oauthState{Config: fingerprint(c), Register: true}
 	who := identity{"101", "测试用户", "https://avatars.example/a"}
 	var users [4]customer.Customer
 	var wg sync.WaitGroup
-	errors := make(chan error, 4)
+	resolveErrors := make(chan error, 4)
 	for i := range users {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			var e error
 			users[i], e = s.resolve(context.Background(), c, st, who, "127.0.0.1")
-			errors <- e
+			resolveErrors <- e
 		}(i)
 	}
 	wg.Wait()
-	close(errors)
-	for e := range errors {
+	close(resolveErrors)
+	for e := range resolveErrors {
 		must(e)
 	}
 	for _, u := range users {
@@ -307,5 +308,112 @@ func TestSocialOAuthMySQL(t *testing.T) {
 	authURL, _ := url.Parse(authorizationURL(c, "test-state", "verifier"))
 	if authURL.Query().Get("redirect_uri") != c.CallbackURL {
 		t.Fatal("callback changed")
+	}
+	// Unknown identities must remain unregistered until an explicit choice.
+	if _, e = s.resolve(context.Background(), changedApp, oauthState{Config: fingerprint(changedApp)}, identity{"choice-new", "choice", ""}, "127.0.0.1"); !errors.Is(e, errAccountChoice) {
+		t.Fatal("unknown identity automatically registered", e)
+	}
+	must(db.Model(&customer.Customer{}).Count(&count).Error)
+	if count != 2 {
+		t.Fatal("choice lookup created a customer")
+	}
+	makeChoice := func(openID string) *http.Cookie {
+		token, e := randomToken()
+		must(e)
+		body, _ := json.Marshal(handoff{Provider: "github", Config: fingerprint(changedApp), Origin: origin(changedApp.CallbackURL), AppID: changedApp.AppID, OpenID: openID, Nickname: "choice", Remember: true})
+		must(rdb.Set(context.Background(), "session:user:social:handoff:"+digest(token), body, 10*time.Minute).Err())
+		return &http.Cookie{Name: "ddyidc_oauth_complete", Value: token}
+	}
+	callChoice := func(ck *http.Cookie, body, originHeader string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "http://127.0.0.1:13100/api/v1/auth/social/resolve", strings.NewReader(body))
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.AddCookie(ck)
+		r.Header.Set("X-Social-Request", "1")
+		r.Header.Set("Origin", originHeader)
+		out := httptest.NewRecorder()
+		s.chooseAccount(out, r)
+		return out
+	}
+	// Exercise the real unknown-identity callback as well as the resolution API.
+	s.provider = &providerClient{http: &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "github.com" {
+			return providerResponse(`{"access_token":"provider-test-token"}`), nil
+		}
+		return providerResponse(`{"id":303,"login":"choice","name":"choice"}`), nil
+	})}}
+	state, e = randomToken()
+	must(e)
+	proof, e = randomToken()
+	must(e)
+	stateBody, _ = json.Marshal(oauthState{Provider: "github", Proof: digest(proof), Config: fingerprint(changedApp), Verifier: "test-verifier", Remember: true})
+	must(rdb.Set(context.Background(), "session:user:social:state:"+digest(state), stateBody, time.Minute).Err())
+	unknownCallback := httptest.NewRecorder()
+	s.callback(unknownCallback, callbackRequest(proof))
+	if unknownCallback.Header().Get("Location") != "/auth/social/complete" {
+		t.Fatal("unknown callback did not reach choices")
+	}
+	var choiceTicket *http.Cookie
+	for _, ck := range unknownCallback.Result().Cookies() {
+		if ck.Name == "ddyidc_oauth_complete" {
+			choiceTicket = ck
+		}
+	}
+	if choiceTicket == nil || choiceTicket.MaxAge != 600 {
+		t.Fatal("pending choice ticket missing")
+	}
+	must(db.Model(&customer.Customer{}).Count(&count).Error)
+	if count != 2 {
+		t.Fatal("unknown callback created a customer")
+	}
+	pendingRequest := httptest.NewRequest("POST", "http://127.0.0.1:13100/api/v1/auth/social/complete", strings.NewReader(`{}`))
+	pendingRequest.AddCookie(choiceTicket)
+	pendingRequest.Header.Set("X-Social-Request", "1")
+	pendingRequest.Header.Set("Origin", origin(changedApp.CallbackURL))
+	pending := httptest.NewRecorder()
+	s.complete(pending, pendingRequest)
+	if pending.Code != 200 || !strings.Contains(pending.Body.String(), `"accountChoiceRequired":true`) || strings.Contains(pending.Body.String(), "access_token") {
+		t.Fatal("pending choice issued a session", pending.Body.String())
+	}
+	input := `{"mode":"register","countryCode":"+86","mobile":"13900139000","password":"Test1234","smsCode":"123456","agreedToTerms":true}`
+	if got := callChoice(choiceTicket, input, "https://evil.example"); got.Code != 401 {
+		t.Fatal("foreign origin accepted")
+	}
+	s.sms = &onceSMS{}
+	if got := callChoice(choiceTicket, strings.Replace(input, "123456", "999999", 1), origin(changedApp.CallbackURL)); got.Code != 400 {
+		t.Fatal("invalid SMS accepted")
+	}
+	registered := callChoice(choiceTicket, input, origin(changedApp.CallbackURL))
+	if registered.Code != 200 {
+		t.Fatal("explicit social registration failed", registered.Body.String())
+	}
+	if strings.Contains(registered.Body.String(), `"needBindMobile":true`) {
+		t.Fatal("registered account lacks mobile")
+	}
+	if got := callChoice(choiceTicket, input, origin(changedApp.CallbackURL)); got.Code != 401 {
+		t.Fatal("choice replay accepted")
+	}
+	must(db.Model(&customer.Customer{}).Count(&count).Error)
+	if count != 3 {
+		t.Fatal("registration count", count)
+	}
+	// The original account was unlinked above: password verification attaches
+	// a new provider identity without creating or changing the local account.
+	bindTicket := makeChoice("choice-bind")
+	bindInput := `{"mode":"bind","countryCode":"+86","mobile":"13800138000","password":"Test1234"}`
+	if got := callChoice(bindTicket, strings.Replace(bindInput, "Test1234", "Wrong123", 1), origin(changedApp.CallbackURL)); got.Code != 403 {
+		t.Fatal("wrong password bound identity")
+	}
+	linked := callChoice(bindTicket, bindInput, origin(changedApp.CallbackURL))
+	if linked.Code != 200 {
+		t.Fatal("existing account choice failed", linked.Body.String())
+	}
+	var chosen binding
+	must(db.Where("provider='github' AND open_id='choice-bind'").Take(&chosen).Error)
+	if chosen.UserID != u.ID {
+		t.Fatal("existing account was not reused")
+	}
+	must(db.Model(&customer.Customer{}).Count(&count).Error)
+	if count != 3 {
+		t.Fatal("bind created a customer")
 	}
 }

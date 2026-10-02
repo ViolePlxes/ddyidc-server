@@ -34,3 +34,14 @@ GitHub 使用 read:user 与 S256 PKCE；QQ 使用 get_user_info，校验 me 返�
 验证：`go build ./...`、`go vet ./...`、`go test ./...`；VM 普通用户运行 `bash deploy/linux/tests/test_social_login.sh`，创建隔离 MySQL/Redis 并执行 race 专项测试。协议 transport 仅在单元测试中替换，运行服务不存在测试提供商或假授权开关。真实外部授权验收须配置实际应用密钥、登记对应回调及 QQ 应用审核；未配置时明确返回「配置后可用」。
 
 官方协议：[GitHub OAuth](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)、[QQ 授权码](https://wiki.connect.qq.com/使用authorization_code获取access_token)、[QQ OpenID](https://wiki.connect.qq.com/获取用户openid_oauth2-0)。
+
+## 首次授权后的账号选择
+
+未绑定的 GitHub/QQ 身份不再默认创建客户账号。回调只保存经提供商验证的身份，使用浏览器绑定的 HttpOnly / SameSite=Strict 交接 Cookie，10 分钟有效；不签发本地用户会话。现有 /auth/social/complete 页面显示两个选项：
+
+- 绑定已有账号：使用已绑定手机号及该账号密码验证，复用身份唯一约束、状态和 auth_version 校验，完成绑定后签发原双 Token 会话。
+- 辅助注册新账号：使用 register 场景一次性短信验证、设置密码并同时绑定手机号，事务内创建客户及第三方关联；手机号已注册时提示选择已有账号，不自动关联。
+
+POST /api/v1/auth/social/complete 对待选择身份返回 accountChoiceRequired=true，不消费待选择交接；已绑定身份仍按原一次性交接流程登录。新增 POST /api/v1/auth/social/resolve 接收 mode=bind|register、countryCode、mobile、password；register 另传 smsCode、agreedToTerms。两接口均验证 X-Social-Request、来源、Cookie、配置指纹；选择提交另有短时互斥及登录限流，成功后销毁交接。URL 不包含身份或凭据，提供商 Token 不入库、不交给前端。
+
+已有社交账号的首次密码/手机号补全接口及个人设置绑定解绑接口保持兼容。用户菜单“切换账号”只返回 /login?switchAccount=1，保留原凭据和快捷卡片；“退出登录”继续调用原注销清理流程。

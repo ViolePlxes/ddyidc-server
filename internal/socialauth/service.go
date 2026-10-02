@@ -80,6 +80,7 @@ func Register(server *rest.Server, database *gorm.DB, manager *auth.Manager, key
 		{Method: "GET", Path: "/auth/github/callback", Handler: s.callback},
 		{Method: "GET", Path: "/auth/qq/callback", Handler: s.callback},
 		{Method: "POST", Path: "/api/v1/auth/social/complete", Handler: s.complete},
+		{Method: "POST", Path: "/api/v1/auth/social/resolve", Handler: s.chooseAccount},
 		{Method: "GET", Path: "/api/v1/auth/social/profile", Handler: s.profile},
 		{Method: "POST", Path: "/api/v1/auth/social/bind-mobile", Handler: s.bindMobile},
 		{Method: "GET", Path: "/api/v1/auth/social/bindings", Handler: s.bindings},
@@ -252,12 +253,15 @@ func cookie(w http.ResponseWriter, name, value, callback string, ttl int, same h
 }
 
 type oauthState struct {
-	Provider string
-	Proof    string
-	Config   string
-	Verifier string
-	Remember bool
-	Claims   *auth.Claims
+	Provider     string
+	Proof        string
+	Config       string
+	Verifier     string
+	Remember     bool
+	Claims       *auth.Claims
+	Register     bool
+	Mobile       string
+	PasswordHash string
 }
 type handoff struct {
 	UserID   int64
@@ -268,7 +272,11 @@ type handoff struct {
 	Config   string
 	AppID    string
 	OpenID   string
+	Nickname string
+	Avatar   string
 }
+
+var errAccountChoice = errors.New("social account requires explicit choice")
 
 func (s *Service) start(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("X-Social-Request") != "1" || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
@@ -407,7 +415,7 @@ func (s *Service) callback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	user, e := s.resolve(r.Context(), c, st, who, clientip.FromRequest(r))
-	if e != nil {
+	if e != nil && !errors.Is(e, errAccountChoice) {
 		fail()
 		return
 	}
@@ -420,12 +428,16 @@ func (s *Service) callback(w http.ResponseWriter, r *http.Request) {
 		fail()
 		return
 	}
-	data, _ := json.Marshal(handoff{user.ID, user.AuthVersion, st.Remember, origin(c.CallbackURL), p, st.Config, c.AppID, who.OpenID})
-	if cache.RDB.Set(r.Context(), "session:user:social:handoff:"+digest(ticket), data, time.Minute).Err() != nil {
+	ttl := 60
+	if user.ID == 0 {
+		ttl = 600
+	}
+	data, _ := json.Marshal(handoff{UserID: user.ID, Version: user.AuthVersion, Remember: st.Remember, Origin: origin(c.CallbackURL), Provider: p, Config: st.Config, AppID: c.AppID, OpenID: who.OpenID, Nickname: who.Nickname, Avatar: who.Avatar})
+	if cache.RDB.Set(r.Context(), "session:user:social:handoff:"+digest(ticket), data, time.Duration(ttl)*time.Second).Err() != nil {
 		fail()
 		return
 	}
-	cookie(w, "ddyidc_oauth_complete", ticket, c.CallbackURL, 60, http.SameSiteStrictMode)
+	cookie(w, "ddyidc_oauth_complete", ticket, c.CallbackURL, ttl, http.SameSiteStrictMode)
 	http.Redirect(w, r, "/auth/social/complete", http.StatusSeeOther)
 }
 func usernameBase(nickname string) string {
@@ -481,6 +493,9 @@ func (s *Service) resolve(ctx context.Context, c config, st oauthState, who iden
 		if linked.ID != 0 && c.Provider == "qq" && linked.AppID != c.AppID {
 			return errors.New("QQ app changed; rebind with verified password")
 		}
+		if st.Register && st.Mobile != "" && owner != 0 {
+			return errors.New("identity already bound")
+		}
 		if st.Claims != nil {
 			if owner != 0 && owner != st.Claims.UserID {
 				return errors.New("identity already bound")
@@ -493,6 +508,9 @@ func (s *Service) resolve(ctx context.Context, c config, st oauthState, who iden
 				return e
 			}
 		} else {
+			if !st.Register {
+				return errAccountChoice
+			}
 			initial, e := randomToken()
 			if e != nil {
 				return e
@@ -500,6 +518,9 @@ func (s *Service) resolve(ctx context.Context, c config, st oauthState, who iden
 			hash, e := auth.HashPassword(initial)
 			if e != nil {
 				return e
+			}
+			if st.PasswordHash != "" {
+				hash = st.PasswordHash
 			}
 			name := usernameBase(who.Nickname)
 			var count int64
@@ -510,11 +531,16 @@ func (s *Service) resolve(ctx context.Context, c config, st oauthState, who iden
 				name = fmt.Sprintf("%s_%d", name, snowflake.GenID())
 			}
 			out = customer.Customer{Username: name, Nickname: &who.Nickname, Avatar: &who.Avatar, PasswordHash: hash, Status: 1, Level: 1, AuthVersion: 1}
+			if st.Mobile != "" {
+				out.Phone = &st.Mobile
+			}
 			if e = tx.Create(&out).Error; e != nil {
 				return e
 			}
-			if e = tx.Create(&registration{out.ID, hash, time.Now()}).Error; e != nil {
-				return e
+			if st.Mobile == "" {
+				if e = tx.Create(&registration{out.ID, hash, time.Now()}).Error; e != nil {
+					return e
+				}
 			}
 		}
 		changed := false
@@ -549,14 +575,28 @@ func (s *Service) complete(w http.ResponseWriter, r *http.Request) {
 		reply(w, 401, nil, "授权登录已失效，请重新登录")
 		return
 	}
-	raw, e := cache.RDB.GetDel(r.Context(), "session:user:social:handoff:"+digest(ticket.Value)).Result()
+	key := "session:user:social:handoff:" + digest(ticket.Value)
+	raw, e := cache.RDB.Get(r.Context(), key).Result()
 	var h handoff
 	if e != nil || json.Unmarshal([]byte(raw), &h) != nil || (r.Header.Get("Origin") != "" && r.Header.Get("Origin") != h.Origin) {
 		reply(w, 401, nil, "授权登录已失效，请重新登录")
 		return
 	}
-	cookie(w, "ddyidc_oauth_complete", "", h.Origin, -1, http.SameSiteStrictMode)
 	current, e := s.getConfig(r.Context(), h.Provider)
+	if e != nil || !current.Enabled || fingerprint(current) != h.Config {
+		reply(w, 401, nil, "授权状态已变化，请重新登录")
+		return
+	}
+	if h.UserID == 0 {
+		reply(w, 200, map[string]any{"accountChoiceRequired": true}, "")
+		return
+	}
+	deleted, e := cache.RDB.Eval(r.Context(), `if redis.call('GET',KEYS[1])==ARGV[1] then return redis.call('DEL',KEYS[1]) else return 0 end`, []string{key}, raw).Int()
+	if e != nil || deleted != 1 {
+		reply(w, 401, nil, "授权登录已失效，请重新登录")
+		return
+	}
+	cookie(w, "ddyidc_oauth_complete", "", h.Origin, -1, http.SameSiteStrictMode)
 	var bound binding
 	if e != nil || !current.Enabled || fingerprint(current) != h.Config || s.db.WithContext(r.Context()).Where("user_id=? AND provider=? AND open_id=?", h.UserID, h.Provider, h.OpenID).Take(&bound).Error != nil {
 		reply(w, 401, nil, "授权状态已变化，请重新登录")
