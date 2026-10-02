@@ -119,6 +119,7 @@ func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.
 		{Method: http.MethodPost, Path: "/admin/v1/clients/:id/login", Handler: h.clientLogin},
 		{Method: http.MethodGet, Path: "/admin/v1/dashboard", Handler: h.dashboard},
 		{Method: http.MethodGet, Path: "/admin/v1/operations", Handler: h.operations},
+		{Method: http.MethodGet, Path: "/admin/v1/server-monitor", Handler: h.serverMonitor},
 		{Method: http.MethodGet, Path: "/admin/v1/orders", Handler: h.orders},
 		{Method: http.MethodGet, Path: "/admin/v1/customers", Handler: h.customers},
 		{Method: http.MethodPost, Path: "/admin/v1/customers", Handler: h.createCustomer},
