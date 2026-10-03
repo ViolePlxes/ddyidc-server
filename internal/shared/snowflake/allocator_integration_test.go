@@ -1,6 +1,7 @@
 package snowflake
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -65,7 +66,7 @@ func TestDurableIDsMySQL(t *testing.T) {
 	check := func(id int64) {
 		mu.Lock()
 		defer mu.Unlock()
-		if id <= 8000000000000000 || id > MaxID || seen[id] {
+		if id < MinID || id > MaxID || seen[id] {
 			t.Errorf("duplicate or unsafe ID: %d", id)
 		}
 		seen[id] = true
@@ -117,28 +118,32 @@ func TestDurableIDsMySQL(t *testing.T) {
 	if len(seen) != 28000 {
 		t.Fatalf("expected 28000 unique IDs, got %d", len(seen))
 	}
-	previous := int64(0)
-	if err := pool.QueryRow("SELECT high_water FROM system.id_sequences WHERE name='global'").Scan(&previous); err != nil {
-		t.Fatal(err)
-	}
 	if err := Prepare(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	restarted, _ := New(pool, 1000)
 	id, err := restarted.Next(ctx)
-	if err != nil || id <= previous {
-		t.Fatal("restart reused reserved range")
+	if err != nil || seen[id] || id < MinID || id > MaxID {
+		t.Fatal("restart reused an ID")
 	}
-	_, err = pool.Exec("UPDATE system.id_sequences SET high_water=? WHERE name='global'", MaxID)
+	_, err = pool.Exec("INSERT IGNORE INTO system.id_registry(id) VALUES(?)", MinID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	exhausted, _ := New(pool, 1)
-	if _, err = exhausted.Next(ctx); err == nil {
-		t.Fatal("exhausted allocator issued ID")
+	collision, _ := New(pool, 1)
+	collision.random = bytes.NewReader([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 1})
+	if next, e := collision.Next(ctx); e != nil || next != MinID+1 {
+		t.Fatal("duplicate random candidate was not retried")
 	}
-	if _, err = pool.Exec("UPDATE system.id_sequences SET high_water=? WHERE name='global'", previous+1000); err != nil {
-		t.Fatal(err)
+	stuck, _ := New(pool, 1)
+	stuck.random = bytes.NewReader(make([]byte, 5*attempts))
+	if _, e := stuck.Next(ctx); e == nil {
+		t.Fatal("collision retry limit ignored")
+	}
+	noEntropy, _ := New(pool, 1)
+	noEntropy.random = bytes.NewReader(nil)
+	if _, e := noEntropy.Next(ctx); e == nil {
+		t.Fatal("entropy failure issued ID")
 	}
 	closed := isolatedPool(t)
 	closed.Close()
@@ -146,5 +151,5 @@ func TestDurableIDsMySQL(t *testing.T) {
 	if _, err = unavailable.Next(ctx); err == nil {
 		t.Fatal("database failure issued fallback ID")
 	}
-	t.Log("4 processes + 8 allocators: 28000 unique safe IDs; restart high-water retained; exhausted/database failure rejected")
+	t.Log("4 processes + 8 allocators: 28000 unique random IDs; restart uniqueness retained; collision retries, exhausted retries, entropy and database failures verified")
 }

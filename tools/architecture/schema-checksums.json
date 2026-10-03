@@ -15,5 +15,6 @@
   "014_social_identity_compat.sql": "ee6ba5c73fb5869f509c5b0c1127b9c68349fc175ab710a0bb9517b6516b8a8f",
   "015_admin_todos.sql": "585279344cd57c3df4b52be31390fbbf7d469da75e0595fcc35fcbc2e13b8437",
   "016_rewards_center.sql": "30e4268ce24a2b4d7d1af161f3a5e33e8b3c2e110c0ee0bff7080f9afede9362",
-  "017_portal.sql": "cb7f88cd09fa93b2e2a4e3ec837eb4491e2f58fdce6c62f2dd219550a83bb859"
+  "017_portal.sql": "cb7f88cd09fa93b2e2a4e3ec837eb4491e2f58fdce6c62f2dd219550a83bb859",
+  "018_random_id_registry.sql": "4d17d9c0619c74d6f82f6ad1364e60d99cf878d11f94fe1331939c0efacbdfc2"
 }

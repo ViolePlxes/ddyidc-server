@@ -49,7 +49,7 @@ func (h *authHandler) legacyOrders(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "查询历史订单失败")
 			return
 		}
-		if err := query.Select("*,COALESCE((SELECT GROUP_CONCAT(i.description ORDER BY i.source_id SEPARATOR ' / ') FROM system.v10_historical_order_items i WHERE i.order_id=system.v10_historical_orders.id),'历史订单') product_name").Order("created_at DESC,id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
+		if err := query.Select("*,COALESCE((SELECT GROUP_CONCAT(i.description ORDER BY i.id SEPARATOR ' / ') FROM system.v10_historical_order_items i WHERE i.order_id=system.v10_historical_orders.id),'历史订单') product_name").Order("created_at DESC,id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
 			writeError(w, 500, "查询历史订单失败")
 			return
 		}

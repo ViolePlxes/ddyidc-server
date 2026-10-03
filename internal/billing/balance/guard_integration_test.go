@@ -47,6 +47,7 @@ func TestBalanceGuardMySQL(t *testing.T) {
 		"GRANT SELECT,INSERT ON billing.notification_outbox TO 'balance_runtime'@'localhost'",
 		"GRANT SELECT,UPDATE(last_login_at) ON customer.customers TO 'balance_runtime'@'localhost'",
 		"GRANT SELECT,UPDATE ON system.id_sequences TO 'balance_runtime'@'localhost'",
+		"GRANT INSERT ON system.id_registry TO 'balance_runtime'@'localhost'",
 	}
 	for _, q := range statements {
 		if err = root.Exec(q).Error; err != nil {

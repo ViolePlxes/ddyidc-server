@@ -11,6 +11,7 @@ import (
 type legacyHistoryRow struct {
 	ID           int64          `json:"id,string"`
 	SourceID     int64          `json:"sourceId,string"`
+	OrderID      *int64         `json:"-"`
 	Kind         string         `json:"kind"`
 	Amount       string         `json:"amountYuan"`
 	BalanceAfter string         `json:"balanceAfterYuan"`
@@ -32,6 +33,13 @@ func publicHistoryRows(rows []legacyHistoryRow) {
 		rows[i].Data = map[string]any{}
 		for _, key := range historyPublicFields[rows[i].Kind] {
 			rows[i].Data[key] = payload[key]
+		}
+		if rows[i].Kind == "balance" || rows[i].Kind == "payment" {
+			rows[i].SourceID = rows[i].ID
+			rows[i].Data["order_id"] = "0"
+			if rows[i].OrderID != nil {
+				rows[i].Data["order_id"] = strconv.FormatInt(*rows[i].OrderID, 10)
+			}
 		}
 	}
 }
@@ -64,7 +72,7 @@ func (h *authHandler) legacyHistory(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "历史记录查询失败")
 			return
 		}
-		if err := q.Order("created_at DESC,source_id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
+		if err := q.Order("created_at DESC,id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
 			writeError(w, 500, "历史记录查询失败")
 			return
 		}

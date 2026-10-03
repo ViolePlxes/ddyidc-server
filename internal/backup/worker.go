@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"ddyidc/internal/shared/filebarrier"
+	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/workgate"
 	"ddyidc/pkg/cache"
 	"encoding/json"
@@ -389,6 +390,11 @@ func (s *Service) restore(ctx context.Context, j *Job, restart *bool) (result er
 	}
 	if e = s.db.WithContext(ctx).Exec("UPDATE system.id_sequences SET high_water=GREATEST(high_water,?) WHERE name='global'", highWater).Error; e != nil {
 		return rollbackData(errors.New("ID高水位恢复保护失败"))
+	}
+	if pool, err := s.db.DB(); err != nil {
+		return rollbackData(errors.New("ID登记库恢复保护失败"))
+	} else if e = snowflake.Prepare(ctx, pool); e != nil {
+		return rollbackData(errors.New("随机ID登记库恢复保护失败"))
 	}
 	if e = s.db.WithContext(ctx).Exec("UPDATE system.durable_tasks SET status='unknown',lease_token='',lease_until=NULL,safe_error='数据库恢复后等待外部事实核对' WHERE status IN ('pending','running')").Error; e != nil {
 		return rollbackData(errors.New("恢复后任务隔离失败"))

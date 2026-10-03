@@ -59,6 +59,7 @@ func TestSocialOAuthMySQL(t *testing.T) {
 	}
 	must(db.Exec(strings.ReplaceAll(`CREATE DATABASE customer; CREATE DATABASE \x60system\x60;
  CREATE TABLE system.id_sequences(name VARCHAR(64) PRIMARY KEY,high_water BIGINT NOT NULL); INSERT INTO system.id_sequences VALUES('global',10000);
+ CREATE TABLE system.id_registry(id BIGINT UNSIGNED PRIMARY KEY,allocated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6));
  CREATE TABLE system.system_configs(id BIGINT PRIMARY KEY,\x60key\x60 VARCHAR(128),value TEXT);
  INSERT INTO system.system_configs VALUES(1,'security.csrf_enabled','true');
  CREATE TABLE system.admins(id BIGINT PRIMARY KEY,auth_version BIGINT NOT NULL,status INT);

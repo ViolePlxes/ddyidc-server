@@ -1,35 +1,42 @@
-// Package snowflake preserves the historical API, using durable MySQL ID ranges
-// instead of wall-clock bits. Multiple processes never receive overlapping ranges.
+// Package snowflake retains the existing API, allocating opaque cryptographically
+// random 12-digit IDs with no timestamp, node, or counter. Ownership checks remain required.
 package snowflake
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
+	mysql "github.com/go-sql-driver/mysql"
+	"io"
+	"math/big"
 	"strings"
 	"sync/atomic"
 	"time"
 )
 
-const MaxID int64 = 1<<53 - 1
+const MinID int64 = 100_000_000_000
+const MaxID int64 = 999_999_999_999
+const attempts = 16
 
 type Allocator struct {
-	db        *sql.DB
-	size      int64
-	gate      chan struct{}
-	next, end int64
+	db      *sql.DB
+	random  io.Reader
+	size    int
+	gate    chan struct{}
+	pending []int64
 }
 
 var global atomic.Pointer[Allocator]
 
+// size controls a batch of independent random reservations, never a sequential range.
 func New(database *sql.DB, size int64) (*Allocator, error) {
 	if database == nil || size < 1 || size > 10000 {
 		return nil, errors.New("invalid ID allocator configuration")
 	}
-	return &Allocator{db: database, size: size, gate: make(chan struct{}, 1)}, nil
+	return &Allocator{db: database, random: rand.Reader, size: int(size), gate: make(chan struct{}, 1)}, nil
 }
-
 func (a *Allocator) Next(ctx context.Context) (int64, error) {
 	bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
@@ -39,93 +46,98 @@ func (a *Allocator) Next(ctx context.Context) (int64, error) {
 		return 0, bounded.Err()
 	}
 	defer func() { <-a.gate }()
-	if a.next == a.end {
-		tx, err := a.db.BeginTx(bounded, nil)
-		if err != nil {
-			return 0, err
-		}
-		defer tx.Rollback()
-		var high int64
-		if err = tx.QueryRowContext(bounded, "SELECT high_water FROM system.id_sequences WHERE name='global' FOR UPDATE").Scan(&high); err != nil {
-			return 0, err
-		}
-		if high < 0 || high > MaxID-a.size {
-			return 0, errors.New("ID range exhausted or corrupt")
-		}
-		if _, err = tx.ExecContext(bounded, "UPDATE system.id_sequences SET high_water=? WHERE name='global'", high+a.size); err != nil {
-			return 0, err
-		}
-		// A commit error may mean committed: discard the whole range on uncertainty.
-		if err = tx.Commit(); err != nil {
-			return 0, err
-		}
-		a.next, a.end = high+1, high+a.size+1
+	if len(a.pending) > 0 {
+		id := a.pending[0]
+		a.pending = a.pending[1:]
+		return id, nil
 	}
-	value := a.next
-	a.next++
-	return value, nil
+	for n := 0; n < attempts; n++ {
+		if err := bounded.Err(); err != nil {
+			return 0, err
+		}
+		batch := []int64{}
+		args := []any{}
+		seen := map[int64]bool{}
+		for i := 0; i < a.size; i++ {
+			number, err := rand.Int(a.random, big.NewInt(MaxID-MinID+1))
+			if err != nil {
+				return 0, errors.New("secure ID entropy unavailable")
+			}
+			id := number.Int64() + MinID
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			batch = append(batch, id)
+			args = append(args, id)
+		}
+		query := "INSERT INTO system.id_registry(id) VALUES" + strings.TrimSuffix(strings.Repeat("(?),", len(batch)), ",")
+		_, err := a.db.ExecContext(bounded, query, args...)
+		if err == nil {
+			a.pending = batch[1:]
+			return batch[0], nil
+		}
+		var duplicate *mysql.MySQLError
+		if !errors.As(err, &duplicate) || duplicate.Number != 1062 {
+			return 0, errors.New("unique ID registration unavailable")
+		}
+	}
+	return 0, errors.New("random ID collision retry limit reached")
 }
-
 func Configure(ctx context.Context, database *sql.DB) error {
-	allocator, err := New(database, 1000)
-	if err != nil {
-		return err
+	a, e := New(database, 1000)
+	if e != nil {
+		return e
 	}
-	if _, err = allocator.Next(ctx); err != nil {
-		return errors.New("durable ID allocator unavailable; migration required")
+	if _, e = a.Next(ctx); e != nil {
+		return fmt.Errorf("random ID registry unavailable; offline migration required: %w", e)
 	}
-	global.Store(allocator)
+	global.Store(a)
 	return nil
 }
-
-// GenID fails closed. Never fall back to time/random IDs on database failure.
-// The existing recovery middleware converts the panic into a failed request.
 func GenID() int64 {
-	allocator := global.Load()
-	if allocator == nil {
-		panic("durable ID allocator is not initialized")
+	a := global.Load()
+	if a == nil {
+		panic("random ID allocator is not initialized")
 	}
-	value, err := allocator.Next(context.Background())
-	if err != nil {
-		panic("durable ID allocation failed")
+	id, e := a.Next(context.Background())
+	if e != nil {
+		panic("random ID allocation failed")
 	}
-	return value
+	return id
 }
 
-// Prepare runs only during offline migration with writers stopped. Large legacy
-// UnixNano IDs are outside the new safe range and therefore cannot collide.
+// Prepare is offline-only with writers stopped. It reserves existing numeric IDs
+// so multiple processes and migrated records share a global uniqueness registry.
 func Prepare(ctx context.Context, database *sql.DB) error {
-	rows, err := database.QueryContext(ctx, `SELECT c.TABLE_SCHEMA,c.TABLE_NAME FROM information_schema.COLUMNS c JOIN information_schema.TABLES t ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME WHERE c.COLUMN_NAME='id' AND c.DATA_TYPE IN ('bigint','int','mediumint','smallint','tinyint') AND t.TABLE_TYPE='BASE TABLE' AND c.TABLE_SCHEMA NOT IN ('mysql','sys','information_schema','performance_schema')`)
-	if err != nil {
-		return err
+	if _, e := database.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS system.id_registry(id BIGINT UNSIGNED PRIMARY KEY,allocated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)) ENGINE=InnoDB"); e != nil {
+		return e
+	}
+	rows, e := database.QueryContext(ctx, `SELECT c.TABLE_SCHEMA,c.TABLE_NAME FROM information_schema.COLUMNS c JOIN information_schema.TABLES t ON c.TABLE_SCHEMA=t.TABLE_SCHEMA AND c.TABLE_NAME=t.TABLE_NAME WHERE c.COLUMN_NAME='id' AND c.DATA_TYPE IN ('bigint','int','mediumint','smallint','tinyint') AND t.TABLE_TYPE='BASE TABLE' AND c.TABLE_SCHEMA NOT IN ('mysql','sys','information_schema','performance_schema') AND NOT(c.TABLE_SCHEMA='system' AND c.TABLE_NAME='id_registry')`)
+	if e != nil {
+		return e
 	}
 	var tables [][2]string
 	for rows.Next() {
-		var table [2]string
-		if err = rows.Scan(&table[0], &table[1]); err != nil {
+		var t [2]string
+		if e = rows.Scan(&t[0], &t[1]); e != nil {
 			rows.Close()
-			return err
+			return e
 		}
-		tables = append(tables, table)
+		tables = append(tables, t)
 	}
-	err = rows.Err()
+	e = rows.Err()
 	rows.Close()
-	if err != nil {
-		return err
+	if e != nil {
+		return e
 	}
-	// Reserve a high, JS-safe namespace above historical timestamp IDs.
-	high := int64(8_000_000_000_000_000)
 	quote := func(s string) string { return "`" + strings.ReplaceAll(s, "`", "``") + "`" }
-	for _, table := range tables {
-		var maximum sql.NullInt64
-		query := fmt.Sprintf("SELECT MAX(id) FROM %s.%s WHERE id<=?", quote(table[0]), quote(table[1]))
-		if err = database.QueryRowContext(ctx, query, MaxID).Scan(&maximum); err != nil {
-			return err
-		}
-		if maximum.Valid && maximum.Int64 > high {
-			high = maximum.Int64
+	for _, t := range tables {
+		if _, e = database.ExecContext(ctx, "INSERT IGNORE INTO system.id_registry(id) SELECT id FROM "+quote(t[0])+"."+quote(t[1])+" WHERE id>0"); e != nil {
+			return e
 		}
 	}
-	_, err = database.ExecContext(ctx, "INSERT INTO system.id_sequences(name,high_water) VALUES('global',?) ON DUPLICATE KEY UPDATE high_water=GREATEST(high_water,?)", high, high)
-	return err
+	// Old backup metadata remains readable but never participates in new allocation.
+	_, e = database.ExecContext(ctx, "INSERT INTO system.id_sequences(name,high_water) VALUES('global',8000000000000000) ON DUPLICATE KEY UPDATE high_water=high_water")
+	return e
 }
