@@ -242,6 +242,21 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	if host.ExpiresAt != nil {
 		result.ExpiresAt = formatTime(*host.ExpiresAt)
 	}
+	if host.ModuleType == "legacy_snapshot" {
+		var legacy struct {
+			OrderNo string `json:"legacyOrderNo"`
+			FirstPayment string `json:"firstPayment"`
+			RenewalAmount string `json:"renewalAmount"`
+		}
+		if err := json.Unmarshal([]byte(host.ConfigSnapshot), &legacy); err != nil {
+			return nil, errors.New("历史实例快照格式无效")
+		}
+		result.OrderNo = legacy.OrderNo
+		result.FirstPayment = legacy.FirstPayment
+		result.RenewalAmount = legacy.RenewalAmount
+		result.Warning = "历史实例已同步，当前仅供查询"
+		return result, nil
+	}
 
 	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {

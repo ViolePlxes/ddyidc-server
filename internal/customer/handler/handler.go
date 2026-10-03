@@ -89,6 +89,9 @@ func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, 
 		{Method: http.MethodGet, Path: "/api/v1/auth/verify-sales", Handler: h.verifySales},
 		{Method: http.MethodGet, Path: "/api/v1/auth/me", Handler: h.userMe},
 		{Method: http.MethodGet, Path: "/api/v1/console/overview", Handler: h.overview},
+		{Method: http.MethodGet, Path: "/api/v1/console/history/orders", Handler: h.legacyOrders},
+		{Method: http.MethodGet, Path: "/api/v1/console/history/records", Handler: h.legacyHistory},
+		{Method: http.MethodGet, Path: "/api/v1/console/history/ticket", Handler: h.legacyTicket},
 		{Method: http.MethodPost, Path: "/admin/v1/auth/login", Handler: h.adminLogin},
 		{Method: http.MethodPost, Path: "/admin/v1/auth/logout", Handler: h.adminLogout},
 		{Method: http.MethodGet, Path: "/admin/v1/auth/me", Handler: h.adminMe},
@@ -124,7 +127,11 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	customer, err := h.findAccount(r, account)
-	if err == nil && customer != nil && customer.Status == 1 && auth.PasswordMatches(customer.PasswordHash, input.Password) {
+	var matches bool
+	if err == nil {
+		customer, matches, err = h.verifyCustomerPassword(r, customer, input.Password)
+	}
+	if err == nil && matches {
 		_ = h.jwt.ClearLoginFailures(r.Context(), rateKey)
 		h.writeCustomerLogin(w, r, customer, input.RememberMe)
 		return
