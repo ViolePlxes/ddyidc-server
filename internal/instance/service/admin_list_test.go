@@ -172,6 +172,18 @@ func TestAdminListMySQL(t *testing.T) {
 	if result.Total != 6 || len(result.Items) != 2 || result.Counts["suspended"] != 1 || result.Counts["due"] != 2 || result.Counts["expired"] != 1 || result.Counts["terminated"] != 1 || result.TotalRenewalSum != "50.05" || result.MissingPriceCount != 1 {
 		t.Fatalf("wrong statistics: %+v", result)
 	}
+	exec("UPDATE customer.customers SET real_name='Unverified profile' WHERE id=99004001")
+	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Items[0].RealName != "" {
+		t.Fatal("unverified profile exposed as certified name", e)
+	}
+	exec("INSERT INTO customer.customer_realname(id,customer_id,type,name,status,created_at,updated_at) VALUES(99004400,99004001,1,'VM Verified Name',2,NOW(),NOW())")
+	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Total != 6 || result.Items[0].RealName != "VM Verified Name" {
+		t.Fatal("approved identity name not projected or rows duplicated", e)
+	}
+	exec("UPDATE customer.customer_realname SET status=3 WHERE id=99004400")
+	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Items[0].RealName != "" {
+		t.Fatal("rejected identity name leaked", e)
+	}
 	masked := a
 	masked.Contact = false
 	result, e = service.AdminList(ctx, masked, AdminListInput{Search: "203.0.113.77", PageSize: 100})

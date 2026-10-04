@@ -117,6 +117,7 @@ type AdminInstanceRow struct {
 	Hostname           string             `json:"hostname"`
 	ProductName        string             `json:"productName"`
 	Username           string             `json:"username"`
+	RealName           string             `json:"realName"`
 	Phone              string             `json:"phone"`
 	Email              string             `json:"email"`
 	SupplierName       string             `json:"supplierName"`
@@ -333,7 +334,7 @@ func adminView(q *gorm.DB, view string, now time.Time) *gorm.DB {
 	return q
 }
 
-const adminProjection = "CAST(i.id AS CHAR) id,CAST(i.customer_id AS CHAR) customer_id,CAST(i.product_id AS CHAR) product_id,COALESCE(CAST(i.upstream_provider_id AS CHAR),'') supplier_id,CAST(i.order_id AS CHAR) order_id,i.instance_no,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.hostname')),'') hostname,i.product_name,COALESCE(c.username,'') username,COALESCE(c.phone,'') phone,COALESCE(c.email,'') email,COALESCE(s.name,'') supplier_name,COALESCE(o.order_no,JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.legacyOrderNo')),'') order_no,i.remark,COALESCE(i.primary_ip,'') primary_ip,i.status,COALESCE(i.power_status,'') power_status," + cycleSQL + " cycle,CAST((" + renewalSQL + ") AS CHAR) renewal_amount,COALESCE(rs.enabled,0) auto_renew,COALESCE(i.upstream_instance_id,'') upstream_instance_id,CAST(i.ownership_version AS CHAR) ownership_version,COALESCE(i.operating_system,'') operating_system,i.created_at,i.activated_at,i.expires_at,i.last_synced_at,CAST(" + ipSQL + " AS CHAR) ip_json,(SELECT COUNT(*) FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3) error_count,(c.id IS NULL) customer_missing"
+const adminProjection = "CAST(i.id AS CHAR) id,CAST(i.customer_id AS CHAR) customer_id,CAST(i.product_id AS CHAR) product_id,COALESCE(CAST(i.upstream_provider_id AS CHAR),'') supplier_id,CAST(i.order_id AS CHAR) order_id,i.instance_no,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.hostname')),'') hostname,i.product_name,COALESCE(c.username,'') username,COALESCE((SELECT NULLIF(TRIM(cr.name),'') FROM customer.customer_realname cr WHERE cr.customer_id=c.id AND cr.status=2 ORDER BY cr.updated_at DESC,cr.id DESC LIMIT 1),'') real_name,COALESCE(c.phone,'') phone,COALESCE(c.email,'') email,COALESCE(s.name,'') supplier_name,COALESCE(o.order_no,JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.legacyOrderNo')),'') order_no,i.remark,COALESCE(i.primary_ip,'') primary_ip,i.status,COALESCE(i.power_status,'') power_status," + cycleSQL + " cycle,CAST((" + renewalSQL + ") AS CHAR) renewal_amount,COALESCE(rs.enabled,0) auto_renew,COALESCE(i.upstream_instance_id,'') upstream_instance_id,CAST(i.ownership_version AS CHAR) ownership_version,COALESCE(i.operating_system,'') operating_system,i.created_at,i.activated_at,i.expires_at,i.last_synced_at,CAST(" + ipSQL + " AS CHAR) ip_json,(SELECT COUNT(*) FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3) error_count,(c.id IS NULL) customer_missing"
 
 func (s *Service) AdminList(ctx context.Context, a AdminAccess, in AdminListInput) (*AdminListResult, error) {
 	in, e := normalizeAdminInput(in)
