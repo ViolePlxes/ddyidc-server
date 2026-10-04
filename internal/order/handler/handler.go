@@ -174,6 +174,15 @@ func (h *orderHandler) payOrder(w http.ResponseWriter, r *http.Request) {
 	if input.Method == "" {
 		input.Method = "alipay"
 	}
+	if input.Method == "balance" {
+		view, err := h.service.PayBalance(r.Context(), customerID, id)
+		if err != nil {
+			writeError(w, http.StatusOK, err.Error())
+			return
+		}
+		writeJSON(w, view)
+		return
+	}
 	if input.Mode == "" {
 		input.Mode = "page"
 	}

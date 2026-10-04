@@ -71,10 +71,11 @@ type NotificationHooks interface {
 
 // Service 订单应用服务。
 type Service struct {
-	repo        OrderRepository
-	hooks       MarketingHooks
-	notifier    NotificationHooks
-	snapshotKey []byte
+	repo           OrderRepository
+	hooks          MarketingHooks
+	notifier       NotificationHooks
+	snapshotKey    []byte
+	renewalBalance RenewalBalancePayer
 }
 
 func (s *Service) SetNotifier(notifier NotificationHooks) { s.notifier = notifier }

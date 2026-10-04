@@ -501,6 +501,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
 	instanceSvc.SetManagement(db.G)
+	orderSvc.SetRenewalBalancePayer(instanceSvc)
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
 		panic("instance management schema failed: " + err.Error())
 	}

@@ -286,6 +286,14 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		return nil
 	}
 	switch r.RefType {
+	case "order":
+		if r.Channel != "order" || r.Type != "order_pay" {
+			return ErrBusiness
+		}
+		err := tx.Table("order.orders o").Where("o.id=? AND o.customer_id=? AND o.status=1 AND o.pay_amount=?", r.RefID, r.CustomerID, int64(-amount)).Count(&count).Error
+		if err != nil {
+			return err
+		}
 	case "instance_renewal":
 		if r.Channel != "instance_renewal" || r.Type != "instance_renewal_pay" {
 			return ErrBusiness
