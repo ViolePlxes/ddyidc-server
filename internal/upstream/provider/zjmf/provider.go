@@ -242,7 +242,19 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	if err != nil {
 		return nil, err
 	}
-	return product.toContract(id), nil
+	detail := product.toContract(id)
+	// Finance product_price may describe the public catalogue while set_config
+	// carries this account's actual cycle quote. Keep import/sync/list prices
+	// on the same basis as the configuration page; procurement stays separate.
+	if page, pageErr := p.GetOrderPage(id); pageErr == nil && page != nil {
+		for _, cycle := range page.Cycles {
+			if cycle.Billingcycle == detail.Cycle && cycle.Price > 0 {
+				detail.Price, detail.SetupFee = cycle.Price, cycle.SetupFee
+				break
+			}
+		}
+	}
+	return detail, nil
 }
 
 func (p *Provider) InvalidateProduct(id int) error {

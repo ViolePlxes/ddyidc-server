@@ -69,7 +69,31 @@ func (s *Store) GetOrderPage(supplierID string, upstreamProductID int) (*contrac
 	if !ok {
 		return nil, fmt.Errorf("upstream provider %T does not support order-page configuration", p)
 	}
-	return configurable.GetOrderPage(upstreamProductID)
+	page, err := configurable.GetOrderPage(upstreamProductID)
+	if err != nil {
+		return nil, err
+	}
+	var mapping model.UpstreamProduct
+	if s.isMemory() {
+		s.mu.RLock()
+		for _, candidate := range s.products {
+			if candidate.SupplierID == supplierID && candidate.UpstreamProductID == upstreamProductID {
+				mapping = candidate
+				break
+			}
+		}
+		s.mu.RUnlock()
+		if mapping.ID == "" {
+			return page, nil
+		}
+	} else if err := s.db.Where("supplier_id=? AND upstream_product_id=?", supplierID, upstreamProductID).Take(&mapping).Error; err != nil {
+		return nil, err
+	}
+	supplier, err := s.GetSupplier(supplierID)
+	if err != nil {
+		return nil, err
+	}
+	return retailOrderPage(page, mapping, supplier.Rate)
 }
 
 // GetOrderPageByLocalProduct resolves the published local SKU to its supplier
