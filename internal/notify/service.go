@@ -18,6 +18,8 @@ import (
 
 const encryptedPrefix = "enc:v1:"
 
+var errUnavailableContact = errors.New("接收人没有可用的通知联系方式")
+
 var placeholderPattern = regexp.MustCompile(`\{\{\s*([A-Za-z0-9_]+)\s*\}\}`)
 
 type notifyRepository interface {
@@ -452,7 +454,7 @@ func (m *Manager) notifyContact(ctx context.Context, scene string, contact Conta
 		if (template.Channel == ChannelEmail && contact.SkipEmail) || (template.Channel == ChannelSMS && contact.SkipSMS) || (template.Channel == ChannelBoth && (contact.SkipEmail || contact.SkipSMS)) {
 			return nil
 		}
-		return errors.New("接收人没有可用的通知联系方式")
+		return errUnavailableContact
 	}
 	var failures []string
 	for _, target := range targets {
@@ -490,6 +492,11 @@ func (m *Manager) ScanExpiring(ctx context.Context) (int, error) {
 		}
 		params := map[string]string{"instance_no": item.InstanceNo, "product_name": item.ProductName, "expires_at": item.ExpiresAt.Format("2006-01-02 15:04")}
 		if notifyErr := m.NotifyCustomer(ctx, "expiry", item.CustomerID, businessID, params); notifyErr != nil {
+			if errors.Is(notifyErr, errUnavailableContact) {
+				// Missing contact data is not a provider failure. Do not send,
+				// mark delivery successful, or count an undelivered reminder.
+				continue
+			}
 			logx.Errorf("expiry notification failed instance_id=%d: %v", item.ID, notifyErr)
 			continue
 		}

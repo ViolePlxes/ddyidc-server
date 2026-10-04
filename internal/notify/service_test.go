@@ -267,3 +267,24 @@ func TestExpiryScanSendsOnlyOnce(t *testing.T) {
 		t.Fatalf("expected one delivery, got %d", mail.calls)
 	}
 }
+
+func TestExpiryScanWithoutEmailDoesNotDeliverOrRecordSuccess(t *testing.T) {
+	expires := time.Now().Add(24 * time.Hour)
+	repo := &fakeNotifyRepository{
+		values:    map[string]string{"notify.expiry.enabled": "true"},
+		templates: map[string]*NotificationTemplate{"expiry": {ID: 2, Scene: "expiry", Channel: ChannelEmail, Title: "到期提醒", Content: "实例 {{instance_no}}", Enabled: true}},
+		contact:   Contact{Phone: "13800000000"},
+		expiring:  []ExpiringInstance{{ID: 99, CustomerID: 7, InstanceNo: "INS99", ExpiresAt: &expires}},
+	}
+	mail := &fakeMailChannel{}
+	manager := testManager(repo, mail)
+	for i := 0; i < 2; i++ {
+		count, err := manager.ScanExpiring(context.Background())
+		if err != nil || count != 0 || mail.calls != 0 || len(repo.logs) != 0 {
+			t.Fatalf("unreachable reminder: count=%d err=%v calls=%d logs=%d", count, err, mail.calls, len(repo.logs))
+		}
+	}
+	if err := manager.NotifyCustomer(context.Background(), "expiry", 7, "99", map[string]string{"instance_no": "INS99"}); !errors.Is(err, errUnavailableContact) {
+		t.Fatalf("direct notification must still report unavailable contact: %v", err)
+	}
+}
