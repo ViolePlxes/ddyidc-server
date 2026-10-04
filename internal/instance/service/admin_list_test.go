@@ -1,0 +1,250 @@
+package instance
+
+import (
+	"context"
+	dom "ddyidc/internal/instance/domain"
+	repo "ddyidc/internal/instance/repository"
+	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/upstream/metrics"
+	"ddyidc/internal/upstream/provider"
+	"ddyidc/internal/upstream/provider/contracts"
+	"encoding/json"
+	"errors"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+type adminReadMock struct {
+	provider.UpstreamProvider
+	contracts.InstanceProvider
+	ctx    context.Context
+	calls  *int
+	detail *contracts.InstanceDetail
+}
+
+func (p *adminReadMock) WithInstanceContext(ctx context.Context) contracts.InstanceProvider {
+	q := *p
+	q.ctx = ctx
+	return &q
+}
+func (p *adminReadMock) GetInstanceDetail(int64) (*contracts.InstanceDetail, error) {
+	*p.calls++
+	if !metrics.IsBackground(p.ctx) {
+		return nil, errors.New("background rate scope missing")
+	}
+	return p.detail, nil
+}
+
+type adminReadResolver struct{ p *adminReadMock }
+
+func (r adminReadResolver) ProviderFor(string) (provider.UpstreamProvider, error) { return r.p, nil }
+func (r adminReadResolver) GetOrderPageByLocalProduct(string) (*contracts.OrderPage, error) {
+	return nil, ErrUnsupported
+}
+
+func TestAdminInputAndSyncWhitelist(t *testing.T) {
+	for _, in := range []AdminListInput{{Sort: "id;DROP TABLE"}, {Direction: "desc;--"}, {PageSize: 101}, {Search: strings.Repeat("字", 129)}, {MinAmount: "1.001"}, {CreatedFrom: "2026-10-05T00:00:00Z", CreatedTo: "2026-10-04T00:00:00Z"}} {
+		if _, e := normalizeAdminInput(in); !errors.Is(e, ErrAdminListInput) {
+			t.Fatalf("unsafe input accepted: %+v %v", in, e)
+		}
+	}
+	now := time.Now().UTC()
+	h := &dom.Host{UpstreamInstanceID: "42", ConfigSnapshot: `{"renewalAmount":"9.99","password":"LOCAL_SECRET","billingCycle":"monthly"}`}
+	detail := &contracts.InstanceDetail{ID: "42", Password: "REMOTE_SECRET", Status: "deleted", PowerStatus: "suspended", Remark: "remote remark", RenewalAmount: "1.00", PrimaryIP: "203.0.113.8", ExpiresAt: &now, Config: []contracts.InstanceConfig{{Field: "cpu", Value: "4"}, {Field: "password", Value: "REMOTE_SECRET"}}, IPs: []contracts.InstanceIP{{Address: "203.0.113.9"}, {Address: "not-an-ip"}}}
+	fields, e := safeSyncFields(h, detail, now)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, k := range []string{"status", "power_status", "customer_id", "ownership_version", "order_id", "product_id", "remark", "upstream_provider_id", "upstream_instance_id", "auto_renew"} {
+		if _, ok := fields[k]; ok {
+			t.Fatal("forbidden overwrite", k)
+		}
+	}
+	raw := fields["config_snapshot"].(string)
+	if strings.Contains(raw, "REMOTE_SECRET") {
+		t.Fatal("remote secret cached")
+	}
+	var cache map[string]any
+	_ = json.Unmarshal([]byte(raw), &cache)
+	if cache["renewalAmount"] != "9.99" || cache["password"] != "LOCAL_SECRET" {
+		t.Fatal("existing snapshot overwritten")
+	}
+	detail.ID = "43"
+	if _, e = safeSyncFields(h, detail, now); e == nil {
+		t.Fatal("wrong resource accepted")
+	}
+	v := syncTaskView(AdminSyncTask{ID: 1, State: "running", Items: "[]", UpdatedAt: now.Add(-3 * time.Minute)})
+	if v.State != "interrupted" {
+		t.Fatal("crash not surfaced")
+	}
+}
+
+// This test adds only reserved fixtures in one rolled-back transaction. It
+// neither drops schemas nor changes existing customers, balances or machines.
+func TestAdminListMySQL(t *testing.T) {
+	socket := os.Getenv("ADMIN_INSTANCES_MYSQL_SOCKET")
+	if socket == "" {
+		t.Skip("isolated VM MySQL required")
+	}
+	if !strings.HasPrefix(socket, "/tmp/ddyidc-foundation-") || !strings.HasSuffix(socket, "/mysql.sock") {
+		t.Fatal("unsafe socket")
+	}
+	db, e := gorm.Open(mysql.Open("root@unix("+socket+")/?parseTime=true"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if e != nil {
+		t.Fatal(e)
+	}
+	pool, _ := db.DB()
+	defer pool.Close()
+	ctx := context.Background()
+	if e = snowflake.Configure(ctx, pool); e != nil {
+		t.Fatal(e)
+	}
+	service := NewService(repo.NewRepository(db), nil)
+	service.db = db
+	if e = service.ensureAdminSchema(ctx); e != nil {
+		t.Fatal(e)
+	}
+	tx := db.Begin()
+	defer tx.Rollback()
+	service.db = tx
+	service.repo = repo.NewRepository(tx)
+	exec := func(query string, args ...any) {
+		t.Helper()
+		if e := tx.Exec(query, args...).Error; e != nil {
+			t.Fatal(e)
+		}
+	}
+	exec("INSERT INTO customer.customers(id,username,password_hash,phone,email) VALUES(99004001,'admin-list-fixture','!disabled','13800138000','fixture@example.invalid')")
+	exec("INSERT INTO system.admins(id,username,password_hash,real_name,status,is_super) VALUES(99004002,'admin-list-super','!disabled','VM fixture',1,1),(99004003,'admin-list-denied','!disabled','VM fixture',1,0)")
+	a, e := service.AdminAccess(ctx, 99004002)
+	if e != nil || !a.Export || !a.Sync || !a.Contact {
+		t.Fatal("super access", e, a)
+	}
+	if _, e = service.AdminAccess(ctx, 99004003); !errors.Is(e, ErrForbidden) {
+		t.Fatal("unauthorized staff", e)
+	}
+	a.CustomerIDs = []int64{99004001}
+	now := time.Now().UTC()
+	tomorrow := now.Add(24 * time.Hour)
+	yesterday := now.Add(-24 * time.Hour)
+	for i := 0; i < 7; i++ {
+		cycle := "monthly"
+		amount := `"10.0050"`
+		state := uint8(3)
+		power := "running"
+		expiry := &tomorrow
+		customer := int64(99004001)
+		if i == 1 {
+			power = "suspended"
+			state = 4
+		}
+		if i == 2 {
+			expiry = &yesterday
+		}
+		if i == 3 {
+			cycle = "onetime"
+		}
+		if i == 4 {
+			amount = "null"
+			expiry = nil
+		}
+		if i == 5 {
+			state = 6
+		}
+		if i == 6 {
+			customer = 99004099
+		}
+		snapshot := `{"billingCycle":"` + cycle + `","renewalAmount":` + amount + `,"hostname":"vm-fixture","syncedIps":[{"address":"203.0.113.77"},{"address":"203.0.113.77"}],"password":"NEVER_EXPORT"}`
+		h := dom.Host{ID: int64(99004100 + i), InstanceNo: "ADMIN-LIST-" + string(rune('A'+i)), CustomerID: customer, ProductID: 99004200, ProductName: "fixture product", ModuleType: "cloud", ConfigSnapshot: snapshot, Status: state, PowerStatus: power, CreatedAt: now.Add(time.Duration(i) * time.Hour), UpdatedAt: now, ExpiresAt: expiry, OwnershipVersion: 1, Remark: "fixture remark"}
+		if e = tx.Create(&h).Error; e != nil {
+			t.Fatal(e)
+		}
+	}
+	result, e := service.AdminList(ctx, a, AdminListInput{PageSize: 2})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if result.Total != 6 || len(result.Items) != 2 || result.Counts["suspended"] != 1 || result.Counts["due"] != 2 || result.Counts["expired"] != 1 || result.Counts["terminated"] != 1 || result.TotalRenewalSum != "50.05" || result.MissingPriceCount != 1 {
+		t.Fatalf("wrong statistics: %+v", result)
+	}
+	masked := a
+	masked.Contact = false
+	result, e = service.AdminList(ctx, masked, AdminListInput{Search: "203.0.113.77", PageSize: 100})
+	if e != nil || result.Total != 6 {
+		t.Fatalf("multi IP duplicated rows: %v %+v", e, result)
+	}
+	if result.Items[0].Phone == "13800138000" || result.Items[0].Email == "fixture@example.invalid" {
+		t.Fatal("contacts leaked")
+	}
+	raw, _ := json.Marshal(result)
+	if strings.Contains(string(raw), "NEVER_EXPORT") || strings.Contains(string(raw), "password") {
+		t.Fatal("secret leaked")
+	}
+	empty, e := service.AdminList(ctx, a, AdminListInput{Search: "%"})
+	if e != nil || empty.Total != 0 {
+		t.Fatal("wildcard injection", e)
+	}
+	filtered, e := service.AdminList(ctx, a, AdminListInput{View: "expired", MinAmount: "10.01", MaxAmount: "10.01"})
+	if e != nil || filtered.Total != 1 || filtered.Counts["all"] != 5 {
+		t.Fatal("filters/count scope", e, filtered)
+	}
+	rows, e := service.AdminExportRows(ctx, masked, AdminListInput{View: "suspended"})
+	if e != nil || len(rows) != 1 || rows[0].PowerStatus != "suspended" {
+		t.Fatal("export filter mismatch", e, rows)
+	}
+	masked.Export = false
+	if _, e = service.AdminExportRows(ctx, masked, AdminListInput{}); !errors.Is(e, ErrForbidden) {
+		t.Fatal("export authorization", e)
+	}
+	invalid := "other owner"
+	if e = service.SaveAdminRemark(ctx, a, "127.0.0.1", 99004100, AdminRemarkInput{CustomerID: "99004001", OwnershipVersion: "2", Remark: &invalid}); e == nil {
+		t.Fatal("stale ownership accepted")
+	}
+	value := "changed in isolated test"
+	if e = service.SaveAdminRemark(ctx, a, "127.0.0.1", 99004100, AdminRemarkInput{CustomerID: "99004001", OwnershipVersion: "1", Remark: &value}); e != nil {
+		t.Fatal(e)
+	}
+	var audit struct{ BeforeValue, AfterValue string }
+	if e = tx.Table("instance.admin_instance_audits").Where("instance_id=99004100").Take(&audit).Error; e != nil || !strings.Contains(audit.BeforeValue, "fixture remark") || !strings.Contains(audit.AfterValue, value) {
+		t.Fatal("audit", e, audit)
+	}
+	if _, e = service.StartAdminSync(ctx, a, "127.0.0.1", AdminSyncInput{RequestID: "test-stale-owner-20261004", Items: []AdminSyncSelection{{ID: "99004100", CustomerID: "99004001", OwnershipVersion: "9"}}}); e == nil {
+		t.Fatal("stale sync accepted")
+	}
+	supplier := int64(1)
+	exec("UPDATE instance.instances SET upstream_provider_id=?,upstream_instance_id='42' WHERE id=99004100", supplier)
+	calls := 0
+	later := tomorrow.Add(time.Hour)
+	service.providers = adminReadResolver{&adminReadMock{calls: &calls, detail: &contracts.InstanceDetail{ID: "42", ExpiresAt: &later, PrimaryIP: "203.0.113.8", Password: "REMOTE_PRIVATE", Status: "deleted", RenewalAmount: "0.01", Remark: "remote remark"}}}
+	selection := AdminSyncSelection{ID: "99004100", CustomerID: "99004001", OwnershipVersion: "2"}
+	task := AdminSyncTask{ID: 99004005, AdminID: 99004002, OperatorIP: "127.0.0.1"}
+	if e = service.syncAdminItem(metrics.WithBackground(ctx), task, selection); e == nil || calls != 0 {
+		t.Fatal("stale binding reached provider", e, calls)
+	}
+	selection.OwnershipVersion = "1"
+	if e = service.syncAdminItem(metrics.WithBackground(ctx), task, selection); e != nil {
+		t.Fatal("mock sync", e)
+	}
+	var synced dom.Host
+	if e = tx.Where("id=99004100").Take(&synced).Error; e != nil || calls != 1 || synced.Status != 3 || synced.Remark != value || synced.CustomerID != 99004001 || synced.PrimaryIP != "203.0.113.8" || strings.Contains(synced.ConfigSnapshot, "REMOTE_PRIVATE") {
+		t.Fatal("whitelist or ownership", e, synced.Status)
+	}
+	if e = tx.Table("instance.admin_instance_audits").Where("task_id=?", task.ID).Take(&audit).Error; e != nil || !strings.Contains(audit.AfterValue, "203.0.113.8") || strings.Contains(audit.BeforeValue, "203.0.113.8") || strings.Contains(audit.AfterValue, "PRIVATE") {
+		t.Fatal("sync before/after audit", e, audit)
+	}
+	exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(99004004,'instance.scope.admin.99004002','[\"99004001\"]')")
+	scoped, e := service.AdminAccess(ctx, 99004002)
+	if e != nil || scoped.Allows(99004099) {
+		t.Fatal("scope", e)
+	}
+	exec("UPDATE system.system_configs SET value='[]' WHERE id=99004004")
+	if _, e = service.AdminAccess(ctx, 99004002); !errors.Is(e, ErrForbidden) {
+		t.Fatal("empty scope not denied", e)
+	}
+	t.Log("real VM MySQL: exact rounded totals, scope, statuses, multi-IP dedupe, masks, export, stale ownership, remark audit passed; fixtures rolled back")
+}

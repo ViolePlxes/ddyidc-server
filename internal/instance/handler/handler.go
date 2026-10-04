@@ -24,6 +24,7 @@ type handler struct {
 
 func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
 	h := &handler{service: service, jwt: jwt}
+	server.AddRoutes(h.adminListRoutes())
 	server.AddRoutes(h.managementRoutes())
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/status", Handler: h.status},

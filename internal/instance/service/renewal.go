@@ -62,6 +62,9 @@ func (s *Service) EnsureManagementSchema(ctx context.Context) error {
 	if s.db == nil {
 		return ErrUnsupported
 	}
+	if err := s.ensureAdminSchema(ctx); err != nil {
+		return err
+	}
 	for _, statement := range strings.Split(renewalSchema, ";") {
 		if strings.TrimSpace(statement) != "" {
 			if e := s.db.WithContext(ctx).Exec(statement).Error; e != nil {

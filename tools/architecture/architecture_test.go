@@ -15,6 +15,7 @@ import (
 // Explicitly reviewed long-lived launchers. This is not a baseline of arbitrary
 // goroutines: each launcher delegates work to a durable lease or leader barrier.
 var launchers = map[string]string{
+	"internal/instance/service/admin_sync.go:StartAdminSync":  "workgate.Run",
 	"internal/payment/service/durable.go:Start":               "tasks.Run",
 	"internal/order/service/stock_expiry.go:StartStockExpiry": "distsync.Work",
 	"internal/groupbuy/service.go:StartMaintenance":           "distsync.Task",
