@@ -6,7 +6,44 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/big"
+	"strconv"
 )
+
+// CalculateRetailPrice rounds decimal supplier amounts once, after rate and margin.
+func CalculateRetailPrice(value, rate float64, profitType int, profit float64) float64 {
+	decimal := func(v float64) *big.Rat {
+		r, ok := new(big.Rat).SetString(strconv.FormatFloat(v, 'f', -1, 64))
+		if !ok {
+			return nil
+		}
+		return r
+	}
+	v, r, p := decimal(value), decimal(rate), decimal(profit)
+	if v == nil || r == nil || p == nil {
+		return math.NaN()
+	}
+	v.Mul(v, r)
+	if profitType == 1 {
+		v.Add(v, p)
+	} else {
+		p.Add(p, big.NewRat(100, 1))
+		p.Quo(p, big.NewRat(100, 1))
+		v.Mul(v, p)
+	}
+	v.Mul(v, big.NewRat(100, 1))
+	n := new(big.Int).Abs(v.Num())
+	q, remainder := new(big.Int), new(big.Int)
+	q.QuoRem(n, v.Denom(), remainder)
+	if remainder.Lsh(remainder, 1).Cmp(v.Denom()) >= 0 {
+		q.Add(q, big.NewInt(1))
+	}
+	if v.Sign() < 0 {
+		q.Neg(q)
+	}
+	result, _ := new(big.Rat).SetFrac(q, big.NewInt(100)).Float64()
+	return result
+}
 
 // The supplier's cached page contains procurement prices. Never mutate it:
 // each published SKU applies its own currency rate and v10 sales margin.
@@ -26,7 +63,7 @@ func retailOrderPage(raw *contracts.OrderPage, mapping model.UpstreamProduct, ra
 		if value <= 0 {
 			return value
 		}
-		return math.Round(CalculatePrice(value, rate, mapping.ProfitType, mapping.ProfitValue)*100) / 100
+		return CalculateRetailPrice(value, rate, mapping.ProfitType, mapping.ProfitValue)
 	}
 	page.Product.Price = price(page.Product.Price)
 	page.Product.SetupFee = price(page.Product.SetupFee)

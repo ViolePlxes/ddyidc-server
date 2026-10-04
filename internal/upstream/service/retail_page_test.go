@@ -6,6 +6,12 @@ import (
 	"testing"
 )
 
+func TestRetailPriceDecimalHalfCent(t *testing.T) {
+	if got := CalculateRetailPrice(28.572, 1, 0, 25); got != 35.72 {
+		t.Fatalf("decimal half-cent must round up: got %v", got)
+	}
+}
+
 func TestRetailOrderPageDoesNotLeakOrMutateProcurementPrices(t *testing.T) {
 	raw := &contracts.OrderPage{DefaultPassword: "supplier-secret", Product: contracts.UpstreamProduct{Price: 140}, Cycles: []contracts.CycleItem{{Price: 140, SetupFee: 0}, {Price: 420, SetupFee: 2}}, ConfigOptions: []contracts.ConfigOption{{Options: []contracts.ConfigOptionValue{{Price: 10}, {Price: 0}}}}}
 	mapping := model.UpstreamProduct{ProfitType: 0, ProfitValue: 42.86}
