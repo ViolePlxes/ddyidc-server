@@ -360,6 +360,11 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 			return page, nil
 		}
 	}
+	if outbound.DetailReadOnly() {
+		detail := product.toContract(productID)
+		return &contracts.OrderPage{Product: detail.UpstreamProduct, ConfigOptions: detail.ConfigOptions,
+			Cycles: []contracts.CycleItem{{Billingcycle: detail.Cycle, Price: detail.Price, SetupFee: detail.SetupFee}}}, nil
+	}
 	page, err := p.getLegacyOrderPage(productID, product)
 	if err == nil {
 		p.cacheOrderPage(cacheKey, page)
@@ -847,6 +852,9 @@ func (p *Provider) authorizedFormPost(path string, form url.Values) ([]byte, err
 // intentionally below Auth/GetProduct/CreateOrder so every request, including
 // login and read-only traffic, is covered by the same guard.
 func (p *Provider) request(method, endpoint string, body io.Reader, contentType, jwt string) ([]byte, int, error) {
+	guard, err := http.NewRequest(method, endpoint, nil)
+	if err != nil { return nil, 0, err }
+	if err := outbound.CheckDetailRequest(guard); err != nil { return nil, 0, err }
 	if err := outbound.ValidateURL(endpoint); err != nil {
 		return nil, 0, err
 	}

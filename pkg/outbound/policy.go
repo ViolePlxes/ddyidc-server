@@ -19,6 +19,7 @@ import (
 var ErrDenied = errors.New("outbound destination denied by network policy")
 
 type Config struct {
+	DetailReadOnly   bool     `json:",optional"`
 	PrivateCIDRs     []string `json:",optional"`
 	Ports            []int    `json:",optional"`
 	Hosts            []string `json:",optional"`
@@ -27,6 +28,7 @@ type Config struct {
 }
 
 type Policy struct {
+	detailReadOnly bool
 	private []netip.Prefix
 	ports   map[int]bool
 	hosts   map[string]bool
@@ -48,8 +50,12 @@ func Configure(c Config) error {
 }
 
 func New(c Config) (*Policy, error) {
+	if c.DetailReadOnly && len(c.Hosts) == 0 {
+		return nil, ErrDenied
+	}
 	p := &Policy{ports: map[int]bool{}, hosts: map[string]bool{}, lookup: net.DefaultResolver.LookupIPAddr,
 		dial: (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext}
+	p.detailReadOnly = c.DetailReadOnly
 	if len(c.Ports) == 0 {
 		c.Ports = []int{80, 443}
 	}
@@ -213,6 +219,9 @@ func ValidateURL(raw string) error { return current.Load().URL(raw) }
 type transport struct{ base *http.Transport }
 
 func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := CheckDetailRequest(r); err != nil {
+		return nil, err
+	}
 	if err := ValidateURL(r.URL.String()); err != nil {
 		return nil, err
 	}

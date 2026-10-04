@@ -241,6 +241,9 @@ func main() {
 		}
 	}
 	conf.MustLoad(*configFile, &c)
+	if c.Outbound.DetailReadOnly && !*noCron {
+		panic("detail-only migration mode requires -no-cron")
+	}
 	if err := outbound.Configure(c.Outbound); err != nil {
 		panic("invalid outbound network policy")
 	}
