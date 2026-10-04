@@ -1,0 +1,39 @@
+package zjmf
+
+import (
+	"ddyidc/internal/upstream/provider/contracts"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+)
+
+func TestRenewalOriginalPriceRemainsSeparateFromProcurement(t *testing.T) {
+	for _, original := range []string{`"10.00"`, `null`, `"0.00"`} {
+		t.Run(original, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/host/renewpage" {
+					t.Error("unexpected financial request")
+					http.NotFound(w, r)
+					return
+				}
+				fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","price":%s,"amount":"8.00","duration":2592000}]}}`, original)
+			}))
+			defer server.Close()
+			p := New(contracts.Supplier{URL: server.URL, Username: "isolated", Token: "isolated"})
+			tokens.Lock()
+			tokens.values[p.tokenKey()] = cachedJWT{token: "test-jwt", expiresAt: time.Now().Add(time.Hour)}
+			tokens.Unlock()
+			defer p.clearToken()
+			quotes, err := p.RenewalQuotes(123)
+			if original == `"10.00"` {
+				if err != nil || len(quotes) != 1 || quotes[0].OriginalAmount != "10.00" || quotes[0].Amount != "8.00" {
+					t.Fatalf("original/cost mismatch: %#v %v", quotes, err)
+				}
+			} else if err == nil {
+				t.Fatal("missing original price must fail closed")
+			}
+		})
+	}
+}

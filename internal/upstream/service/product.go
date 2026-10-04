@@ -34,11 +34,7 @@ type ProductInput struct {
 }
 
 func CalculatePrice(upstream, rate float64, profitType int, profit float64) float64 {
-	cost := upstream * rate
-	if profitType == 1 {
-		return cost + profit
-	}
-	return cost * (1 + profit/100)
+	return CalculateRetailPrice(upstream, rate, 0, 0)
 }
 func (s *Store) PullProducts(supplierID string) (interface{}, error) {
 	p, e := s.catalogueProvider(supplierID)

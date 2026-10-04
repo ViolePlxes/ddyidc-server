@@ -286,7 +286,7 @@ func (p *Provider) getFinanceProduct(id int) (financeProduct, error) {
 		return cached.value, nil
 	}
 	financeCache.Unlock()
-	body, err := p.authorizedGet(fmt.Sprintf("/api/product/%d?price_basis=agent", id))
+	body, err := p.authorizedGet(fmt.Sprintf("/api/product/%d?price_basis=standard", id))
 	if err != nil {
 		return financeProduct{}, err
 	}
@@ -399,7 +399,7 @@ func (p *Provider) cacheOrderPage(key string, page *contracts.OrderPage) {
 }
 
 func (p *Provider) getCloudOrderPage(productID int, product financeProduct) (*contracts.OrderPage, error) {
-	body, err := p.authorizedGet(fmt.Sprintf("/v10/host/product/%d/mf_cloud/order_page?price_basis=agent&is_downstream=1", productID))
+	body, err := p.authorizedGet(fmt.Sprintf("/v10/host/product/%d/mf_cloud/order_page?price_basis=standard&is_downstream=1", productID))
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func (p *Provider) getCloudOrderPage(productID int, product financeProduct) (*co
 }
 
 func (p *Provider) getLegacyOrderPage(productID int, detail financeProduct) (*contracts.OrderPage, error) {
-	query := url.Values{"pid": {strconv.Itoa(productID)}, "billingcycle": {detail.BillingCycle}}
+	query := url.Values{"pid": {strconv.Itoa(productID)}, "billingcycle": {detail.BillingCycle}, "price_basis": {"standard"}}
 	body, err := p.authorizedGet("/cart/set_config?" + query.Encode())
 	if err != nil {
 		return nil, err

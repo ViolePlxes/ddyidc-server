@@ -27,12 +27,16 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 		}
 		cycle := firstMapString(r, "billingcycle")
 		amount := firstMapString(r, "amount")
+		original, originalErr := billing.ParseMoney(firstMapString(r, "price"))
+		if originalErr != nil || original <= 0 {
+			return nil, fmt.Errorf("供应商未返回有效续费原价，停止报价")
+		}
 		money, e := billing.ParseMoney(amount)
 		duration, _ := strconv.ParseInt(firstMapString(r, "duration"), 10, 64)
 		if cycle == "" || e != nil || money <= 0 || duration <= 0 {
 			continue
 		}
-		out = append(out, contracts.RenewalQuote{Cycle: cycle, Label: firstMapString(r, "billingcycle_zh"), Amount: money.String(), Duration: duration})
+		out = append(out, contracts.RenewalQuote{Cycle: cycle, Label: firstMapString(r, "billingcycle_zh"), Amount: money.String(), OriginalAmount: original.String(), Duration: duration})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("暂无可用续费周期")

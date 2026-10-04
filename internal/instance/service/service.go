@@ -292,18 +292,30 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.FirstPayment = detail.FirstPayment
 	}
 	if s.db != nil {
-		if cost, e := balance.ParseMoney(detail.RenewalAmount); e == nil && cost > 0 {
-			var pricing struct {
-				Rate   string
-				Profit string
-				Kind   int
-			}
-			s.db.WithContext(ctx).Raw("SELECT s.rate,u.renew_profit_value profit,u.renew_profit_type kind FROM common.suppliers s JOIN product.upstream_products u ON u.supplier_id=s.id WHERE u.product_id=? AND s.id=?", host.ProductID, host.UpstreamProviderID).Scan(&pricing)
-			if amount, e := retailRenewal(cost, pricing.Rate, pricing.Profit, pricing.Kind); e == nil {
-				result.RenewalAmount = amount.String()
+		// A saved host amount is the supplier's procurement charge, never the customer original price.
+		result.RenewalAmount = ""
+		if renewalProvider, ok := upstream.(contracts.RenewalProvider); ok {
+			quotes, quoteErr := renewalProvider.RenewalQuotes(parseHostID(host.UpstreamInstanceID))
+			var pricing struct{ Rate string }
+			priceErr := s.db.WithContext(ctx).Raw("SELECT rate FROM common.suppliers WHERE id=?", host.UpstreamProviderID).Scan(&pricing).Error
+			if quoteErr == nil && priceErr == nil {
+				for _, quote := range quotes {
+					if quote.Cycle != detail.BillingCycle {
+						continue
+					}
+					original, e := balance.ParseMoney(quote.OriginalAmount)
+					if e != nil || original <= 0 {
+						continue
+					}
+					if amount, e := retailRenewal(original, pricing.Rate, "0", 0); e == nil {
+						result.RenewalAmount = amount.String()
+					}
+					break
+				}
 			}
 		}
 	}
+
 	if detail.Password != "" {
 		result.PasswordMasked = "************"
 	}

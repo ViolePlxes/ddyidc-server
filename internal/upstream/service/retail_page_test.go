@@ -19,14 +19,14 @@ func TestRetailOrderPageDoesNotLeakOrMutateProcurementPrices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if page.Product.Price != 200 || page.Cycles[0].Price != 200 || page.Cycles[1].Price != 600.01 || page.ConfigOptions[0].Options[0].Price != 14.29 || page.Cycles[0].SetupFee != 0 || page.DefaultPassword != "" {
+	if page.Product.Price != 140 || page.Cycles[0].Price != 140 || page.Cycles[1].Price != 420 || page.ConfigOptions[0].Options[0].Price != 10 || page.Cycles[0].SetupFee != 0 || page.DefaultPassword != "" {
 		t.Fatalf("unexpected customer prices: %+v", page)
 	}
 	if raw.Cycles[0].Price != 140 || raw.ConfigOptions[0].Options[0].Price != 10 || raw.DefaultPassword != "supplier-secret" {
 		t.Fatal("cached supplier quote mutated")
 	}
 	second, err := retailOrderPage(raw, model.UpstreamProduct{ProfitType: 1, ProfitValue: 5}, 2)
-	if err != nil || second.Cycles[0].Price != 285 || second.ConfigOptions[0].Options[1].Price != 0 {
+	if err != nil || second.Cycles[0].Price != 280 || second.ConfigOptions[0].Options[1].Price != 0 {
 		t.Fatal("rate/fixed margin or zero fee incorrect")
 	}
 }

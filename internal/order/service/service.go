@@ -267,7 +267,7 @@ func periodBasePrice(product *rep.SellableProduct, spec *rep.PricingSpec, page *
 		for _, item := range page.Cycles {
 			if strings.EqualFold(item.Billingcycle, cycle) {
 				setupFee = item.SetupFee
-				if spec == nil || spec.PriceMode == "upstream" {
+				if product.SupplierID != "" && product.SupplierID != "0" || spec == nil || spec.PriceMode == "upstream" {
 					return int64(item.Price*100 + 0.5), int64(setupFee*100 + 0.5), nil
 				}
 				if monthlyUpstream > 0 && months > 0 {
@@ -276,6 +276,9 @@ func periodBasePrice(product *rep.SellableProduct, spec *rep.PricingSpec, page *
 				}
 			}
 		}
+	}
+	if product.SupplierID != "" && product.SupplierID != "0" {
+		return 0, 0, errors.New("商品周期原价未确认，暂不能下单")
 	}
 	return int64(configuredMonthly*float64(months)*100 + 0.5), int64(setupFee*100 + 0.5), nil
 }
@@ -423,7 +426,7 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 		return nil, err
 	}
 	skipPriceFields := map[string]bool{}
-	if spec != nil && spec.PriceMode == "fixed" {
+	if spec != nil && spec.PriceMode == "fixed" && (product.SupplierID == "" || product.SupplierID == "0") {
 		skipPriceFields["cpu"] = true
 		skipPriceFields["memory"] = true
 	}

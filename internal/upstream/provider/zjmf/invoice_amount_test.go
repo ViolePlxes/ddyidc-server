@@ -77,7 +77,7 @@ func TestRenewalQuoteRejectsBeforeInvoiceCreation(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/host/renewpage":
-					fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","amount":%s,"duration":1}]}}`, value)
+					fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","price":"40.00","amount":%s,"duration":1}]}}`, value)
 				case "/host/renew":
 					writes.Add(1)
 					fmt.Fprint(w, `{"status":200,"data":{"invoiceid":"renew-901"}}`)

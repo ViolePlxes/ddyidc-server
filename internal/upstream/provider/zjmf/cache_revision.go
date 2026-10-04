@@ -67,5 +67,5 @@ func (p *Provider) productCacheKey(id int, kind string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return p.tokenKey() + ":" + kind + ":" + strconv.Itoa(id) + ":" + generation, nil
+	return p.tokenKey() + ":standard-v2:" + kind + ":" + strconv.Itoa(id) + ":" + generation, nil
 }

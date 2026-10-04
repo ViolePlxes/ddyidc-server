@@ -63,7 +63,7 @@ func retailOrderPage(raw *contracts.OrderPage, mapping model.UpstreamProduct, ra
 		if value <= 0 {
 			return value
 		}
-		return CalculateRetailPrice(value, rate, mapping.ProfitType, mapping.ProfitValue)
+		return CalculateRetailPrice(value, rate, 0, 0)
 	}
 	page.Product.Price = price(page.Product.Price)
 	page.Product.SetupFee = price(page.Product.SetupFee)

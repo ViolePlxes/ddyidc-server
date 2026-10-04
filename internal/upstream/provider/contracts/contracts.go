@@ -271,10 +271,12 @@ type InstanceProvider interface {
 
 // RenewalProvider separates quote, invoice creation and payment so uncertain writes are never repeated.
 type RenewalQuote struct {
-	Cycle    string `json:"cycle"`
-	Label    string `json:"label"`
-	Amount   string `json:"amount"`
-	Duration int64  `json:"duration"`
+	// OriginalAmount is the undiscounted customer price; Amount remains procurement cost.
+	OriginalAmount string `json:"originalAmount"`
+	Cycle          string `json:"cycle"`
+	Label          string `json:"label"`
+	Amount         string `json:"amount"`
+	Duration       int64  `json:"duration"`
 }
 type RenewalProvider interface {
 	RenewalQuotes(int64) ([]RenewalQuote, error)

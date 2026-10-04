@@ -34,6 +34,19 @@ func TestPeriodBasePriceAppliesUpstreamCycleDiscountToFixedSpec(t *testing.T) {
 	}
 }
 
+func TestUpstreamOriginalCycleOverridesLocalFixedPrice(t *testing.T) {
+	product := &rep.SellableProduct{SupplierID: "42", PriceYuan: 21}
+	spec := &rep.PricingSpec{PriceMode: "fixed", PriceYuan: 19}
+	page := &upstreamcontracts.OrderPage{Cycles: []upstreamcontracts.CycleItem{{Billingcycle: "monthly", Price: 30, SetupFee: 2}}}
+	amount, setup, err := periodBasePrice(product, spec, page, "monthly", 1)
+	if err != nil || amount != 3000 || setup != 200 {
+		t.Fatalf("original cycle must override local/agent price: %d %d %v", amount, setup, err)
+	}
+	if _, _, err := periodBasePrice(product, spec, page, "annually", 12); err == nil {
+		t.Fatal("missing original cycle must not fall back to a stored discounted price")
+	}
+}
+
 func TestBuildConfigSnapshotEncryptsPasswordAndReturnsSafeView(t *testing.T) {
 	key := []byte("0123456789abcdef0123456789abcdef")
 	input := &CreateOrderInput{
