@@ -65,8 +65,26 @@ func (s *Service) PayBalance(ctx context.Context, customerID, orderID int64) (*O
 		if err := tx.Where("order_id=?", orderID).Find(&current).Error; err != nil {
 			return err
 		}
-		if len(current) != 1 || current[0].ModuleType != "cloud" || current[0].InstanceID != nil || current[0].DeliveryStatus != 0 {
-			return errors.New("此订单不支持新购余额支付")
+		if len(current) != 1 || !balanceModuleSupported(current[0].ModuleType) || current[0].InstanceID != nil || current[0].DeliveryStatus != 0 {
+			return errors.New("此订单类型或交付状态不支持余额支付")
+		}
+		switch current[0].ModuleType {
+		case "certification":
+			var linked int64
+			if err := tx.Table("customer.customer_realname").Where("customer_id=? AND certify_fee_order=?", customerID, orderID).Count(&linked).Error; err != nil {
+				return err
+			}
+			if linked != 1 {
+				return errors.New("认证费用订单关联不匹配")
+			}
+		case "cdnsell":
+			var linked int64
+			if err := tx.Table("system.cdnsell_orders").Where("user_id=? AND ref_order_id=? AND status='pending' AND amount=?", customerID, orderID, locked.PayAmount).Count(&linked).Error; err != nil {
+				return err
+			}
+			if linked != 1 {
+				return errors.New("流量包订单归属、金额或状态不匹配")
+			}
 		}
 		var pending int64
 		if err := tx.Table("payment.payments").Where("biz_type='order' AND biz_id=? AND status='pending'", orderID).Count(&pending).Error; err != nil {
@@ -82,7 +100,7 @@ func (s *Service) PayBalance(ctx context.Context, customerID, orderID int64) (*O
 		if legacy > 0 {
 			return errors.New("历史采购订单不可再次支付")
 		}
-		if _, err := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: customerID, Type: "order_pay", Amount: balance.Money(-locked.PayAmount).String(), RefType: "order", RefID: orderID, Channel: "order", RequestID: fmt.Sprintf("order-balance:%d", orderID), Notes: "新购订单余额支付"}); err != nil {
+		if _, err := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: customerID, Type: "order_pay", Amount: balance.Money(-locked.PayAmount).String(), RefType: "order", RefID: orderID, Channel: "order", RequestID: fmt.Sprintf("order-balance:%d", orderID), Notes: "订单余额支付"}); err != nil {
 			return err
 		}
 		changed, err := state.AcceptBalancePaymentTx(tx, orderID, customerID, locked.PayAmount, time.Now())
@@ -101,4 +119,13 @@ func (s *Service) PayBalance(ctx context.Context, customerID, orderID int64) (*O
 		return nil, err
 	}
 	return s.GetOrder(ctx, customerID, orderID)
+}
+
+func balanceModuleSupported(module string) bool {
+	switch module {
+	case "cloud", "vps", "dcimcloud", "hostingaccount", "cdn", "certification", "cdnsell":
+		return true
+	default:
+		return false
+	}
 }

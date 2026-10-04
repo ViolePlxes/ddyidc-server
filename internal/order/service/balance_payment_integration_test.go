@@ -3,6 +3,8 @@ package order_test
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/cdnsell"
+	"ddyidc/internal/certification"
 	dom "ddyidc/internal/order/domain"
 	repo "ddyidc/internal/order/repository"
 	svc "ddyidc/internal/order/service"
@@ -37,7 +39,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 	if err := snowflake.Configure(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	for _, scenario := range []string{"success", "insufficient", "foreign", "online_pending", "cancelled", "task_conflict"} {
+	for _, scenario := range []string{"success", "dcimcloud", "hostingaccount", "cdn", "certification", "cdnsell", "unsupported", "insufficient", "foreign", "online_pending", "cancelled", "task_conflict"} {
 		t.Run(scenario, func(t *testing.T) {
 			tx := db.Begin()
 			defer tx.Rollback()
@@ -60,7 +62,17 @@ func TestOrderBalanceMySQL(t *testing.T) {
 				o.Status = 3
 			}
 			must(tx.Create(&o).Error)
-			must(tx.Create(&dom.OrderItem{OrderID: oid, ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", Qty: 1, UnitPrice: amount, Subtotal: amount}).Error)
+			module := "cloud"
+			if scenario == "certification" || scenario == "cdnsell" || scenario == "unsupported" || scenario == "dcimcloud" || scenario == "hostingaccount" || scenario == "cdn" {
+				module = scenario
+			}
+			must(tx.Create(&dom.OrderItem{OrderID: oid, ProductID: 1, ProductName: "isolated", ModuleType: module, ConfigSnapshot: "{}", Qty: 1, UnitPrice: amount, Subtotal: amount}).Error)
+			if scenario == "certification" {
+				must(tx.Create(&certification.Record{ID: snowflake.GenID(), CustomerID: cid, CertifyFeeOrder: oid, Type: 1}).Error)
+			}
+			if scenario == "cdnsell" {
+				must(tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status) VALUES(?,?,?,'traffic_pack',?,1,1024,100,?,'pending')", snowflake.GenID(), o.OrderNo, cid, oid, `{"validDays":30}`).Error)
+			}
 			if scenario == "online_pending" {
 				must(tx.Exec("INSERT INTO payment.payments(id,payment_no,biz_type,biz_id,order_id,customer_id,channel,out_trade_no,amount,amount_fen,status,expire_at) VALUES(?,?,'order',?,?,?,'alipay',?,1.00,100,'pending',DATE_ADD(NOW(),INTERVAL 1 HOUR))", snowflake.GenID(), fmt.Sprintf("ISO-P%d", oid), oid, oid, cid, fmt.Sprintf("ISO-T%d", oid)).Error)
 			}
@@ -74,7 +86,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 			}
 			result, err := service.PayBalance(ctx, caller, oid)
 			expected := "10.00"
-			if scenario == "success" {
+			if scenario == "success" || scenario == "certification" || scenario == "cdnsell" || scenario == "dcimcloud" || scenario == "hostingaccount" || scenario == "cdn" {
 				must(err)
 				if result.Status != 2 {
 					t.Fatal("order not paid")
@@ -94,7 +106,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 			must(tx.Model(&balance.Transaction{}).Where("tx_no=?", fmt.Sprintf("order-balance:%d", oid)).Count(&debits).Error)
 			var saved dom.Order
 			must(tx.Where("id=?", oid).Take(&saved).Error)
-			if scenario == "success" {
+			if scenario == "success" || scenario == "certification" || scenario == "cdnsell" || scenario == "dcimcloud" || scenario == "hostingaccount" || scenario == "cdn" {
 				if debits != 1 || saved.Status != 2 || saved.BalanceAmount != 100 {
 					t.Fatal("duplicate debit or incorrect order", debits, saved)
 				}
@@ -102,6 +114,23 @@ func TestOrderBalanceMySQL(t *testing.T) {
 				must(tx.Model(&tasks.Task{}).Where("task_key=?", fmt.Sprintf("order-balance:%d", oid)).Count(&count).Error)
 				if count != 1 {
 					t.Fatal("missing or duplicate durable task")
+				}
+				if scenario == "certification" {
+					_, err = certification.New(tx, nil, nil, "").ProvisionPlatformOrder(ctx, cid, oid, "balance")
+					must(err)
+					_, err = certification.New(tx, nil, nil, "").ProvisionPlatformOrder(ctx, cid, oid, "balance")
+					must(err)
+				}
+				if scenario == "cdnsell" {
+					_, err = cdnsell.NewService(tx, nil, nil).ProvisionPlatformOrder(ctx, cid, oid, "balance")
+					must(err)
+					_, err = cdnsell.NewService(tx, nil, nil).ProvisionPlatformOrder(ctx, cid, oid, "balance")
+					must(err)
+					var batches int64
+					must(tx.Table("system.cdnsell_batches").Where("user_id=?", cid).Count(&batches).Error)
+					if batches != 1 {
+						t.Fatal("duplicate traffic batch", batches)
+					}
 				}
 			} else if debits != 0 || saved.Status != o.Status {
 				t.Fatal("failed payment left financial state", debits, saved.Status)
