@@ -41,7 +41,7 @@ func CalculatePrice(upstream, rate float64, profitType int, profit float64) floa
 	return cost * (1 + profit/100)
 }
 func (s *Store) PullProducts(supplierID string) (interface{}, error) {
-	p, e := s.ProviderFor(supplierID)
+	p, e := s.catalogueProvider(supplierID)
 	if e != nil {
 		return nil, e
 	}
@@ -99,7 +99,7 @@ func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
 	if e != nil {
 		return model.UpstreamProduct{}, e
 	}
-	p, e := s.ProviderFor(in.SupplierID)
+	p, e := s.catalogueProvider(in.SupplierID)
 	if e != nil {
 		return model.UpstreamProduct{}, e
 	}

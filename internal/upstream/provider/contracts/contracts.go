@@ -13,6 +13,8 @@ type Supplier struct {
 	Rate                                         float64
 	CurrencyCode                                 string
 	Status                                       int
+	// Catalogue imports opt in; user machine operations stay unthrottled.
+	LimitRequests bool
 }
 type UpstreamProduct struct {
 	ID                 int             `json:"id,string"`

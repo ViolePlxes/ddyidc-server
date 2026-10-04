@@ -49,6 +49,7 @@ import (
 	ticketservice "ddyidc/internal/ticket/service"
 	"ddyidc/internal/update"
 	upstreamapi "ddyidc/internal/upstream/api"
+	upstreammetrics "ddyidc/internal/upstream/metrics"
 	upstreamservice "ddyidc/internal/upstream/service"
 	"ddyidc/internal/upstream/testpolicy"
 	"ddyidc/internal/videobind"
@@ -375,7 +376,7 @@ func main() {
 	if !c.Cron.IsEnabled() || *noCron {
 		fmt.Println("定时任务已关闭（测试模式），仅提供 API 服务")
 	} else {
-		cronCtx, cancelCron := context.WithCancel(context.Background())
+		cronCtx, cancelCron := context.WithCancel(upstreammetrics.WithBackground(context.Background()))
 		defer cancelCron()
 		// go-zero's shutdown hook runs before resource teardown.
 		proc.AddShutdownListener(cancelCron)

@@ -141,7 +141,7 @@ func (s *Store) runCatalogSync(ctx context.Context, task model.SyncTask) {
 	if started.Error != nil || started.RowsAffected != 1 {
 		return
 	}
-	p, e := s.ProviderFor(task.SupplierID)
+	p, e := s.catalogueProvider(task.SupplierID)
 	if e == nil {
 		var rows []contracts.UpstreamProduct
 		scoped, ok := p.(interface {

@@ -74,7 +74,7 @@ func (s *Store) SyncProductWithSummary(key string) (result ChangeSummary, retErr
 		return ChangeSummary{}, err
 	}
 	result = ChangeSummary{SupplierID: v.SupplierID, UpstreamProductID: v.UpstreamProductID}
-	p, err := s.ProviderFor(v.SupplierID)
+	p, err := s.catalogueProvider(v.SupplierID)
 	if err != nil {
 		return result, err
 	}

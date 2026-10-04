@@ -126,12 +126,13 @@ func (c *Counter) Snapshot() map[string]Summary {
 // Count at RoundTrip, including retries, redirects and failed HTTP attempts.
 // Cache hits never reach this transport. No URLs, payloads or credentials kept.
 type Transport struct {
-	Base       http.RoundTripper
-	SupplierID string
+	Base          http.RoundTripper
+	SupplierID    string
+	LimitRequests bool
 }
 
 func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if t.SupplierID != "" {
+	if t.SupplierID != "" && (t.LimitRequests || IsBackground(r.Context())) {
 		if err := supplierSlots.wait(r.Context()); err != nil {
 			return nil, err
 		}

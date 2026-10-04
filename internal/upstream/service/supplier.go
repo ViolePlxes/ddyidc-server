@@ -165,6 +165,14 @@ func (s *Store) DeleteSupplier(key string) error {
 	return nil
 }
 func (s *Store) ProviderFor(key string) (provider.UpstreamProvider, error) {
+	return s.providerFor(key, false)
+}
+
+func (s *Store) catalogueProvider(key string) (provider.UpstreamProvider, error) {
+	return s.providerFor(key, true)
+}
+
+func (s *Store) providerFor(key string, limited bool) (provider.UpstreamProvider, error) {
 	v, e := s.GetSupplier(key)
 	if e != nil {
 		return nil, e
@@ -177,7 +185,9 @@ func (s *Store) ProviderFor(key string) (provider.UpstreamProvider, error) {
 	if e != nil {
 		return nil, e
 	}
-	return provider.NewProvider(toProvider(v))
+	config := toProvider(v)
+	config.LimitRequests = limited
+	return provider.NewProvider(config)
 }
 func (s *Store) TestSupplier(key string) error {
 	p, e := s.ProviderFor(key)

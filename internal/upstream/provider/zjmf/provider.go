@@ -853,8 +853,12 @@ func (p *Provider) authorizedFormPost(path string, form url.Values) ([]byte, err
 // login and read-only traffic, is covered by the same guard.
 func (p *Provider) request(method, endpoint string, body io.Reader, contentType, jwt string) ([]byte, int, error) {
 	guard, err := http.NewRequest(method, endpoint, nil)
-	if err != nil { return nil, 0, err }
-	if err := outbound.CheckDetailRequest(guard); err != nil { return nil, 0, err }
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := outbound.CheckDetailRequest(guard); err != nil {
+		return nil, 0, err
+	}
 	if err := outbound.ValidateURL(endpoint); err != nil {
 		return nil, 0, err
 	}
@@ -887,7 +891,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		ctx = p.instanceContext
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
-		if isQKIDC {
+		if isQKIDC && (p.Supplier.LimitRequests || metrics.IsBackground(ctx)) {
 			if err := waitForRequestSlotContext(ctx, parsed.Hostname(), 2*time.Second); err != nil {
 				return nil, 0, err
 			}
@@ -908,7 +912,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if scoped {
 			observed.Timeout = 8 * time.Second
 		}
-		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID}
+		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID, LimitRequests: p.Supplier.LimitRequests}
 		response, err := observed.Do(req)
 		if err != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)

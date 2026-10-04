@@ -9,6 +9,18 @@ import (
 	"time"
 )
 
+type backgroundKey struct{}
+
+// WithBackground marks scheduler work. Interactive requests never inherit it.
+func WithBackground(ctx context.Context) context.Context {
+	return context.WithValue(ctx, backgroundKey{}, true)
+}
+
+func IsBackground(ctx context.Context) bool {
+	v, _ := ctx.Value(backgroundKey{}).(bool)
+	return v
+}
+
 // One shared slot every 1.1s is stricter than 30 attempts in any 30s window.
 // Every transport attempt, including redirects and authentication, is counted.
 var supplierSlots = &requestLimiter{interval: 1100 * time.Millisecond}
