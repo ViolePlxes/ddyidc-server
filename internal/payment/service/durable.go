@@ -9,13 +9,28 @@ import (
 	"gorm.io/gorm"
 )
 
-type DurableDispatcher struct{}
+type DurableDispatcher struct {
+	database    *gorm.DB
+	coordinator PostPaymentCoordinator
+}
 
 // Dispatch remains a compatibility notification. The receipt transaction has
 // already committed the durable intention, so no volatile goroutine is needed.
 func (*DurableDispatcher) Dispatch(*dom.Payment) {}
 func NewDurableDispatcher(ctx context.Context, database *gorm.DB, coordinator PostPaymentCoordinator) *DurableDispatcher {
-	go tasks.Run(ctx, database, func(ctx context.Context, task *tasks.Task) error {
+	d := NewDeferredDurableDispatcher(database, coordinator)
+	d.Start(ctx)
+	return d
+}
+
+// Register Start with the scheduler so -no-cron also stops durable consumers.
+func NewDeferredDurableDispatcher(database *gorm.DB, coordinator PostPaymentCoordinator) *DurableDispatcher {
+	return &DurableDispatcher{database: database, coordinator: coordinator}
+}
+
+func (d *DurableDispatcher) Start(ctx context.Context) {
+	coordinator := d.coordinator
+	go tasks.Run(ctx, d.database, func(ctx context.Context, task *tasks.Task) error {
 		if task.Kind == "customer_notice" {
 			var p tasks.NoticePayload
 			if err := json.Unmarshal([]byte(task.Payload), &p); err != nil {
@@ -112,5 +127,4 @@ func NewDurableDispatcher(ctx context.Context, database *gorm.DB, coordinator Po
 			return errors.New("unsupported task business")
 		}
 	})
-	return &DurableDispatcher{}
 }

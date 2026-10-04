@@ -941,7 +941,7 @@ func (s *Service) RefundDeduct(ctx context.Context, userID int64, event, refID s
 }
 func (s *Service) ExpireDue(ctx context.Context) (int, error) {
 	var rows []Record
-	e := s.db.WithContext(ctx).Table(recordsTable+" gain").Select("gain.*").Joins("LEFT JOIN system.points_records expired ON expired.event='expire' AND expired.ref_id=CAST(gain.id AS CHAR) AND expired.source='expiry'").Where("gain.type='gain' AND gain.expire_at IS NOT NULL AND gain.expire_at<=? AND expired.id IS NULL", s.now()).Limit(1000).Find(&rows).Error
+	e := s.db.WithContext(ctx).Table(recordsTable+" gain").Select("gain.*").Joins("LEFT JOIN system.points_records expired ON expired.event='expire' AND expired.ref_id=CAST(gain.id AS CHAR) COLLATE utf8mb4_unicode_ci AND expired.source='expiry'").Where("gain.type='gain' AND gain.expire_at IS NOT NULL AND gain.expire_at<=? AND expired.id IS NULL", s.now()).Limit(1000).Find(&rows).Error
 	if e != nil {
 		return 0, e
 	}

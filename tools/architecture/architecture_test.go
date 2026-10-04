@@ -15,10 +15,10 @@ import (
 // Explicitly reviewed long-lived launchers. This is not a baseline of arbitrary
 // goroutines: each launcher delegates work to a durable lease or leader barrier.
 var launchers = map[string]string{
-	"internal/payment/service/durable.go:NewDurableDispatcher": "tasks.Run",
-	"internal/order/service/stock_expiry.go:StartStockExpiry":  "distsync.Work",
-	"internal/groupbuy/service.go:StartMaintenance":            "distsync.Task",
-	"internal/marketplace/trade.go:StartMaintenance":           "distsync.Task",
+	"internal/payment/service/durable.go:Start":               "tasks.Run",
+	"internal/order/service/stock_expiry.go:StartStockExpiry": "distsync.Work",
+	"internal/groupbuy/service.go:StartMaintenance":           "distsync.Task",
+	"internal/marketplace/trade.go:StartMaintenance":          "distsync.Task",
 }
 
 var directSQL = regexp.MustCompile(`(?i)\b(update|insert\s+into|replace\s+into|delete\s+from)\s+billing\s*\.\s*(accounts|transactions)\b`)

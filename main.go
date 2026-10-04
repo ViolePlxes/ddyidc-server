@@ -504,9 +504,9 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("instance management schema failed: " + err.Error())
 	}
 	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance)
-	taskContext, stopTasks := context.WithCancel(context.Background())
-	proc.AddShutdownListener(stopTasks)
-	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, paymentservice.NewDurableDispatcher(taskContext, db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc}))
+	durableDispatcher := paymentservice.NewDeferredDurableDispatcher(db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc})
+	*cronStarts = append(*cronStarts, durableDispatcher.Start)
+	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)
 	paymentSvc.SetRemoteDeliveryRecovery(orderSvc.ReconcileRemoteDelivery)
 	paymentSvc.SetRenewalRecovery(instanceSvc.ReconcileRenewal)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)

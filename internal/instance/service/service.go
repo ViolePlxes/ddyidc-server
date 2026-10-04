@@ -222,9 +222,16 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	orderNo, _ := s.repo.FindOrderNo(ctx, host.OrderID)
 	config, snapshot := parseSnapshot(host.ConfigSnapshot)
 	events, _ := s.repo.ListEvents(ctx, host.ID, 50)
+	legacyFinalized := false
+	if host.ModuleType == "legacy_snapshot" && s.db != nil {
+		var migration struct{ ReadOnly bool }
+		if err := s.db.WithContext(ctx).Table("system.v10_instance_source").Select("read_only").Where("instance_id=?", host.ID).Take(&migration).Error; err == nil {
+			legacyFinalized = !migration.ReadOnly
+		}
+	}
 	result := &DetailView{
 		InfoSource: "snapshot",
-		ReadOnly:   outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot",
+		ReadOnly:   outbound.DetailReadOnly() || (host.ModuleType == "legacy_snapshot" && !legacyFinalized),
 		ID:         strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark,
 		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
@@ -261,7 +268,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.FirstPayment = legacy.FirstPayment
 		result.RenewalAmount = legacy.RenewalAmount
 		result.Warning = "历史实例已同步，当前仅供查询"
-		if !outbound.DetailReadOnly() {
+		if !outbound.DetailReadOnly() && !legacyFinalized {
 			return result, nil
 		}
 	}
