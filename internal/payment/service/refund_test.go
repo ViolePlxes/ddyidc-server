@@ -37,35 +37,45 @@ func (c *refundChannel) Refund(context.Context, *dom.Payment, *dom.Refund) error
 	return c.err
 }
 
-func TestRefundValidatesAndPersistsOnlyConfirmedResult(t *testing.T) {
-	r := &refundRepo{fakeRepository: fakeRepository{payment: &dom.Payment{Amount: "0.01", Channel: "alipay"}}, refund: &dom.Refund{Status: "pending", RequestNo: "RF1"}}
-	c := &refundChannel{err: errors.New("timeout")}
-	s := NewService(r, Config{}, map[string]Channel{"alipay": c}, nil)
-	for _, amount := range []string{"", "0", "-0.01", "0.001", "1e2", "0.02"} {
-		if _, err := s.Refund(context.Background(), 1, 1, amount, "test", "127.0.0.1"); err == nil {
-			t.Fatalf("accepted %q", amount)
+func TestGatewayRefundBanHasNoSideEffects(t *testing.T) {
+	for _, channel := range []string{"alipay", "wechat"} {
+		r := &refundRepo{fakeRepository: fakeRepository{payment: &dom.Payment{Amount: "0.01", Channel: channel}}, refund: &dom.Refund{Status: "pending", RequestNo: "RF1"}}
+		c := &refundChannel{}
+		s := NewService(r, Config{}, map[string]Channel{channel: c}, nil)
+		for i := 0; i < 2; i++ {
+			result, err := s.Refund(context.Background(), 1, 1, "0.01", "test", "127.0.0.1")
+			assertGatewayRefundBlocked(t, err)
+			if result != nil {
+				t.Fatal("blocked refund returned success")
+			}
+			assertGatewayRefundBlocked(t, s.RefundMarketplace(context.Background(), 1))
+		}
+		if r.prepares != 0 || r.completes != 0 || c.calls != 0 || r.refund.Status != "pending" {
+			t.Fatal("blocked refund touched repository or provider")
 		}
 	}
-	if c.calls != 0 {
-		t.Fatal("invalid input reached provider")
+}
+
+func assertGatewayRefundBlocked(t *testing.T, err error) {
+	t.Helper()
+	var business *BusinessError
+	if !errors.As(err, &business) || business.Code != 40007 {
+		t.Fatalf("expected hard refund ban, got %v", err)
 	}
-	if _, err := s.Refund(context.Background(), 1, 0, "0.01", "test", "127.0.0.1"); err == nil {
-		t.Fatal("missing admin accepted")
-	}
-	if _, err := s.Refund(context.Background(), 1, 1, "0.01", "test", "127.0.0.1"); err == nil {
-		t.Fatal("timeout succeeded")
-	}
-	if r.completes != 0 || r.refund.Status != "pending" {
-		t.Fatal("uncertain refund finalized")
-	}
-	c.err = nil
-	if _, err := s.Refund(context.Background(), 1, 1, "0.01", "test", "127.0.0.1"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Refund(context.Background(), 1, 1, "0.01", "test", "127.0.0.1"); err != nil {
-		t.Fatal(err)
-	}
-	if c.calls != 2 || r.completes != 1 || r.refund.RequestNo != "RF1" {
-		t.Fatal("duplicate refund or changed idempotency key")
+}
+
+func TestRealGatewayRefundBanDoesNotInitializeClients(t *testing.T) {
+	// Nil SDK clients would panic if any real network path were reached.
+	assertGatewayRefundBlocked(t, (&alipayChannel{}).Refund(context.Background(), nil, nil))
+	assertGatewayRefundBlocked(t, (&alipayChannel{}).confirmRefund(context.Background(), nil, nil))
+	assertGatewayRefundBlocked(t, (&wechatChannel{}).Refund(context.Background(), nil, nil))
+	initialized := false
+	deferred := &deferredWechatChannel{build: func(context.Context) (Channel, error) {
+		initialized = true
+		return nil, errors.New("must not initialize")
+	}}
+	assertGatewayRefundBlocked(t, deferred.Refund(context.Background(), nil, nil))
+	if initialized {
+		t.Fatal("refund initialized WeChat SDK")
 	}
 }

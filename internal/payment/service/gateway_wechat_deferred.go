@@ -80,9 +80,6 @@ func (c *deferredWechatChannel) Query(ctx context.Context, no string) (PlatformQ
 	return ch.(QueryableChannel).Query(ctx, no)
 }
 func (c *deferredWechatChannel) Refund(ctx context.Context, p *dom.Payment, refund *dom.Refund) error {
-	ch, err := c.get(ctx)
-	if err != nil {
-		return err
-	}
-	return ch.(RefundableChannel).Refund(ctx, p, refund)
+	// Do not initialize the SDK or fetch platform certificates for refunds.
+	return gatewayRefundDisabled()
 }
