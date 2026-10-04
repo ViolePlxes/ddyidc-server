@@ -131,6 +131,11 @@ type Transport struct {
 }
 
 func (t Transport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.SupplierID != "" {
+		if err := supplierSlots.wait(r.Context()); err != nil {
+			return nil, err
+		}
+	}
 	started := Default.Record(t.SupplierID)
 	base := t.Base
 	if base == nil {
