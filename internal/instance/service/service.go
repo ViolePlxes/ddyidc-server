@@ -17,6 +17,7 @@ import (
 	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/upstream/provider"
 	"ddyidc/internal/upstream/provider/contracts"
+	"ddyidc/pkg/outbound"
 
 	"gorm.io/gorm"
 )
@@ -92,6 +93,9 @@ type EventView struct {
 }
 
 type DetailView struct {
+	InfoSource         string                         `json:"infoSource"`
+	ReadOnly           bool                           `json:"readOnly"`
+	QueriedAt          string                         `json:"queriedAt,omitempty"`
 	Username           string                         `json:"username,omitempty"`
 	Port               string                         `json:"port,omitempty"`
 	PortIsDefault      bool                           `json:"portIsDefault,omitempty"`
@@ -219,7 +223,9 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	config, snapshot := parseSnapshot(host.ConfigSnapshot)
 	events, _ := s.repo.ListEvents(ctx, host.ID, 50)
 	result := &DetailView{
-		ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark,
+		InfoSource: "snapshot",
+		ReadOnly:   outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot",
+		ID:         strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark,
 		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
@@ -244,8 +250,8 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	}
 	if host.ModuleType == "legacy_snapshot" {
 		var legacy struct {
-			OrderNo string `json:"legacyOrderNo"`
-			FirstPayment string `json:"firstPayment"`
+			OrderNo       string `json:"legacyOrderNo"`
+			FirstPayment  string `json:"firstPayment"`
 			RenewalAmount string `json:"renewalAmount"`
 		}
 		if err := json.Unmarshal([]byte(host.ConfigSnapshot), &legacy); err != nil {
@@ -255,7 +261,9 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.FirstPayment = legacy.FirstPayment
 		result.RenewalAmount = legacy.RenewalAmount
 		result.Warning = "历史实例已同步，当前仅供查询"
-		return result, nil
+		if !outbound.DetailReadOnly() {
+			return result, nil
+		}
 	}
 
 	upstream, warning := s.providerContext(ctx, host)
@@ -265,13 +273,17 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	}
 	detail, err := upstream.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
 	if err != nil || detail == nil || detail.ID != host.UpstreamInstanceID {
-		result.Warning = "实例实时信息暂时不可用，请稍后重试"
+		result.Warning = "实时信息暂时不可用，当前显示已保存的信息，请稍后重试"
 		return result, nil
 	}
+	result.InfoSource, result.QueriedAt = "upstream", formatTime(time.Now())
+	result.Warning = ""
 	result.Username, result.Port = detail.Username, detail.Port
 	result.PortIsDefault = detail.PortIsDefault
 	result.UpstreamOrderID, result.UpstreamOrderNo, result.InvoiceID = detail.UpstreamOrderID, detail.UpstreamOrderNo, detail.InvoiceID
-	result.FirstPayment = detail.FirstPayment
+	if host.ModuleType != "legacy_snapshot" {
+		result.FirstPayment = detail.FirstPayment
+	}
 	if s.db != nil {
 		if cost, e := balance.ParseMoney(detail.RenewalAmount); e == nil && cost > 0 {
 			var pricing struct {
@@ -295,7 +307,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	if detail.ExpiresAt != nil {
 		result.ExpiresAt = formatTime(*detail.ExpiresAt)
 	}
-	if s.db != nil {
+	if s.db != nil && !outbound.DetailReadOnly() {
 		var settings RenewalSettings
 		s.db.WithContext(ctx).Where("instance_id=? AND customer_id=?", host.ID, customerID).Take(&settings)
 		result.AutoRenew = settings.Enabled
@@ -332,6 +344,11 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.Capabilities = contracts.InstanceCapabilities{}
 	}
 	result.Status = status
+	if outbound.DetailReadOnly() {
+		result.AutoRenew = false
+		result.Capabilities = contracts.InstanceCapabilities{}
+		return result, nil
+	}
 	now := time.Now()
 	updates := map[string]any{
 		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
@@ -413,6 +430,9 @@ func (s *Service) Monitor(ctx context.Context, customerID, instanceID int64, sta
 }
 
 func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in ActionInput) (*ActionView, error) {
+	if outbound.DetailReadOnly() {
+		return nil, fmt.Errorf("%w: 当前仅开放详情查询", ErrUnsupported)
+	}
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err

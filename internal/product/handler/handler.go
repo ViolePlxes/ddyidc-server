@@ -13,6 +13,7 @@ import (
 	repository "ddyidc/internal/product/repository"
 	upstreamcontracts "ddyidc/internal/upstream/provider/contracts"
 	upstream "ddyidc/internal/upstream/service"
+	"ddyidc/pkg/outbound"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"gorm.io/gorm"
@@ -73,8 +74,12 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	stock, cycle := product.Stock, product.Cycle
+	infoSource, warning := "local", ""
 	if product.SupplierID != "" && product.UpstreamProductID > 0 && h.upstream != nil {
-		if detail, upstreamErr := h.upstream.GetProductDetail(product.SupplierID, product.UpstreamProductID); upstreamErr == nil {
+		infoSource = "snapshot"
+		warning = "实时商品信息暂时不可用，当前显示已保存的信息"
+		if detail, upstreamErr := h.upstream.GetProductDetail(product.SupplierID, product.UpstreamProductID); upstreamErr == nil && detail != nil && detail.ID == product.UpstreamProductID {
+			infoSource, warning = "upstream", ""
 			for key, value := range detail.Config {
 				config[key] = value
 			}
@@ -91,7 +96,8 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		// Finance product-detail responses frequently omit configoptions even
 		// though cart/set_config is authoritative and complete. Use the existing
 		// cloud-to-legacy fallback to classify and expose the real purchase form.
-		if page, pageErr := h.upstream.GetOrderPage(product.SupplierID, product.UpstreamProductID); pageErr == nil {
+		if page, pageErr := h.upstream.GetOrderPage(product.SupplierID, product.UpstreamProductID); pageErr == nil && page != nil {
+			if len(configOptions) == 0 { configOptions = page.ConfigOptions }
 			if pageMode := productConfigMode(page.ConfigOptions); len(page.ConfigOptions) > 0 {
 				configMode = pageMode
 			}
@@ -107,6 +113,7 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": product.ID, "groupId": product.GroupID, "parentGroupId": product.ParentGroupID,
+		"infoSource": infoSource, "warning": warning, "readOnly": outbound.DetailReadOnly(),
 		"groupName": product.GroupName, "sort": product.Sort,
 		"name": product.Name, "summary": product.Summary, "description": product.Description,
 		"moduleType": product.ModuleType, "price": product.Price, "cycle": cycle, "stock": stock, "config": config,

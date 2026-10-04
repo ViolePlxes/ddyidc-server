@@ -4,6 +4,7 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/upstream/provider/contracts"
+	"ddyidc/pkg/outbound"
 	"time"
 )
 
@@ -28,6 +29,11 @@ func (s *Service) providerContext(ctx context.Context, h *dom.Host) (contracts.I
 	return p, w
 }
 func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*StatusView, error) {
+	if outbound.DetailReadOnly() {
+		detail, err := s.Detail(ctx, customerID, instanceID)
+		if err != nil { return nil, err }
+		return &StatusView{Status: detail.Status, PowerStatus: detail.PowerStatus, SyncedAt: detail.QueriedAt, Warning: detail.Warning}, nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	h, err := s.owned(ctx, customerID, instanceID)
