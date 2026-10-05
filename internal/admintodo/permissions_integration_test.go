@@ -65,7 +65,7 @@ func TestTodoHTTPPermissionsMySQL(t *testing.T) {
 		}
 		tokens[actor.name] = token
 	}
-	paths := []struct{ method, path string }{{"GET", "/admin/v1/todos/products/100/problems"}, {"GET", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/tasks/100/review"}, {"POST", "/admin/v1/todos/products/100/events/100/review"}, {"GET", "/admin/v1/todos"}, {"GET", "/admin/v1/todos/tickets/items"}, {"GET", "/admin/v1/todos/refunds/items"}, {"GET", "/admin/v1/todos/certifications/items"}, {"GET", "/admin/v1/todos/withdrawals/items"}, {"GET", "/admin/v1/todos/recommendations/items"}, {"GET", "/admin/v1/todos/provisioning/items"}, {"GET", "/admin/v1/todos/offline-transfers/items"}, {"GET", "/admin/v1/todos/manual-products/items"}, {"GET", "/admin/v1/todos/expiring/items"}, {"POST", "/admin/v1/todos/refund-applications/100/review"}, {"POST", "/admin/v1/payment/offline-transfers/100/review"}, {"POST", "/admin/v1/finance/withdrawals/100/review"}, {"POST", "/admin/v1/todos/refunds/100/confirm-manual"}}
+	paths := []struct{ method, path string }{{"GET", "/admin/v1/todos/order-items/100/problems"}, {"POST", "/admin/v1/todos/order-items/100/tasks/100/review"}, {"GET", "/admin/v1/todos/products/100/problems"}, {"GET", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/tasks/100/review"}, {"POST", "/admin/v1/todos/products/100/events/100/review"}, {"GET", "/admin/v1/todos"}, {"GET", "/admin/v1/todos/tickets/items"}, {"GET", "/admin/v1/todos/refunds/items"}, {"GET", "/admin/v1/todos/certifications/items"}, {"GET", "/admin/v1/todos/withdrawals/items"}, {"GET", "/admin/v1/todos/recommendations/items"}, {"GET", "/admin/v1/todos/provisioning/items"}, {"GET", "/admin/v1/todos/offline-transfers/items"}, {"GET", "/admin/v1/todos/manual-products/items"}, {"GET", "/admin/v1/todos/expiring/items"}, {"POST", "/admin/v1/todos/refund-applications/100/review"}, {"POST", "/admin/v1/payment/offline-transfers/100/review"}, {"POST", "/admin/v1/finance/withdrawals/100/review"}, {"POST", "/admin/v1/todos/refunds/100/confirm-manual"}}
 	for _, actor := range []string{"", "customer", "sales", "admin", "super"} {
 		for _, path := range paths {
 			conf := rest.RestConf{}
@@ -103,6 +103,9 @@ func TestTodoHTTPPermissionsMySQL(t *testing.T) {
 				}
 			}
 			if actor == "super" && strings.Contains(path.path, "/products/") && (path.method == "GET" || strings.Contains(path.path, "expiry-reminders")) {
+				expected = 404
+			}
+			if actor == "super" && strings.Contains(path.path, "/order-items/") {
 				expected = 404
 			}
 			if response.Code != expected {

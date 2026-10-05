@@ -18,12 +18,12 @@ func TestProvisionDatesRequireBoundFacts(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := &ProvisionResult{HostID: "42", UpstreamProductID: 353}
-			applyProvisionDates(r, &contracts.InstanceDetail{ID: tc.id, ProductID: tc.product, ActivatedAt: &start, ExpiresAt: &end})
+			applyProvisionDates(r, &contracts.InstanceDetail{ID: tc.id, ProductID: tc.product, PrimaryIP: "192.0.2.36", ActivatedAt: &start, ExpiresAt: &end})
 			if tc.valid {
-				if r.ActivatedAt == nil || !r.ActivatedAt.Equal(start) || r.ExpiresAt == nil || !r.ExpiresAt.Equal(end) {
+				if r.PrimaryIP != "192.0.2.36" || r.ActivatedAt == nil || !r.ActivatedAt.Equal(start) || r.ExpiresAt == nil || !r.ExpiresAt.Equal(end) {
 					t.Fatal("provider dates not preserved")
 				}
-			} else if r.ActivatedAt != nil || r.ExpiresAt != nil {
+			} else if r.PrimaryIP != "" || r.ActivatedAt != nil || r.ExpiresAt != nil {
 				t.Fatal("unbound dates accepted")
 			}
 		})

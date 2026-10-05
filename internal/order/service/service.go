@@ -649,6 +649,7 @@ func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64
 		ID: instanceID, InstanceNo: generateInstanceNo(), CustomerID: customerID, OrderID: orderID,
 		OrderItemID: item.ID, ProductID: item.ProductID, ProductName: item.ProductName,
 		ModuleType: item.ModuleType, ConfigSnapshot: item.ConfigSnapshot, Status: instanceStatus,
+		PrimaryIP:          result.PrimaryIP,
 		UpstreamInstanceID: result.HostID, ActivatedAt: result.ActivatedAt, ExpiresAt: result.ExpiresAt,
 	}
 	if supplierID, parseErr := parseID(result.SupplierID); parseErr == nil {

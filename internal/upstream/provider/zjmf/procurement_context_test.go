@@ -54,6 +54,43 @@ func TestProcurementPersistsInvoiceBeforeCharge(t *testing.T) {
 	}
 }
 
+func TestProcurementSettlementCanExceedInstanceReadTimeout(t *testing.T) {
+	var settles, paid atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/cart/get_total":
+			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
+		case "/cart/add_to_shop":
+			fmt.Fprint(w, `{"status":200,"data":{"i":1}}`)
+		case "/cart/settle":
+			settles.Add(1)
+			time.Sleep(8250 * time.Millisecond)
+			fmt.Fprint(w, `{"status":200,"data":{"invoiceid":901,"amount":"1.00"}}`)
+		case "/apply_credit":
+			paid.Add(1)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p := New(contracts.Supplier{URL: server.URL, Username: "isolated", Token: "isolated"})
+	tokens.Lock()
+	tokens.values[p.tokenKey()] = cachedJWT{token: "test-jwt", expiresAt: time.Now().Add(time.Hour)}
+	tokens.Unlock()
+	defer p.clearToken()
+	var persisted bool
+	_, err := p.CreateOrderContext(context.Background(), contracts.OrderInfo{ProductID: 353, Quantity: 1, Cycle: "monthly", Amount: 1, Checkpoint: func(stage, invoice, host string) error {
+		if stage == "invoice_created" {
+			persisted = invoice == "901"
+			return errors.New("stop before payment")
+		}
+		return nil
+	}})
+	if err == nil || !persisted || settles.Load() != 1 || paid.Load() != 0 {
+		t.Fatalf("slow settlement lost or repeated: err=%v persisted=%v settles=%d payments=%d", err, persisted, settles.Load(), paid.Load())
+	}
+}
+
 func TestProcurementCancellationStopsNetworkChain(t *testing.T) {
 	var writes atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

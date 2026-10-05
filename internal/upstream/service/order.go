@@ -24,6 +24,7 @@ type ProvisionInput struct {
 }
 
 type ProvisionResult struct {
+	PrimaryIP                         string
 	ActivatedAt, ExpiresAt            *time.Time
 	SupplierID                        string
 	UpstreamProductID                 int
@@ -180,6 +181,9 @@ func applyProvisionDates(result *ProvisionResult, detail *contracts.InstanceDeta
 	}
 	if detail.ProductID != "" && detail.ProductID != strconv.Itoa(result.UpstreamProductID) {
 		return
+	}
+	if detail.PrimaryIP != "" {
+		result.PrimaryIP = detail.PrimaryIP
 	}
 	if detail.ActivatedAt != nil && !detail.ActivatedAt.IsZero() {
 		v := *detail.ActivatedAt

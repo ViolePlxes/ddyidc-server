@@ -43,7 +43,7 @@ var definitions = []definition{
 	{"recommendations", "待确认推介", "现有积分、注册优惠码体系中的待审核优惠码申请。", ""},
 	{"provisioning", "开通中产品数量", "未删除的待开通、开通中实例。", "SELECT COUNT(*) FROM instance.instances WHERE deleted_at IS NULL AND status IN (1,2)"},
 	{"offline-transfers", "待处理线下转账", "待核对实际到账凭证的线下转账申请。", ""},
-	{"manual-products", "待手动处理产品", "六类失败动作及交付、续费异常，按实例去重；依据实际结果安全核对。", "SELECT COUNT(*) FROM (SELECT instance_id FROM `order`.delivery_units WHERE status='unknown' UNION SELECT instance_id FROM instance.instance_renewals WHERE state='uncertain') q"},
+	{"manual-products", "待手动处理产品", "已付款待人工开通商品及交付、续费和操作异常；尚未生成实例的商品按订单商品列出。", ""},
 	{"expiring", "即将到期产品", "配置预警天数内到期的有效实例，排除已删除及永久产品。", ""},
 }
 

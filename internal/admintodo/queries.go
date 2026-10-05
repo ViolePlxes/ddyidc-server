@@ -76,7 +76,7 @@ func projection(kind string) (string, error) {
 		}
 		return `SELECT CAST(i.id AS CHAR) id,'instance' source,CAST(i.customer_id AS CHAR) customer_id,i.product_name title,i.instance_no number,CAST(i.status AS CHAR) status,'' amount,CAST(i.order_id AS CHAR) order_id,CAST(i.id AS CHAR) instance_id,i.created_at,i.updated_at FROM instance.instances i WHERE i.deleted_at IS NULL AND ` + where, nil
 	case "manual-products":
-		return `SELECT CAST(i.id AS CHAR) id,'instance' source,CAST(i.customer_id AS CHAR) customer_id,i.product_name title,i.instance_no number,'review' status,'' amount,CAST(i.order_id AS CHAR) order_id,CAST(i.id AS CHAR) instance_id,i.created_at,i.updated_at FROM instance.instances i WHERE i.deleted_at IS NULL AND (EXISTS (SELECT 1 FROM ` + "`order`" + `.delivery_units d WHERE d.instance_id=i.id AND d.status IN ('unknown','failed')) OR EXISTS (SELECT 1 FROM instance.instance_renewals r WHERE r.instance_id=i.id AND r.state IN ('uncertain','failed')) OR EXISTS (SELECT 1 FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3 AND e.event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=e.id)))`, nil
+		return manualProductProjection(), nil
 	default:
 		return "", ErrQuery
 	}
@@ -240,7 +240,7 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 			row.Href = "/admin/tickets/" + row.ID
 		case "certification":
 			row.Href = "/admin/certifications?record=" + row.ID
-		case "payment":
+		case "payment", "order":
 			if row.OrderID != "" && row.OrderID != "0" {
 				row.Href = "/admin/orders?record=" + row.OrderID
 			}
@@ -275,7 +275,9 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 			case "expiring":
 				row.Actions = append(row.Actions, "remind_expiry")
 			case "manual-products", "provisioning":
-				row.Actions = append(row.Actions, "inspect_product")
+				if row.Source == "instance" || row.Source == "order" {
+					row.Actions = append(row.Actions, "inspect_product")
+				}
 			}
 		}
 	}

@@ -43,6 +43,7 @@ func RegisterProductWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Ma
 		}
 		return c, true
 	}
+	registerUnboundProductWorkflows(server, db, authorized, workflow)
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/todos/products/:id/problems", Handler: func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := authorized(w, r); !ok {
 			return

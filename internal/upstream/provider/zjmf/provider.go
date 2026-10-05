@@ -73,8 +73,9 @@ type cachedOrderPage struct {
 // Provider is stateless apart from an in-process JWT cache. Supplier
 // credentials are supplied by service.Store only after AES-GCM decryption.
 type Provider struct {
-	Supplier        contracts.Supplier
-	instanceContext context.Context
+	Supplier           contracts.Supplier
+	instanceContext    context.Context
+	procurementContext bool
 }
 
 func New(s contracts.Supplier) *Provider { return &Provider{Supplier: s} }
@@ -921,7 +922,7 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			req.Header.Set("Authorization", "Bearer "+jwt)
 		}
 		observed := *client
-		if scoped {
+		if scoped && !p.procurementContext {
 			observed.Timeout = 8 * time.Second
 		}
 		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID, LimitRequests: p.Supplier.LimitRequests}
