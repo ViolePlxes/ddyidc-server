@@ -63,6 +63,36 @@ func RefundPaidTx(tx *gorm.DB, id, customerID int64, at time.Time) (bool, error)
 	return transitionPaidTx(tx, id, customerID, dom.OrderStatusRefunded, at)
 }
 
+// Reviewed service refunds may be partial or zero after non-refundable fees.
+// The payment owner records approval and its frozen calculation in this same tx.
+func CompleteReviewedRefundTx(tx *gorm.DB, id, customerID, applicationID int64, at time.Time) (bool, error) {
+	return completeReviewedRefundTx(tx, id, customerID, applicationID, at, "order")
+}
+
+func CompleteReviewedModuleRefundTx(tx *gorm.DB, id, customerID, applicationID int64, at time.Time) (bool, error) {
+	return completeReviewedRefundTx(tx, id, customerID, applicationID, at, "marketplace")
+}
+
+func completeReviewedRefundTx(tx *gorm.DB, id, customerID, applicationID int64, at time.Time, source string) (bool, error) {
+	if tx == nil || id <= 0 || customerID <= 0 || applicationID <= 0 || at.IsZero() {
+		return false, errors.New("invalid reviewed refund transition")
+	}
+	var proof struct{ Amount, PaidAmount string }
+	err := tx.Table("payment.todo_refund_calculations c").Joins("JOIN payment.payment_refunds a ON a.id=c.application_id").Where("c.application_id=? AND c.source=? AND c.object_id=? AND c.customer_id=? AND a.user_id=c.customer_id AND a.status=1 AND a.audit_by IS NOT NULL AND a.audit_at IS NOT NULL AND a.refund_amount=c.amount", applicationID, source, id, customerID).Select("c.amount,c.paid_amount").Take(&proof).Error
+	if err != nil {
+		return false, err
+	}
+	next := dom.OrderStatusPartialRefund
+	if proof.Amount == proof.PaidAmount {
+		next = dom.OrderStatusRefunded
+	}
+	if proof.Amount == "0.00" {
+		next = dom.OrderStatusCompleted
+	}
+	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status IN (2,5,6)", id, customerID).Updates(map[string]any{"status": next, "updated_at": at})
+	return r.RowsAffected == 1, r.Error
+}
+
 func CancelPendingTx(tx *gorm.DB, id, customerID int64, reason string, at time.Time) (bool, error) {
 	if tx == nil || id <= 0 || customerID <= 0 || strings.TrimSpace(reason) == "" || at.IsZero() {
 		return false, errors.New("invalid order cancellation transition")

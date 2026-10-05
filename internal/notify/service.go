@@ -35,6 +35,8 @@ type notifyRepository interface {
 	AdminContact(context.Context, int64) (Contact, error)
 	ExpiringInstances(context.Context, time.Time) ([]ExpiringInstance, error)
 	HasSuccessfulLog(context.Context, string, string) (bool, error)
+	ClaimExpiry(context.Context, string, int64, int64, string, string) (bool, error)
+	FinishExpiry(context.Context, string, int64, int64, string, string) error
 }
 
 type Manager struct {
@@ -114,7 +116,7 @@ type ConfigInput struct {
 }
 
 func (m *Manager) loadConfig(ctx context.Context) (RuntimeConfig, error) {
-	config := RuntimeConfig{Mock: m.yaml.Mock, SMS: m.yaml.SMS, Mail: m.yaml.Mail, Expiry: ExpiryConfig{Enabled: true, DaysBefore: 3}}
+	config := RuntimeConfig{Mock: m.yaml.Mock, SMS: m.yaml.SMS, Mail: m.yaml.Mail, Expiry: ExpiryConfig{Enabled: true, DaysBefore: 7}}
 	config.SMS.Templates = cloneMap(m.yaml.SMS.Templates)
 	values, err := m.repo.ConfigValues(ctx)
 	if err != nil {
@@ -159,7 +161,7 @@ func (m *Manager) loadConfig(ctx context.Context) (RuntimeConfig, error) {
 	if value, parseErr := strconv.ParseBool(strings.TrimSpace(values["notify.expiry.enabled"])); parseErr == nil {
 		config.Expiry.Enabled = value
 	}
-	if value, parseErr := strconv.Atoi(strings.TrimSpace(values["notify.expiry.days_before"])); parseErr == nil && value > 0 && value <= 30 {
+	if value, parseErr := strconv.Atoi(strings.TrimSpace(values["notify.expiry.days_before"])); parseErr == nil && value > 0 && value <= 90 {
 		config.Expiry.DaysBefore = value
 	}
 	config.Mock = m.mockMode(config, ChannelEmail, "") || m.mockMode(config, ChannelSMS, "register")
@@ -240,8 +242,8 @@ func (m *Manager) SaveConfig(ctx context.Context, input ConfigInput) error {
 	}
 	if input.Expiry != nil {
 		days := input.Expiry.DaysBefore
-		if days < 1 || days > 30 {
-			return errors.New("到期提醒天数需为 1-30")
+		if days < 1 || days > 90 {
+			return errors.New("到期提醒天数需为 1-90")
 		}
 		if err := m.repo.SaveConfig(ctx, "notify.expiry.days_before", strconv.Itoa(days)); err != nil {
 			return err
@@ -433,6 +435,9 @@ func (m *Manager) NotifyAdmins(ctx context.Context, scene string, adminIDs []int
 }
 
 func (m *Manager) notifyContact(ctx context.Context, scene string, contact Contact, businessID string, params map[string]string) error {
+	return m.notifyContactWithRetry(ctx, scene, contact, businessID, params, true)
+}
+func (m *Manager) notifyContactWithRetry(ctx context.Context, scene string, contact Contact, businessID string, params map[string]string, retry bool) error {
 	template, err := m.repo.TemplateByScene(ctx, scene)
 	if err != nil {
 		return err
@@ -458,11 +463,11 @@ func (m *Manager) notifyContact(ctx context.Context, scene string, contact Conta
 	}
 	var failures []string
 	for _, target := range targets {
-		if err := m.sendChannel(ctx, template, target.channel, target.value, params, businessID); err != nil {
+		if err := m.sendChannelWithRetry(ctx, template, target.channel, target.value, params, businessID, retry); err != nil {
 			failures = append(failures, err.Error())
 		}
 	}
-	if len(failures) == len(targets) {
+	if len(failures) == len(targets) || (!retry && len(failures) > 0) {
 		return errors.New(strings.Join(failures, "; "))
 	}
 	return nil
@@ -476,31 +481,27 @@ func (m *Manager) ScanExpiring(ctx context.Context) (int, error) {
 	if m.mockMode(config, ChannelEmail, "expiry") && m.mockMode(config, ChannelSMS, "expiry") {
 		return 0, nil
 	}
-	items, err := m.repo.ExpiringInstances(ctx, m.now().AddDate(0, 0, config.Expiry.DaysBefore))
+	local := m.now().In(time.FixedZone("Asia/Shanghai", 8*3600))
+	deadline := time.Date(local.Year(), local.Month(), local.Day()+config.Expiry.DaysBefore+1, 0, 0, 0, 0, local.Location()).Add(-time.Second).UTC()
+	items, err := m.repo.ExpiringInstances(ctx, deadline)
 	if err != nil {
 		return 0, err
 	}
 	sent := 0
 	for _, item := range items {
-		businessID := strconv.FormatInt(item.ID, 10)
-		done, checkErr := m.repo.HasSuccessfulLog(ctx, "expiry", businessID)
-		if checkErr != nil {
-			return sent, checkErr
-		}
-		if done || item.ExpiresAt == nil {
+		if item.ExpiresAt == nil {
 			continue
 		}
-		params := map[string]string{"instance_no": item.InstanceNo, "product_name": item.ProductName, "expires_at": item.ExpiresAt.Format("2006-01-02 15:04")}
-		if notifyErr := m.NotifyCustomer(ctx, "expiry", item.CustomerID, businessID, params); notifyErr != nil {
-			if errors.Is(notifyErr, errUnavailableContact) {
-				// Missing contact data is not a provider failure. Do not send,
-				// mark delivery successful, or count an undelivered reminder.
-				continue
+		delivered, notifyErr := m.remindExpiry(ctx, item, 0, "system", "自动到期提醒")
+		if notifyErr != nil {
+			if !errors.Is(notifyErr, errUnavailableContact) {
+				logx.Errorf("expiry notification failed instance_id=%d", item.ID)
 			}
-			logx.Errorf("expiry notification failed instance_id=%d: %v", item.ID, notifyErr)
 			continue
 		}
-		sent++
+		if delivered {
+			sent++
+		}
 	}
 	return sent, nil
 }

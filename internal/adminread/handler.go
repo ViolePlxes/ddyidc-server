@@ -105,9 +105,9 @@ type trendPoint struct {
 func RegisterHandlers(server *rest.Server, database *gorm.DB, authManager *auth.Manager, dataRoot string) {
 	h := &handler{db: database, auth: authManager, dataRoot: dataRoot}
 	server.AddRoutes([]rest.Route{
-        {Method: http.MethodGet, Path: "/api/v1/wallet/bank-transfer", Handler: h.customerBankTransfer},
-        {Method: http.MethodGet, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
-        {Method: http.MethodPut, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
+		{Method: http.MethodGet, Path: "/api/v1/wallet/bank-transfer", Handler: h.customerBankTransfer},
+		{Method: http.MethodGet, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
+		{Method: http.MethodPut, Path: "/admin/v1/system/bank-transfer", Handler: h.adminBankTransfer},
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id", Handler: h.clientDetail},
 		{Method: http.MethodPut, Path: "/admin/v1/clients/:id", Handler: h.clientUpdate},
 		{Method: http.MethodGet, Path: "/admin/v1/clients/:id/credit", Handler: h.credit},
@@ -251,6 +251,12 @@ func (h *handler) orders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+	if record := r.URL.Query().Get("record"); record != "" {
+		if id, err := strconv.ParseInt(record, 10, 64); err != nil || id <= 0 {
+			writeError(w, http.StatusBadRequest, "订单编号筛选无效")
+			return
+		}
+	}
 	base := h.orderQuery(r, status, keyword)
 	var total int64
 	if err := base.Session(&gorm.Session{}).Distinct("o.id").Count(&total).Error; err != nil {
@@ -269,6 +275,9 @@ func (h *handler) orderQuery(r *http.Request, status *uint8, keyword string) *go
 	query := h.db.WithContext(r.Context()).Table("`order`.orders AS o").
 		Joins("LEFT JOIN customer.customers c ON c.id = o.customer_id").
 		Joins("LEFT JOIN `order`.order_items oi ON oi.id = (SELECT MIN(oi2.id) FROM `order`.order_items oi2 WHERE oi2.order_id = o.id)")
+	if record := r.URL.Query().Get("record"); record != "" {
+		query = query.Where("o.id = ?", record)
+	}
 	if status != nil {
 		query = query.Where("o.status = ?", *status)
 	}

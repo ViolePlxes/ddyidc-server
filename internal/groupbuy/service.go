@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
+	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/shared/distsync"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
@@ -359,6 +360,9 @@ func (s *Service) JoinGroup(ctx context.Context, clientID, leaderID int64, recom
 		if leader.Status != 1 || !leader.TimeoutTime.After(s.now()) || leader.CurrentNum >= leader.NeedNum {
 			return errors.New("该拼团已满员、结束或超时")
 		}
+		if err := refundworkflow.PendingGroup(tx, leaderID); err != nil {
+			return err
+		}
 		activity, err := lockedActivity(tx, leader.ActivityID, s.now())
 		if err != nil {
 			return err
@@ -553,9 +557,9 @@ func (s *Service) refundGroup(ctx context.Context, leaderID int64) error {
 	return s.refund(ctx, leaderID, true)
 }
 func (s *Service) Refund(ctx context.Context, recordID int64, whole bool) error {
-	return s.refund(ctx, recordID, whole)
+	return s.refund(ctx, recordID, whole, true)
 }
-func (s *Service) refund(ctx context.Context, recordID int64, whole bool) error {
+func (s *Service) refund(ctx context.Context, recordID int64, whole bool, resubmit ...bool) error {
 	var notices []Record
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var selected Record
@@ -580,21 +584,30 @@ func (s *Service) refund(ctx context.Context, recordID int64, whole bool) error 
 			return err
 		}
 		for _, r := range notices {
-			if err := lockCustomer(tx, r.ClientID); err != nil {
+			key := fmt.Sprintf("GR:%d", r.ID)
+			// Automatic retries retain the original request. Only a fresh manual
+			// submission may create an application after an administrator rejects it.
+			if len(resubmit) > 0 && resubmit[0] {
+				var previous struct {
+					ApplicationID int64
+					RequestID     string
+					Status        int
+				}
+				err := tx.Table("payment.todo_refund_requests q").Joins("JOIN payment.payment_refunds a ON a.id=q.application_id").Select("q.application_id,q.request_id,a.status").Where("q.source='groupbuy' AND q.object_id=?", r.ID).Order("q.created_at DESC,q.application_id DESC").Take(&previous).Error
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				if err == nil {
+					if previous.Status == 2 {
+						key = fmt.Sprintf("GR:%d:%d", r.ID, previous.ApplicationID)
+					} else {
+						key = previous.RequestID
+					}
+				}
+			}
+			if _, err := refundworkflow.Queue(tx, "groupbuy", r.ID, r.ClientID, 0, balance.Money(r.PayAmount), "拼团取消或超时，提交后台退款审核", key, s.now()); err != nil {
 				return err
 			}
-			if err := s.changeBalance(tx, r.ClientID, r.PayAmount, "groupbuy_refund", r.ID, "拼团退款"); err != nil {
-				return err
-			}
-			if err := tx.Table(recordTable).Where("id=?", r.ID).Update("status", 3).Error; err != nil {
-				return err
-			}
-			if err := tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-refund:%d", r.ID), tasks.PaymentPayload{CustomerID: r.ClientID, BusinessID: r.ID, BusinessType: "groupbuy_refund_notice", Channel: "balance"}); err != nil {
-				return err
-			}
-		}
-		if !(whole || selected.IsLeader) {
-			return tx.Table(recordTable).Where("id=?", leaderID).Update("current_num", gorm.Expr("GREATEST(current_num-1,1)")).Error
 		}
 		return nil
 	})

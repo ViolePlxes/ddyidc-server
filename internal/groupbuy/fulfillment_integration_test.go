@@ -69,11 +69,16 @@ func TestDurableGroupMySQL(t *testing.T) {
 	must(err)
 	must(db.Model(&Record{}).Where("id=?", expired.ID).Update("timeout_time", time.Now().Add(-time.Minute)).Error)
 	must(db.Exec("CREATE TRIGGER system.reject_group_delivery BEFORE INSERT ON system.durable_tasks FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated task insertion failure'").Error)
+	defer func() {
+		db.Exec("DROP TRIGGER IF EXISTS system.reject_group_delivery")
+		db.Exec("DROP TRIGGER IF EXISTS payment.reject_group_refund")
+	}()
 	if svc.CompleteGroup(ctx, leader.ID) == nil {
 		t.Fatal("task failure did not abort planning")
 	}
+	must(db.Exec("CREATE TRIGGER payment.reject_group_refund BEFORE INSERT ON payment.todo_refund_requests FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='isolated refund application failure'").Error)
 	if svc.refundGroup(ctx, expired.ID) == nil {
-		t.Fatal("notification insertion failure did not roll back refund")
+		t.Fatal("application insertion failure did not roll back refund submission")
 	}
 	var unchanged Record
 	must(db.First(&unchanged, expired.ID).Error)
@@ -86,6 +91,7 @@ func TestDurableGroupMySQL(t *testing.T) {
 		t.Fatal("failed refund notification left balance mutation")
 	}
 	must(db.Exec("DROP TRIGGER system.reject_group_delivery").Error)
+	must(db.Exec("DROP TRIGGER payment.reject_group_refund").Error)
 	must(db.Table("order.orders").Where("customer_id IN (93011,93012)").Count(&count).Error)
 	if count != 0 {
 		t.Fatal("failed plan left partial paid order")
@@ -98,12 +104,12 @@ func TestDurableGroupMySQL(t *testing.T) {
 	must(svc.RunMaintenance(ctx))
 	var expiredRow Record
 	must(db.First(&expiredRow, expired.ID).Error)
-	if expiredRow.Status != 3 {
-		t.Fatal("disabled plugin abandoned timeout refund")
+	if expiredRow.Status != 1 {
+		t.Fatal("timeout automatically completed a refund")
 	}
-	must(db.Table("system.durable_tasks").Where("task_key=?", fmt.Sprint("groupbuy-refund:", expired.ID)).Count(&count).Error)
+	must(db.Table("payment.todo_refund_requests").Where("source='groupbuy' AND object_id=?", expired.ID).Count(&count).Error)
 	if count != 1 {
-		t.Fatal("refund committed without durable notification")
+		t.Fatal("timeout did not queue exactly one reviewed refund application")
 	}
 	var wg sync.WaitGroup
 	for n := 0; n < 8; n++ {

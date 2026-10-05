@@ -113,27 +113,29 @@ func (v *ListingPrice) BeforeCreate(*gorm.DB) error {
 }
 
 type Order struct {
-	SettlementMode  string     `json:"settlementMode"`
-	OperatorIP      string     `json:"-"`
-	ID              int64      `gorm:"column:id;primaryKey" json:"id,string"`
-	OrderNo         string     `gorm:"column:order_no" json:"orderNo"`
-	ListingID       int64      `gorm:"column:listing_id" json:"listingId,string"`
-	BuyerID         int64      `gorm:"column:buyer_id" json:"buyerId,string"`
-	SellerID        int64      `gorm:"column:seller_id" json:"sellerId,string"`
-	Amount          string     `gorm:"column:amount" json:"amount"`
-	PayAmount       string     `gorm:"column:pay_amount" json:"payAmount"`
-	Fee             string     `gorm:"column:fee" json:"fee"`
-	FeeBearer       string     `gorm:"column:fee_bearer" json:"feeBearer"`
-	SellerIncome    string     `gorm:"column:seller_income" json:"sellerIncome"`
-	Status          string     `gorm:"column:status" json:"status"`
-	PaymentMethod   string     `gorm:"column:payment_method" json:"paymentMethod"`
-	LockExpiresAt   time.Time  `gorm:"column:lock_expires_at" json:"lockExpiresAt"`
-	PaidAt          *time.Time `gorm:"column:paid_at" json:"paidAt,omitempty"`
-	SettleAt        *time.Time `gorm:"column:settle_at" json:"settleAt,omitempty"`
-	RefundWindowEnd *time.Time `gorm:"column:refund_window_end" json:"refundWindowEnd,omitempty"`
-	CreatedAt       time.Time  `gorm:"column:created_at" json:"createdAt"`
-	UpdatedAt       time.Time  `gorm:"column:updated_at" json:"updatedAt"`
-	Listing         *Listing   `gorm:"-" json:"listing,omitempty"`
+	RefundApplicationID int64      `gorm:"-" json:"refundApplicationId,string,omitempty"`
+	RefundPending       bool       `gorm:"-" json:"refundPending"`
+	SettlementMode      string     `json:"settlementMode"`
+	OperatorIP          string     `json:"-"`
+	ID                  int64      `gorm:"column:id;primaryKey" json:"id,string"`
+	OrderNo             string     `gorm:"column:order_no" json:"orderNo"`
+	ListingID           int64      `gorm:"column:listing_id" json:"listingId,string"`
+	BuyerID             int64      `gorm:"column:buyer_id" json:"buyerId,string"`
+	SellerID            int64      `gorm:"column:seller_id" json:"sellerId,string"`
+	Amount              string     `gorm:"column:amount" json:"amount"`
+	PayAmount           string     `gorm:"column:pay_amount" json:"payAmount"`
+	Fee                 string     `gorm:"column:fee" json:"fee"`
+	FeeBearer           string     `gorm:"column:fee_bearer" json:"feeBearer"`
+	SellerIncome        string     `gorm:"column:seller_income" json:"sellerIncome"`
+	Status              string     `gorm:"column:status" json:"status"`
+	PaymentMethod       string     `gorm:"column:payment_method" json:"paymentMethod"`
+	LockExpiresAt       time.Time  `gorm:"column:lock_expires_at" json:"lockExpiresAt"`
+	PaidAt              *time.Time `gorm:"column:paid_at" json:"paidAt,omitempty"`
+	SettleAt            *time.Time `gorm:"column:settle_at" json:"settleAt,omitempty"`
+	RefundWindowEnd     *time.Time `gorm:"column:refund_window_end" json:"refundWindowEnd,omitempty"`
+	CreatedAt           time.Time  `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt           time.Time  `gorm:"column:updated_at" json:"updatedAt"`
+	Listing             *Listing   `gorm:"-" json:"listing,omitempty"`
 }
 
 func (Order) TableName() string { return ordersTable }

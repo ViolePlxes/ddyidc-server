@@ -431,6 +431,9 @@ func (r *GormRepository) ClosePayment(ctx context.Context, customerID, paymentID
 func centsToYuan(cents int64) string { return fmt.Sprintf("%d.%02d", cents/100, cents%100) }
 
 func channelPayType(channel string) uint8 {
+	if channel == "offline" {
+		return 4
+	}
 	if channel == "alipay" {
 		return 1
 	}

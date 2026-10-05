@@ -18,6 +18,48 @@ type RefundRepository interface {
 	CompleteRefund(context.Context, int64) (*dom.Refund, error)
 }
 
+type ManualRefundRepository interface {
+	ReopenVerifiedManualRefund(context.Context, int64, int64, string, string, string) error
+}
+
+// The remittance proof must already be inserted in this transaction before a
+// failed/uncertain intent can be completed using verified manual evidence.
+func (r *GormRepository) ReopenVerifiedManualRefund(ctx context.Context, id, admin int64, reason, ip, request string) error {
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var proof int64
+		if err := tx.Table("payment.manual_remittances").Where("source='refund' AND object_id=? AND request_id=? AND transaction_no<>''", id, request).Count(&proof).Error; err != nil {
+			return err
+		}
+		if proof != 1 || admin <= 0 || reason == "" || ip == "" {
+			return ErrInvalidState
+		}
+		identity, err := r.paymentIdentity(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := r.lockPayment(tx, identity); err != nil {
+			return err
+		}
+		if identity.Status != dom.StatusPaid && identity.Status != dom.StatusReview {
+			return ErrInvalidState
+		}
+		var refund dom.Refund
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&refund, "payment_id=?", id).Error; err != nil {
+			return err
+		}
+		if refund.Amount != identity.Amount {
+			return ErrInvalidState
+		}
+		if refund.Status == "pending" {
+			return nil
+		}
+		if refund.Status != "failed" && refund.Status != "unknown" {
+			return ErrInvalidState
+		}
+		return tx.Model(&refund).Updates(map[string]any{"status": "pending", "admin_id": admin, "operator_ip": ip, "reason": reason}).Error
+	})
+}
+
 func (r *GormRepository) PrepareRefund(ctx context.Context, paymentID, adminID int64, amount, reason, ip string) (*dom.Payment, *dom.Refund, error) {
 	identity, err := r.paymentIdentity(ctx, paymentID)
 	if err != nil {
@@ -174,6 +216,9 @@ func (r *GormRepository) CompleteRefund(ctx context.Context, paymentID int64) (*
 			return err
 		}
 		now := time.Now()
+		if err := tx.Model(&dom.RefundApplication{}).Where("payment_id=? AND refund_no LIKE 'TODO%' AND status=1", paymentID).Updates(map[string]any{"status": 4, "refunded_at": now, "updated_at": now}).Error; err != nil {
+			return err
+		}
 		refund.Status = "refunded"
 		refund.CompletedAt = &now
 		return tx.Save(&refund).Error

@@ -60,7 +60,7 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		return
 	}
 	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "*.sql"); diffErr == nil && strings.TrimSpace(output) != "" {
-		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；更新不会自动执行迁移，请在更新完成后人工评审并迁移")
+		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；切换前须完成保留现有数据的离线增量迁移，更新不会自动改库")
 	}
 	newExecutable := filepath.Join(m.config.ResultDir, "staging", formatID(task.ID)+".new")
 	if err = m.files.MkdirAll(filepath.Dir(newExecutable)); err != nil {
@@ -83,6 +83,13 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	buildEnv := []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "GOPROXY=https://goproxy.cn,direct"}
 	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-ldflags", ldflags, "-o", newExecutable, "."}, buildEnv); buildErr != nil {
 		rollbackBeforeSwitch(fmt.Errorf("后端构建失败: %w (%s)", buildErr, output))
+		return
+	}
+	// This executes as the existing unprivileged API identity. The candidate's
+	// verification mode reads migration history only; it cannot run DBA migrations.
+	m.progress(ctx, task, 60, logValue, "只读核验数据库迁移版本，旧服务保持运行")
+	if _, verifyErr := m.runner.Run(ctx, target.Workspace, newExecutable, []string{"-f", target.ConfigFile, "-verify-migrations"}, nil); verifyErr != nil {
+		rollbackBeforeSwitch(errors.New("数据库增量迁移未完成或校验失败，旧服务未停止；请完成保留数据的离线迁移后重试"))
 		return
 	}
 	// The trusted helper is installed by deployment, never rebuilt by the API service.

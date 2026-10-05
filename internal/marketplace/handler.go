@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	paymenttypes "ddyidc/internal/payment/types"
 	"ddyidc/pkg/auth"
@@ -341,12 +342,14 @@ func (h *Handler) withdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Amount string `json:"amount"`
+		Amount    string `json:"amount"`
+		Account   string `json:"account"`
+		RequestID string `json:"requestId"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	row, err := h.service.CreateWithdrawal(r.Context(), user, in.Amount)
+	row, err := h.service.CreateWithdrawalWithAccount(r.Context(), user, in.Amount, in.Account, in.RequestID)
 	writeResult(w, row, err)
 }
 func (h *Handler) createWant(w http.ResponseWriter, r *http.Request) {
@@ -497,7 +500,16 @@ func (h *Handler) adminOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p, z := pages(r)
-	rows, total, err := h.service.ListOrders(r.Context(), 0, true, r.URL.Query().Get("status"), p, z)
+	var records []int64
+	if value := r.URL.Query().Get("record"); value != "" {
+		id, e := strconv.ParseInt(value, 10, 64)
+		if e != nil || id <= 0 {
+			writeResult(w, nil, ErrInvalid)
+			return
+		}
+		records = append(records, id)
+	}
+	rows, total, err := h.service.ListOrders(r.Context(), 0, true, r.URL.Query().Get("status"), p, z, records...)
 	writePage(w, rows, total, p, z, err)
 }
 func (h *Handler) adminRefund(w http.ResponseWriter, r *http.Request) {
@@ -534,18 +546,26 @@ func (h *Handler) auditWithdrawal(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var super int64
+	if h.service.db.WithContext(r.Context()).Table("system.admins").Where("id=? AND status=1 AND is_super=1", admin).Count(&super).Error != nil || super != 1 {
+		writeError(w, 403, "仅超级管理员可审核提现")
+		return
+	}
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
 	var in struct {
-		Approved bool   `json:"approved"`
-		Remark   string `json:"remark"`
+		Approved          bool      `json:"approved"`
+		Remark            string    `json:"remark"`
+		RequestID         string    `json:"requestId"`
+		ExpectedUpdatedAt time.Time `json:"expectedUpdatedAt"`
+		ConfirmLarge      bool      `json:"confirmLarge"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	row, err := h.service.AuditWithdrawal(r.Context(), admin, id, in.Approved, in.Remark)
+	row, err := h.service.ReviewWithdrawal(WithOperatorIP(r.Context(), clientip.FromRequest(r)), admin, id, in.Approved, in.Remark, in.RequestID, in.ExpectedUpdatedAt, in.ConfirmLarge)
 	writeResult(w, row, err)
 }
 func (h *Handler) adminReports(w http.ResponseWriter, r *http.Request) {

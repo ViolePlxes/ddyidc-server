@@ -460,6 +460,7 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 		OrderNo:     generateOrderNo(),
 		CustomerID:  customerID,
 		TotalAmount: total,
+		SetupFee:    setupFee * int64(qty),
 		PayAmount:   total,
 		Status:      dom.OrderStatusPending,
 	}
@@ -472,6 +473,7 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 		Qty:            uint(qty),
 		UnitPrice:      unitPrice,
 		Subtotal:       total,
+		SetupFee:       setupFee * int64(qty),
 	}
 	if strings.TrimSpace(input.Remark) != "" {
 		orderRow.CustomerRemark = strings.TrimSpace(input.Remark)
@@ -602,6 +604,9 @@ func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64
 			return errors.New("订单已不处于可交付状态")
 		}
 		var refundCount int64
+		if err := checkReviewedRefundHold(tx, orderID); err != nil {
+			return err
+		}
 		if err := tx.Table("payment.original_refunds AS r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Joins("LEFT JOIN payment.receipt_reviews rv ON rv.payment_id=p.id").Where("p.biz_type='order' AND p.biz_id=? AND rv.payment_id IS NULL", orderID).Count(&refundCount).Error; err != nil {
 			return err
 		}

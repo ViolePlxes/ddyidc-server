@@ -20,9 +20,11 @@ import (
 	svc "ddyidc/internal/ticket/service"
 	types "ddyidc/internal/ticket/types"
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"github.com/google/uuid"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
+	"time"
 )
 
 type handler struct {
@@ -65,6 +67,7 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 		{Method: http.MethodPut, Path: "/admin/v1/tickets/:id/receive", Handler: h.receive},
 		{Method: http.MethodPut, Path: "/admin/v1/tickets/:id/resolved", Handler: h.resolve},
 		{Method: http.MethodPut, Path: "/admin/v1/tickets/:id/close", Handler: h.adminClose},
+		{Method: http.MethodPut, Path: "/admin/v1/tickets/:id/reopen", Handler: h.reopen},
 		{Method: http.MethodPost, Path: "/admin/v1/tickets/:id/forward", Handler: h.forward},
 		{Method: http.MethodGet, Path: "/admin/v1/tickets/:id/log", Handler: h.logs},
 		{Method: http.MethodGet, Path: "/admin/v1/tickets/:id/attachments/:file", Handler: h.adminDownload},
@@ -98,11 +101,13 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, svc.ErrReopenInput):
+		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, svc.ErrForbidden):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, svc.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, svc.ErrClosed):
+	case errors.Is(err, svc.ErrClosed), errors.Is(err, svc.ErrRevision):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
@@ -395,6 +400,28 @@ func (h *handler) resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"resolved": true})
+}
+func (h *handler) reopen(w http.ResponseWriter, r *http.Request) {
+	admin, ok := h.admin(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r, "id")
+	if id == 0 {
+		return
+	}
+	var in struct {
+		Reason, RequestID string
+		ExpectedUpdatedAt time.Time
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	if err := h.service.Reopen(r.Context(), admin, id, in.Reason, in.RequestID, clientip.FromRequest(r), in.ExpectedUpdatedAt); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"reopened": true})
 }
 func (h *handler) forward(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.admin(w, r)

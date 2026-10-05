@@ -5,6 +5,8 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	orderdom "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
+	paymentdom "ddyidc/internal/payment/domain"
+	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/tasks"
@@ -257,17 +259,20 @@ func (s *Service) AfterExternalPayment(ctx context.Context, orderID, buyerID int
 		return err
 	}
 	if row.Status == "refund_pending" {
-		if s.refunder == nil {
-			return errors.New("原路退款服务暂不可用")
-		}
-		return s.refunder.RefundMarketplace(ctx, orderID)
+		return nil // The callback queued a review application; it cannot pay out.
 	}
 	return nil
 }
 
-func (s *Service) ListOrders(ctx context.Context, userID int64, admin bool, status string, page, size int) ([]Order, int64, error) {
+func (s *Service) ListOrders(ctx context.Context, userID int64, admin bool, status string, page, size int, records ...int64) ([]Order, int64, error) {
 	page, size = normalizePage(page, size)
 	q := s.db.WithContext(ctx).Table(ordersTable + " AS o")
+	if len(records) > 0 {
+		if records[0] <= 0 {
+			return nil, 0, ErrInvalid
+		}
+		q = q.Where("o.id=?", records[0])
+	}
 	if !admin {
 		q = q.Where("o.buyer_id=? OR o.seller_id=?", userID, userID)
 	}
@@ -282,6 +287,17 @@ func (s *Service) ListOrders(ctx context.Context, userID int64, admin bool, stat
 	err := q.Select("o.*").Order("o.created_at DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error
 	if err == nil {
 		for i := range rows {
+			var application struct {
+				ID     int64
+				Status uint8
+			}
+			ae := s.db.WithContext(ctx).Table("payment.payment_refunds a").Joins("JOIN payment.todo_refund_requests r ON r.application_id=a.id").Where("r.source='marketplace' AND r.object_id=? AND a.status<>2", rows[i].ID).Select("a.id,a.status").Take(&application).Error
+			if ae == nil {
+				rows[i].RefundApplicationID = application.ID
+				rows[i].RefundPending = application.Status != 4
+			} else if !errors.Is(ae, gorm.ErrRecordNotFound) {
+				return nil, 0, ae
+			}
 			var listing Listing
 			if e := s.db.WithContext(ctx).Table(listingsTable).Where("id=?", rows[i].ListingID).First(&listing).Error; e == nil {
 				if !admin {
@@ -302,7 +318,7 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 	defer release()
 	var out Order
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Table(ordersTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", orderID).First(&out).Error; err != nil {
+		if err := tx.Table(ordersTable).Clauses(clause.Locking{Strength: "UPDATE"}).First(&out, orderID).Error; err != nil {
 			return ErrNotFound
 		}
 		if !admin && out.BuyerID != actorID {
@@ -315,98 +331,74 @@ func (s *Service) Refund(ctx context.Context, actorID, orderID int64, admin bool
 		if !settings.RefundEnabled {
 			return errors.New("退款功能未开启")
 		}
-		if out.SettlementMode == "balance" && out.Status == "settled" {
-			return errors.New("订单已确认收货，请通过争议处理联系平台")
-		}
-		if out.Status != "paid" && out.Status != "settled" {
+		if out.Status != "paid" && out.Status != "settled" && out.Status != "refund_pending" {
 			return ErrInvalid
 		}
 		if !admin && out.RefundWindowEnd != nil && s.now().After(*out.RefundWindowEnd) {
-			return errors.New("退款窗口已结束")
+			return errors.New("退款窗口已结束，请联系后台核查")
 		}
-		var listing Listing
-		if err := tx.Table(listingsTable).Where("id=?", out.ListingID).First(&listing).Error; err != nil {
-			return err
+		var existing paymentdom.RefundApplication
+		found := tx.Table("payment.payment_refunds AS a").Joins("JOIN payment.todo_refund_requests r ON r.application_id=a.id").Where("r.source='marketplace' AND r.object_id=? AND a.status<>2", orderID).Select("a.*").Take(&existing).Error
+		if found == nil {
+			out.RefundApplicationID = existing.ID
+			out.RefundPending = existing.Status != 4
+			return nil
 		}
-		var host struct {
-			ID, CustomerID int64
-			Status         uint8
+		if !errors.Is(found, gorm.ErrRecordNotFound) {
+			return found
 		}
-		if err := tx.Table("instance.instances").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,customer_id,status").Where("id=?", listing.ProductID).First(&host).Error; err != nil {
-			return err
+		paid, err := balance.ParseMoney(out.PayAmount)
+		if err != nil || paid <= 0 {
+			return ErrInvalid
 		}
-		if host.CustomerID != out.BuyerID {
-			return errors.New("资源归属不一致，需平台人工处理")
-		}
-		var wallet Wallet
-		if err := tx.Table(walletTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", out.SellerID).First(&wallet).Error; err != nil {
-			return err
-		}
-		income, _ := parsePositiveMoney(out.SellerIncome)
-		balance, _ := parseUnsignedMoney(wallet.Balance)
-		frozen, _ := parseUnsignedMoney(wallet.FrozenBalance)
-		if out.Status == "settled" {
-			if balance < income {
-				return errors.New("卖家钱包余额不足，需平台仲裁")
-			}
-			balance -= income
-		} else {
-			if frozen < income {
-				return errors.New("冻结金额不足，需平台仲裁")
-			}
-			frozen -= income
-		}
-		if err := changeWallet(tx, out.SellerID, "refund_reversed", -income, out.ID, "marketplace", "退款回滚"); err != nil {
-			return err
-		}
-		pay, _ := parsePositiveMoney(out.PayAmount)
+		snapshot := refundworkflow.Snapshot{Paid: paid, Periods: []refundworkflow.Period{{Paid: paid, Unstarted: true}}, Warnings: []string{}}
 		if out.PaymentMethod == "balance" {
-			if err := creditBilling(tx, out.BuyerID, pay, orderID, s.now()); err != nil {
+			snapshot.BalancePaid = paid
+		}
+		if out.Status != "refund_pending" {
+			var listing Listing
+			if err := tx.First(&listing, out.ListingID).Error; err != nil {
 				return err
 			}
-		}
-		if err := completeOwnership(tx, &out, &listing, true); err != nil {
-			return err
-		}
-		nextStatus := "refunded"
-		if out.PaymentMethod != "balance" {
-			nextStatus = "refund_pending"
-		}
-
-		if err := tx.Table(ordersTable).Where("id=?", out.ID).Updates(map[string]any{"status": nextStatus, "updated_at": s.now()}).Error; err != nil {
-			return err
-		}
-		if err := tx.Table(listingsTable).Where("id=?", listing.ID).Updates(map[string]any{"status": "refunded", "updated_at": s.now()}).Error; err != nil {
-			return err
-		}
-		if err := appendFlow(tx, out.SellerID, "refund_reversed", "out", out.SellerIncome, formatMoney(balance), out.ID, "退款回滚", s.now()); err != nil {
-			return err
-		}
-		out.Status = nextStatus
-		if nextStatus == "refunded" && out.SettlementMode == "balance" {
-			changed, err := orderstate.RefundPaidTx(tx, out.ID, out.BuyerID, s.now())
-			if err != nil {
+			var host struct {
+				ID, CustomerID, OwnershipVersion int64
+				ExpiresAt                        *time.Time
+			}
+			if err := tx.Table("instance.instances").Clauses(clause.Locking{Strength: "UPDATE"}).Select("id,customer_id,ownership_version,expires_at").First(&host, listing.ProductID).Error; err != nil {
 				return err
 			}
-			if !changed {
-				return ErrInvalid
+			if host.CustomerID != out.BuyerID {
+				return errors.New("资源归属已变化，请后台核查")
 			}
-		}
-		if nextStatus == "refunded" {
-			for _, customer := range []int64{out.BuyerID, out.SellerID} {
-				if err := enqueueMarketNotice(tx, "marketplace_refund", customer, out.ID, map[string]string{"order_no": out.OrderNo}); err != nil {
-					return err
+			snapshot.Periods = []refundworkflow.Period{{InstanceID: host.ID, OwnershipVersion: host.OwnershipVersion, Paid: paid, Start: out.PaidAt, End: host.ExpiresAt}}
+			if out.PaidAt == nil || host.ExpiresAt == nil {
+				snapshot.Warnings = append(snapshot.Warnings, "原交易服务起止日期缺失，需核实原始服务账单")
+			}
+			if out.FeeBearer != "platform" {
+				fee, err := balance.ParseMoney(out.Fee)
+				if err != nil || fee < 0 {
+					return ErrInvalid
 				}
+				snapshot.MinimumHandling = fee
+			}
+			if out.SettlementMode == "balance" && out.Status == "settled" {
+				snapshot.Warnings = append(snapshot.Warnings, "卖家资金已入账户余额，需完成争议资金核查后处理")
 			}
 		}
+		platformOrder := int64(0)
+		if out.SettlementMode == "balance" {
+			platformOrder = out.ID
+		}
+		application, err := refundworkflow.Queue(tx, "marketplace", out.ID, out.BuyerID, platformOrder, paid, "交易退款申请，提交后台核算并审核", fmt.Sprintf("MRQ:%d:%d", out.ID, s.now().UnixNano()), s.now(), snapshot)
+		if err != nil {
+			return err
+		}
+		out.RefundApplicationID = application.ID
+		out.RefundPending = true
 		return nil
 	})
-	if err == nil && out.Status == "refund_pending" && s.refunder != nil {
-		err = s.refunder.RefundMarketplace(ctx, out.ID)
-	}
 	return &out, err
 }
-
 func (s *Service) Wallet(ctx context.Context, userID int64) (*Wallet, error) {
 	if err := s.db.WithContext(ctx).Exec("INSERT IGNORE INTO "+walletTable+" (user_id,balance,frozen_balance,total_income,total_withdrawn,updated_at) VALUES (?,0,0,0,0,?)", userID, s.now()).Error; err != nil {
 		return nil, err
@@ -439,7 +431,7 @@ func (s *Service) ListFlows(ctx context.Context, userID int64, admin bool, flowT
 }
 
 func (s *Service) CreateWithdrawal(ctx context.Context, userID int64, amountText string) (*Withdrawal, error) {
-	return s.createWithdrawal(ctx, userID, amountText)
+	return nil, errors.New("提现申请必须提供收款账户与请求标识")
 }
 
 func (s *Service) createWithdrawal(ctx context.Context, userID int64, amountText string) (*Withdrawal, error) {
@@ -451,6 +443,9 @@ func (s *Service) createWithdrawal(ctx context.Context, userID int64, amountText
 	if err != nil {
 		return nil, err
 	}
+	if !settings.Enabled || settings.Maintenance {
+		return nil, errors.New("交易市场已停用或维护中，不能新增提现申请")
+	}
 	fee := int64(0)
 	switch settings.WithdrawFeeType {
 	case "fixed":
@@ -459,6 +454,8 @@ func (s *Service) createWithdrawal(ctx context.Context, userID int64, amountText
 		var rate int64
 		rate, err = parsePercent(settings.WithdrawFeeRate)
 		fee = amount * rate / 10000
+	default:
+		return nil, errors.New("提现手续费规则未配置")
 	}
 	if err != nil || fee >= amount {
 		return nil, errors.New("提现手续费配置无效")
@@ -483,7 +480,8 @@ func (s *Service) createWithdrawal(ctx context.Context, userID int64, amountText
 			return err
 		}
 		if !settings.WithdrawalAuditEnabled {
-			return s.completeWithdrawalTx(tx, row, 0, "自动通过")
+			row.Status = "approved"
+			return tx.Table(withdrawalsTable).Where("id=?", row.ID).Updates(map[string]any{"status": "approved", "remark": "自动审核通过，等待实际汇款", "updated_at": s.now()}).Error
 		}
 		return nil
 	})
@@ -511,6 +509,9 @@ func (s *Service) ListWithdrawals(ctx context.Context, userID int64, admin bool,
 }
 
 func (s *Service) AuditWithdrawal(ctx context.Context, adminID, id int64, approved bool, remark string) (*Withdrawal, error) {
+	if strings.TrimSpace(remark) == "" || len([]rune(remark)) > 500 {
+		return nil, ErrInvalid
+	}
 	var out Withdrawal
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Table(withdrawalsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", id).First(&out).Error; err != nil {
@@ -520,7 +521,15 @@ func (s *Service) AuditWithdrawal(ctx context.Context, adminID, id int64, approv
 			return ErrInvalid
 		}
 		if approved {
-			return s.completeWithdrawalTx(tx, &out, adminID, remark)
+			var account int64
+			if e := tx.Table("payment.todo_withdrawal_accounts").Where("source='marketplace' AND withdrawal_id=? AND customer_id=? AND ciphertext<>''", id, out.UserID).Count(&account).Error; e != nil {
+				return e
+			}
+			if account != 1 {
+				return ErrInvalid
+			}
+			out.Status = "approved"
+			return tx.Table(withdrawalsTable).Where("id=?", id).Updates(map[string]any{"status": "approved", "auditor_id": adminID, "remark": strings.TrimSpace(remark), "updated_at": s.now()}).Error
 		}
 		amount, _ := parsePositiveMoney(out.Amount)
 		var wallet Wallet
@@ -532,7 +541,7 @@ func (s *Service) AuditWithdrawal(ctx context.Context, adminID, id int64, approv
 		if frozen < amount {
 			return errors.New("冻结金额不足")
 		}
-		if err := changeWallet(tx, out.UserID, "withdraw_reject", amount, out.ID, "marketplace_withdrawal", "提现拒绝退回", adminID); err != nil {
+		if err := changeWallet(tx, out.UserID, "withdraw_reject", amount, out.ID, "marketplace_withdrawal", remark, adminID); err != nil {
 			return err
 		}
 		if err := tx.Table(withdrawalsTable).Where("id=?", id).Updates(map[string]any{"status": "rejected", "auditor_id": adminID, "remark": strings.TrimSpace(remark), "updated_at": s.now()}).Error; err != nil {
@@ -720,6 +729,9 @@ func (s *Service) RunMaintenance(ctx context.Context) error {
 	})
 }
 func settleOrderTx(tx *gorm.DB, o *Order, now time.Time) error {
+	if err := refundworkflow.PendingMarketplace(tx, o.ID); err != nil {
+		return err
+	}
 	var wallet Wallet
 	if err := tx.Table(walletTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", o.SellerID).First(&wallet).Error; err != nil {
 		return err
@@ -796,10 +808,6 @@ func appendFlow(tx *gorm.DB, userID int64, flowType, direction, amount, balance 
 	}
 	return tx.Table(flowsTable).Create(&Flow{FlowNo: fmt.Sprintf("MF%d", snowflake.GenID()), UserID: userID, Type: flowType, Direction: direction, Amount: amount, BalanceAfter: balance, RefID: refID, Remark: remark, CreatedAt: at}).Error
 }
-func creditBilling(tx *gorm.DB, userID, amount, refID int64, now time.Time) error {
-	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: userID, Type: "refund", Amount: balance.Money(amount).String(), RefType: "marketplace", RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MR:%d", refID), Notes: "交易市场退款"})
-	return err
-}
 func (s *Service) acquire(ctx context.Context, key string, ttl time.Duration) (func(), error) {
 	if s.redis == nil {
 		return func() {}, nil
@@ -836,6 +844,7 @@ func changeWallet(tx *gorm.DB, userID int64, typ string, amount, refID int64, re
 		}
 		name = admin.Username
 	}
-	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{Scope: "marketplace_wallet", CustomerID: userID, Type: typ, Amount: balance.Money(amount).String(), RefType: refType, RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MW:%s:%d", typ, refID), Notes: notes, AdminID: actor, AdminName: name})
+	ip, _ := tx.Statement.Context.Value(operatorIPKey{}).(string)
+	_, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{Scope: "marketplace_wallet", CustomerID: userID, Type: typ, Amount: balance.Money(amount).String(), RefType: refType, RefID: refID, Channel: "marketplace", RequestID: fmt.Sprintf("MW:%s:%d", typ, refID), Notes: notes, AdminID: actor, AdminName: name, OperatorIP: ip})
 	return err
 }

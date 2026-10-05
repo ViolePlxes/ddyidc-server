@@ -34,11 +34,12 @@ type Notifier interface {
 }
 
 type Service struct {
-	refunder OriginalRefunder
-	db       *gorm.DB
-	redis    *redis.Client
-	notifier Notifier
-	now      func() time.Time
+	withdrawalKey []byte
+	refunder      OriginalRefunder
+	db            *gorm.DB
+	redis         *redis.Client
+	notifier      Notifier
+	now           func() time.Time
 }
 
 func NewService(database *gorm.DB, redisClient *redis.Client, notifier Notifier) *Service {

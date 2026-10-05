@@ -21,8 +21,8 @@ func (s *BalanceService) Reconcile(ctx context.Context) ([]ReconciliationMismatc
 	rows := []ReconciliationMismatch{}
 	err := s.db.WithContext(ctx).Raw(`SELECT a.customer_id,a.balance,COALESCE(t.net,0) ledger_balance,a.frozen_balance,COALESCE(f.frozen,0) ledger_frozen
  FROM billing.accounts a LEFT JOIN (SELECT customer_id,SUM(amount) net FROM billing.transactions GROUP BY customer_id) t ON t.customer_id=a.customer_id
- LEFT JOIN (SELECT f.customer_id,SUM(-f.amount) frozen FROM billing.transactions f WHERE f.type='freeze'
- AND NOT EXISTS (SELECT 1 FROM billing.transactions u WHERE u.type='unfreeze' AND u.related_type='freeze' AND u.related_id=f.id)
+ LEFT JOIN (SELECT f.customer_id,SUM(-f.amount) frozen FROM billing.transactions f WHERE f.type IN ('freeze','withdrawal_hold')
+ AND NOT EXISTS (SELECT 1 FROM billing.transactions u WHERE (u.type='unfreeze' AND u.related_type='freeze' AND u.related_id=f.id) OR (f.type='withdrawal_hold' AND u.type='withdrawal_release' AND u.related_type='balance_withdrawal' AND u.related_id=f.related_id))
  GROUP BY f.customer_id) f ON f.customer_id=a.customer_id
  WHERE a.balance<>COALESCE(t.net,0) OR a.frozen_balance<>COALESCE(f.frozen,0)`).Scan(&rows).Error
 	if err != nil {

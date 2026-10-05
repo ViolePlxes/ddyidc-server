@@ -45,6 +45,20 @@ func TestNotificationBoundariesMySQL(t *testing.T) {
 	}
 	pool, _ := database.DB()
 	defer pool.Close()
+	// Other finance tests can enqueue their own notices. Shadow only this
+	// connection's outbox so the real worker is tested against this fixture.
+	pool.SetMaxOpenConns(1)
+	pool.SetMaxIdleConns(1)
+	for _, sql := range []string{
+		"CREATE TEMPORARY TABLE billing.test_notice_template LIKE billing.notification_outbox",
+		"CREATE TEMPORARY TABLE billing.notification_outbox LIKE billing.test_notice_template",
+		"CREATE TEMPORARY TABLE system.test_notice_audit_template LIKE system.audit_logs",
+		"CREATE TEMPORARY TABLE system.audit_logs LIKE system.test_notice_audit_template",
+	} {
+		if err := database.Exec(sql).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx := context.Background()
 	service := New(database)
 	if err := snowflake.Configure(ctx, pool); err != nil {

@@ -15,6 +15,19 @@ import (
 
 type Repository struct{ db *gorm.DB }
 
+var ErrClosed = errors.New("已关闭工单不能处理，请先重新打开")
+
+func lockOpenTicket(tx *gorm.DB, id int64) error {
+	var ticket dom.Ticket
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&ticket, id).Error; err != nil {
+		return err
+	}
+	if ticket.StatusID == dom.StatusClosed {
+		return ErrClosed
+	}
+	return nil
+}
+
 func NewRepository(database *gorm.DB) *Repository { return &Repository{db: database} }
 
 func (r *Repository) EnsureSchema(ctx context.Context) error {
@@ -210,6 +223,9 @@ func (r *Repository) MarkRead(ctx context.Context, ticketID int64, actorType str
 
 func (r *Repository) CreateReply(ctx context.Context, reply *dom.Reply, ticketFields map[string]any, log *dom.Log, note *dom.Note) error {
 	return r.Transaction(ctx, func(tx *gorm.DB) error {
+		if err := lockOpenTicket(tx, reply.TicketID); err != nil {
+			return err
+		}
 		canonical, err := r.bindUploads(tx, reply.AttachmentJSON, reply.Type, reply.RelID, reply.TicketID)
 		if err != nil {
 			return err
@@ -232,6 +248,11 @@ func (r *Repository) CreateReply(ctx context.Context, reply *dom.Reply, ticketFi
 }
 func (r *Repository) UpdateTicket(ctx context.Context, id int64, fields map[string]any, log *dom.Log) error {
 	return r.Transaction(ctx, func(tx *gorm.DB) error {
+		if log.Action != "close" {
+			if err := lockOpenTicket(tx, id); err != nil {
+				return err
+			}
+		}
 		fields["update_time"] = time.Now()
 		if err := tx.Table((dom.Ticket{}).TableName()).Where("id = ?", id).Updates(fields).Error; err != nil {
 			return err
@@ -327,6 +348,9 @@ func (r *Repository) ListLogs(ctx context.Context, ticketID int64) ([]dom.Log, e
 }
 func (r *Repository) CreateForward(ctx context.Context, v *dom.Forward, fields map[string]any, log *dom.Log) error {
 	return r.Transaction(ctx, func(tx *gorm.DB) error {
+		if err := lockOpenTicket(tx, v.TicketID); err != nil {
+			return err
+		}
 		if err := tx.Table(v.TableName()).Create(v).Error; err != nil {
 			return err
 		}

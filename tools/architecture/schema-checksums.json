@@ -16,5 +16,9 @@
   "015_admin_todos.sql": "585279344cd57c3df4b52be31390fbbf7d469da75e0595fcc35fcbc2e13b8437",
   "016_rewards_center.sql": "30e4268ce24a2b4d7d1af161f3a5e33e8b3c2e110c0ee0bff7080f9afede9362",
   "017_portal.sql": "cb7f88cd09fa93b2e2a4e3ec837eb4491e2f58fdce6c62f2dd219550a83bb859",
-  "018_random_id_registry.sql": "4d17d9c0619c74d6f82f6ad1364e60d99cf878d11f94fe1331939c0efacbdfc2"
+  "018_random_id_registry.sql": "4d17d9c0619c74d6f82f6ad1364e60d99cf878d11f94fe1331939c0efacbdfc2",
+  "019_todo_operations.sql": "883cc147013860ccfd1dc5e0b992103dcd1b9cb26daa58d8f34ea467903f005d",
+  "020_todo_registration_scope.sql": "49e99a6b781c2e7dd669dcd02637ae1d0b6536efa0971fb9427f41a81c8077a4",
+  "021_todo_refund_calculations.sql": "6cfcb59aa886729822c4ac1f98378581b7c70dd704dd947b5757514523c11169",
+  "022_todo_refund_requests.sql": "5052928f7cb6fb08d79d29b3a103efe4a8722bd40b1b9790cb7ca9d4bc6d9c2a"
 }

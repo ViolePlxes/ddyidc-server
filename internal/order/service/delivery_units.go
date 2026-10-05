@@ -78,6 +78,9 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 			return nil
 		}
 		var refunds int64
+		if err := checkReviewedRefundHold(tx, orderID); err != nil {
+			return err
+		}
 		if err := tx.Table("payment.original_refunds r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Joins("LEFT JOIN payment.receipt_reviews rv ON rv.payment_id=p.id").Where("p.biz_type='order' AND p.biz_id=? AND rv.payment_id IS NULL", orderID).Count(&refunds).Error; err != nil {
 			return err
 		}

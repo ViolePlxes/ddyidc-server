@@ -20,7 +20,7 @@ import (
 var (
 	ErrNotFound         = errors.New("工单不存在")
 	ErrForbidden        = errors.New("没有权限访问该工单")
-	ErrClosed           = errors.New("已关闭工单不能回复")
+	ErrClosed           = repo.ErrClosed
 	attachmentIDPattern = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 )
 

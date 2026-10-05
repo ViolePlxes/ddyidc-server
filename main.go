@@ -79,6 +79,7 @@ var draining atomic.Bool
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
 var migrate = flag.Bool("migrate", false, "执行离线版本迁移后退出；使用独立迁移账号配置")
+var verifyMigrationsOnly = flag.Bool("verify-migrations", false, "只读验证当前数据库迁移版本后退出，不启动业务服务")
 var migrationSocket = flag.String("migration-socket", "", "仅root离线迁移使用本地MySQL socket；不改变运行账户权限")
 var retryDirty = flag.Bool("retry-dirty-migration", false, "检查失败迁移的部分结果后显式重试")
 
@@ -260,7 +261,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if !*migrate {
+	if !*migrate && !*verifyMigrationsOnly {
 		if err = paths.Prepare(); err != nil {
 			panic(err)
 		}
@@ -291,6 +292,19 @@ func main() {
 	migrationSteps, err := migrations.Steps()
 	if err != nil {
 		panic(err)
+	}
+	if *verifyMigrationsOnly {
+		if *migrate || *retryDirty || *migrationSocket != "" {
+			panic("verify-migrations cannot perform migration")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := migrations.Verify(ctx, db.DB, migrationSteps); err != nil {
+			fmt.Fprintln(os.Stderr, "Database migration preflight failed:", err)
+			os.Exit(2)
+		}
+		fmt.Println("Read-only database migration preflight complete; no service or scheduled task started")
+		return
 	}
 	if *migrate {
 		schemamode.EnableMigrations()
@@ -412,7 +426,8 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
 	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
-	admintodo.Register(server, db.G, jwt)
+	admintodo.Register(server, db.G, jwt, snapshotKey)
+	admintodo.RegisterExpiryWorkflows(server, db.G, jwt, notifyManager)
 	navigationSvc := navigation.New(db.G)
 	if err := navigationSvc.EnsureSchema(context.Background()); err != nil {
 		panic(err)
@@ -481,6 +496,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	groupbuy.RegisterHandlers(server, groupbuySvc, jwt)
 	*cronStarts = append(*cronStarts, groupbuySvc.StartMaintenance)
 	marketplaceSvc := marketplace.NewService(db.G, cache.RDB, notifyManager)
+	marketplaceSvc.SetWithdrawalKey(snapshotKey)
 	if err := marketplaceSvc.EnsureSchema(context.Background()); err != nil {
 		panic("marketplace schema initialization failed: " + err.Error())
 	}
@@ -511,6 +527,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)
 	paymentSvc.SetRemoteDeliveryRecovery(orderSvc.ReconcileRemoteDelivery)
 	paymentSvc.SetRenewalRecovery(instanceSvc.ReconcileRenewal)
+	admintodo.RegisterProductWorkflows(server, db.G, jwt, paymentSvc)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
@@ -560,6 +577,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	pushtransfer.RegisterHandlers(server, pushtransfer.New(db.G, cache.RDB), jwt)
 	instancehandler.RegisterHandlers(server, instanceSvc, jwt)
+	admintodo.RegisterManualEventReviews(server, db.G, jwt, instanceSvc)
 	ticketSvc := ticketservice.NewService(ticketrepo.NewRepository(db.G))
 	ticketSvc.SetNotifier(notifyManager)
 	if err := ticketSvc.EnsureSchema(context.Background()); err != nil {

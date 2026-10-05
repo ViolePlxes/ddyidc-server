@@ -5,6 +5,8 @@ import (
 	schemamode "ddyidc/internal/shared/schema"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -180,12 +182,44 @@ func (r *Repository) AdminContact(ctx context.Context, adminID int64) (Contact, 
 
 func (r *Repository) ExpiringInstances(ctx context.Context, deadline time.Time) ([]ExpiringInstance, error) {
 	var out []ExpiringInstance
-	err := r.db.WithContext(ctx).Table("instance.instances").Select("id, customer_id, instance_no, product_name, expires_at").Where("deleted_at IS NULL AND status IN ? AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?", []int{3, 4}, time.Now(), deadline).Find(&out).Error
+	err := r.db.WithContext(ctx).Table("instance.instances").Select("id, customer_id, instance_no, product_name, expires_at").Where("deleted_at IS NULL AND status IN ? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?", []int{1, 2, 3, 4}, time.Now().UTC(), deadline).Find(&out).Error
 	return out, err
 }
 
 func (r *Repository) HasSuccessfulLog(ctx context.Context, scene, businessID string) (bool, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Table((NotifyLog{}).TableName()).Where("scene = ? AND business_id = ? AND status = ?", scene, businessID, StatusSuccess).Count(&count).Error
-	return count > 0, err
+	if err != nil || count > 0 || scene != "expiry" {
+		return count > 0, err
+	}
+	parts := strings.Split(businessID, ":")
+	if len(parts) != 2 {
+		return false, nil
+	}
+	seconds, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || seconds <= 0 {
+		return false, errors.New("到期提醒周期无效")
+	}
+	var snapshots []string
+	if err := r.db.WithContext(ctx).Table((NotifyLog{}).TableName()).Where("scene=? AND business_id=? AND status=?", scene, parts[0], StatusSuccess).Pluck("content_snapshot", &snapshots).Error; err != nil {
+		return false, err
+	}
+	expires := time.Unix(seconds, 0)
+	utc := expires.UTC().Format("2006-01-02 15:04")
+	local := expires.In(time.FixedZone("Asia/Shanghai", 8*3600)).Format("2006-01-02 15:04")
+	unknown := false
+	for _, snapshot := range snapshots {
+		if strings.Contains(snapshot, utc) || strings.Contains(snapshot, local) {
+			return true, nil
+		}
+		if !legacyExpiryTimestamp.MatchString(snapshot) {
+			unknown = true
+		}
+	}
+	if unknown {
+		return false, errors.New("历史提醒缺少到期周期，请先人工核查发送记录")
+	}
+	return false, nil
 }
+
+var legacyExpiryTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2} \d{2}:\d{2}`)

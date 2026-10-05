@@ -301,12 +301,17 @@ func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "认证记录不存在")
 		return
 	}
-	full, err := h.s.view(row, true)
+	reveal := r.URL.Query().Get("reveal") == "true"
+	full, err := h.s.view(row, reveal)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	if err := audit(h.s.db, a.UserID, true, "view_detail", row.CustomerID, map[string]any{"recordId": id}, ip(r)); err != nil {
+	action := "view_detail"
+	if reveal {
+		action = "view_original"
+	}
+	if err := audit(h.s.db, a.UserID, true, action, row.CustomerID, map[string]any{"recordId": id}, ip(r)); err != nil {
 		fail(w, 500, "审计写入失败")
 		return
 	}

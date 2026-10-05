@@ -2,6 +2,7 @@ package billing
 
 import (
 	"database/sql/driver"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -74,3 +75,18 @@ func (m *Money) Scan(value any) error {
 	return err
 }
 func (m Money) MarshalJSON() ([]byte, error) { return []byte(strconv.Quote(m.String())), nil }
+
+// JSON boundaries use exact decimal yuan strings, matching database values.
+// Reject numeric JSON to avoid interpreting cents or floating point as yuan.
+func (m *Money) UnmarshalJSON(raw []byte) error {
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return errors.New("金额必须为十进制元字符串")
+	}
+	value, err := ParseMoney(text)
+	if err != nil {
+		return err
+	}
+	*m = value
+	return nil
+}

@@ -3,6 +3,7 @@ package groupbuy
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/payment/repository/refundworkflow"
 	"fmt"
 	"os"
 	"strings"
@@ -179,8 +180,36 @@ func TestIntegrationLifecycle(t *testing.T) {
 	if err := service.Refund(ctx, member.ID, false); err != nil {
 		t.Fatal(err)
 	}
+	var initial refundworkflow.Request
+	if err := database.Where("source='groupbuy' AND object_id=?", member.ID).Take(&initial).Error; err != nil {
+		t.Fatal(err)
+	}
+	application, err := refundworkflow.Load(ctx, database, initial.ApplicationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refundworkflow.Review(ctx, database, initial.ApplicationID, refundworkflow.Actor{ID: 1, Name: "integration", IP: "127.0.0.1"}, refundworkflow.ReviewInput{Action: "reject", Reason: "隔离测试驳回后允许重新申请", RequestID: fmt.Sprintf("GREJECT:%d", initial.ApplicationID), ExpectedUpdatedAt: application.UpdatedAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.refund(ctx, member.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	var requests int64
+	database.Model(&refundworkflow.Request{}).Where("source='groupbuy' AND object_id=?", member.ID).Count(&requests)
+	if requests != 1 {
+		t.Fatal("automatic retry created a new rejected refund application")
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := service.Refund(ctx, member.ID, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	database.Model(&refundworkflow.Request{}).Where("source='groupbuy' AND object_id=?", member.ID).Count(&requests)
+	if requests != 2 {
+		t.Fatalf("manual resubmission and replay created %d applications, want 2", requests)
+	}
 	refundDetail, _ := service.Group(ctx, refundLeader.ID, 0, true)
-	if refundDetail.Leader.CurrentNum != 1 {
+	if refundDetail.Leader.CurrentNum != 2 {
 		t.Fatalf("member refund current_num=%d", refundDetail.Leader.CurrentNum)
 	}
 	if err := service.Refund(ctx, refundLeader.ID, true); err != nil {
@@ -204,7 +233,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 	}
 	var timedOut Record
 	database.Table(recordTable).Where("id=?", timeoutLeader.ID).Take(&timedOut)
-	if timedOut.Status != 3 {
-		t.Fatalf("timeout status=%d want 3", timedOut.Status)
+	if timedOut.Status != 1 {
+		t.Fatalf("timeout status=%d want pending review without automatic refund", timedOut.Status)
 	}
 }

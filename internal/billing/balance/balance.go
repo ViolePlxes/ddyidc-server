@@ -91,10 +91,18 @@ type BalanceService struct{ db *gorm.DB }
 func New(db *gorm.DB) *BalanceService { return &BalanceService{db: db} }
 
 func validate(r ChangeRequest) (Money, error) {
+	if r.Type == "refund" && r.Channel != "refund_review" {
+		return 0, errors.New("退款必须经后台审核后退入账户余额")
+	}
 	if r.CustomerID <= 0 || r.Type == "" || r.Amount == "" || r.RefType == "" || r.RefID <= 0 || r.Channel == "" || strings.TrimSpace(r.RequestID) == "" || len(r.RequestID) > 64 || len(r.RefType) > 32 || len(r.Channel) > 32 || len(r.BizTrace) > 128 || len(r.OperatorIP) > 45 || len([]rune(r.Notes)) > 500 || len([]rune(r.ClientNotes)) > 500 {
 		return 0, ErrInvalid
 	}
 	manual := r.Channel == "admin_manual"
+	if r.Channel == "refund_review" {
+		if r.Type != "refund" || r.RefType != "refund_application" || r.AdminID <= 0 || strings.TrimSpace(r.AdminName) == "" || strings.TrimSpace(r.Notes) == "" || net.ParseIP(r.OperatorIP) == nil {
+			return 0, ErrInvalid
+		}
+	}
 	if manual && (r.AdminID <= 0 || strings.TrimSpace(r.AdminName) == "" || strings.TrimSpace(r.Notes) == "" || net.ParseIP(r.OperatorIP) == nil) {
 		return 0, ErrInvalid
 	}
@@ -104,8 +112,8 @@ func validate(r ChangeRequest) (Money, error) {
 	}
 	sign := 1
 	switch r.Type {
-	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income":
-	case "manual_debit", "freeze", "order_pay", "instance_renewal_pay", "withdraw", "underpayment":
+	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income", "withdrawal_release":
+	case "manual_debit", "freeze", "order_pay", "instance_renewal_pay", "withdraw", "underpayment", "withdrawal_hold":
 		sign = -1
 	default:
 		return 0, ErrInvalid
@@ -118,6 +126,9 @@ func validate(r ChangeRequest) (Money, error) {
 	}
 	if (r.Type == "manual_credit" || r.Type == "manual_debit") && (amount > 5000000 || amount < -5000000) && !r.LargeAdjustmentAllowed {
 		return 0, errors.New("超过五万元的调整需要授权及二次确认")
+	}
+	if r.Channel == "refund_review" && amount > 5000000 && !r.LargeAdjustmentAllowed {
+		return 0, errors.New("超过五万元的退款需要二次确认")
 	}
 	return amount, nil
 }
@@ -193,7 +204,10 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		}
 		next := account.Balance + amount
 		frozen := account.FrozenBalance
-		if r.Type == "freeze" {
+		if r.Type == "freeze" || r.Type == "withdrawal_hold" {
+			frozen -= amount
+		}
+		if r.Type == "withdrawal_release" {
 			frozen -= amount
 		}
 		if r.Type == "unfreeze" {
@@ -286,6 +300,20 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		return nil
 	}
 	switch r.RefType {
+	case "refund_application":
+		if r.Type != "refund" || r.Channel != "refund_review" || r.AdminID <= 0 {
+			return ErrBusiness
+		}
+		if err := tx.Table("payment.payment_refunds a").Joins("JOIN payment.todo_refund_calculations c ON c.application_id=a.id").Where("a.id=? AND a.refund_no LIKE 'TODO%' AND a.user_id=? AND a.status=1 AND a.audit_by=? AND a.audit_at IS NOT NULL AND a.refund_amount=? AND c.customer_id=a.user_id AND c.amount=a.refund_amount", r.RefID, r.CustomerID, r.AdminID, amount.String()).Count(&count).Error; err != nil {
+			return err
+		}
+		var credited int64
+		if err := tx.Table("billing.transactions").Where("related_type='refund_application' AND related_id=? AND type='refund'", r.RefID).Count(&credited).Error; err != nil {
+			return err
+		}
+		if credited != 0 {
+			return ErrBusiness
+		}
 	case "order":
 		if r.Channel != "order" || r.Type != "order_pay" {
 			return ErrBusiness
@@ -330,6 +358,20 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		if err := tx.Table("system.marketplace_orders").Where("id=? AND seller_id=? AND status='paid' AND settlement_mode='balance' AND seller_income=?", r.RefID, r.CustomerID, amount.String()).Count(&count).Error; err != nil {
 			return err
 		}
+	case "marketplace_refund_retained":
+		if r.Type != "marketplace_income" || r.Channel != "marketplace" || r.AdminID <= 0 || r.AdminName == "" || net.ParseIP(r.OperatorIP) == nil || (amount > 5000000 && !r.LargeAdjustmentAllowed) {
+			return ErrBusiness
+		}
+		if err := tx.Table("payment.todo_refund_requests rr").Joins("JOIN payment.payment_refunds a ON a.id=rr.application_id").Joins("JOIN payment.todo_refund_calculations c ON c.application_id=a.id").Joins("JOIN system.marketplace_orders m ON m.id=rr.object_id").Where("rr.application_id=? AND rr.source='marketplace' AND m.seller_id=? AND m.buyer_id=a.user_id AND m.status='paid' AND m.settlement_mode='balance' AND a.status=1 AND a.audit_by=? AND a.audit_at IS NOT NULL AND a.refund_amount=c.amount AND m.seller_income-c.amount=?", r.RefID, r.CustomerID, r.AdminID, amount.String()).Count(&count).Error; err != nil {
+			return err
+		}
+		var duplicate int64
+		if err := tx.Table("billing.transactions").Where("customer_id=? AND related_type=? AND related_id=?", r.CustomerID, r.RefType, r.RefID).Count(&duplicate).Error; err != nil {
+			return err
+		}
+		if duplicate != 0 {
+			return ErrReplay
+		}
 	case "marketplace":
 		if r.Channel != "marketplace" || (r.Type != "order_pay" && r.Type != "refund") {
 			return ErrBusiness
@@ -353,6 +395,49 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		err := tx.Table("system.points_orders").Where("id=? AND user_id=? AND goods_type='balance' AND status='completed' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(config_snapshot,'$.amountCents')) AS SIGNED)*quantity=?", r.RefID, r.CustomerID, int64(amount)).Count(&count).Error
 		if err != nil {
 			return err
+		}
+	case "balance_withdrawal":
+		if r.Channel != "withdrawal" || (r.Type != "withdrawal_hold" && r.Type != "withdrawal_release" && r.Type != "withdraw") {
+			return ErrBusiness
+		}
+		abs := amount
+		if abs < 0 {
+			abs = -abs
+		}
+		states := []string{"pending"}
+		if r.Type == "withdrawal_release" {
+			states = []string{"pending", "approved"}
+		}
+		if r.Type == "withdraw" {
+			states = []string{"approved"}
+		}
+		if err := tx.Table("payment.balance_withdrawals").Where("id=? AND customer_id=? AND amount=? AND status IN ?", r.RefID, r.CustomerID, abs.String(), states).Count(&count).Error; err != nil {
+			return err
+		}
+		if r.Type != "withdrawal_hold" {
+			var held int64
+			if err := tx.Table("billing.transactions").Where("related_type='balance_withdrawal' AND related_id=? AND type='withdrawal_hold' AND amount=?", r.RefID, (-abs).String()).Count(&held).Error; err != nil {
+				return err
+			}
+			if held != 1 {
+				return ErrBusiness
+			}
+		}
+		var existing int64
+		if err := tx.Table("billing.transactions").Where("related_type='balance_withdrawal' AND related_id=? AND type=?", r.RefID, r.Type).Count(&existing).Error; err != nil {
+			return err
+		}
+		if existing != 0 {
+			return ErrBusiness
+		}
+		if r.Type == "withdraw" {
+			var released int64
+			if err := tx.Table("billing.transactions").Where("related_type='balance_withdrawal' AND related_id=? AND type='withdrawal_release' AND amount=?", r.RefID, abs.String()).Count(&released).Error; err != nil {
+				return err
+			}
+			if released != 1 {
+				return ErrBusiness
+			}
 		}
 	default:
 		return fmt.Errorf("%w: unsupported reference", ErrBusiness)

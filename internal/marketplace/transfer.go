@@ -2,7 +2,9 @@ package marketplace
 
 import (
 	"context"
+	balance "ddyidc/internal/billing/balance"
 	orderstate "ddyidc/internal/order/repository"
+	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/shared/snowflake"
 	"errors"
@@ -84,20 +86,8 @@ func (s *Service) ConfirmReceipt(ctx context.Context, user, id int64) (*Order, e
 	return &row, err
 }
 func (s *Service) retryRefunds(ctx context.Context) error {
-	if s.refunder == nil {
-		return nil
-	}
-	var ids []int64
-	if err := s.db.WithContext(ctx).Table(ordersTable).Where("status='refund_pending'").Order("updated_at").Limit(50).Pluck("id", &ids).Error; err != nil {
-		return err
-	}
-	var first error
-	for _, id := range ids {
-		if err := s.refunder.RefundMarketplace(ctx, id); err != nil && first == nil {
-			first = fmt.Errorf("市场原路退款待重试，订单 %d", id)
-		}
-	}
-	return first
+	// Pending refunds are processed only by audited backend review.
+	return nil
 }
 func completeOwnership(tx *gorm.DB, o *Order, l *Listing, refund bool) error {
 	from, to, source := o.SellerID, o.BuyerID, "marketplace"
@@ -149,5 +139,17 @@ func queueFailedRefund(tx *gorm.DB, id, buyer int64, at time.Time) error {
 		return err
 	}
 	// Keep the listing unavailable until the original payment channel confirms its refund.
-	return tx.Table(listingsTable).Where("id=? AND status IN ('locked','on_sale')", row.ListingID).Update("status", "off_shelf").Error
+	if err := tx.Table(listingsTable).Where("id=? AND status IN ('locked','on_sale')", row.ListingID).Update("status", "off_shelf").Error; err != nil {
+		return err
+	}
+	paid, err := balance.ParseMoney(row.PayAmount)
+	if err != nil {
+		return err
+	}
+	platformOrder := int64(0)
+	if row.SettlementMode == "balance" {
+		platformOrder = row.ID
+	}
+	_, err = refundworkflow.Queue(tx, "marketplace", row.ID, row.BuyerID, platformOrder, paid, "收款后交付未完成，提交后台退款核查", fmt.Sprintf("MFAIL:%d", row.ID), time.Now().UTC())
+	return err
 }

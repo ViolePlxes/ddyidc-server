@@ -9,6 +9,7 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"net"
 	"strings"
 	"time"
 )
@@ -27,8 +28,17 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 	if negative != (amount < 0) {
 		return nil, ErrInvalid
 	}
+	// Reversing seller funds is part of a refund as well. A customer request,
+	// callback or scheduled task cannot reverse it before audited approval.
+	reviewedRefund := r.Type == "refund_reversed" || r.Type == "refund_retained" || r.Type == "refund_retained_to_balance"
+	if reviewedRefund && (r.AdminID <= 0 || strings.TrimSpace(r.AdminName) == "" || net.ParseIP(r.OperatorIP) == nil) {
+		return nil, ErrInvalid
+	}
+	if reviewedRefund && (amount > 5000000 || amount < -5000000) && !r.LargeAdjustmentAllowed {
+		return nil, ErrInvalid
+	}
 	switch r.Type {
-	case "seller_pending", "settled", "settled_to_balance", "refund_reversed", "withdraw_hold", "withdraw_reject", "withdraw":
+	case "seller_pending", "settled", "settled_to_balance", "refund_reversed", "refund_retained", "refund_retained_to_balance", "withdraw_hold", "withdraw_reject", "withdraw":
 	default:
 		return nil, ErrInvalid
 	}
@@ -62,7 +72,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		var count int64
 		var state string
 		if r.RefType == "marketplace" {
-			if r.Type != "seller_pending" && r.Type != "settled" && r.Type != "settled_to_balance" && r.Type != "refund_reversed" {
+			if r.Type != "seller_pending" && r.Type != "settled" && r.Type != "settled_to_balance" && !reviewedRefund {
 				return ErrBusiness
 			}
 			var order struct {
@@ -72,10 +82,42 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 			if err = tx.Table("system.marketplace_orders").Select("status,seller_income").Where("id=? AND seller_id=?", r.RefID, r.CustomerID).Take(&order).Error; err != nil {
 				return ErrBusiness
 			}
-			if order.SellerIncome != abs {
+			if !reviewedRefund && order.SellerIncome != abs {
 				return ErrBusiness
 			}
 			state = order.Status
+			if reviewedRefund {
+				var approved int64
+				proof := tx.Table("payment.todo_refund_requests rr").Joins("JOIN payment.payment_refunds a ON a.id=rr.application_id").Joins("JOIN payment.todo_refund_calculations c ON c.application_id=a.id").Joins("JOIN system.marketplace_orders m ON m.id=rr.object_id").Where("rr.source='marketplace' AND rr.object_id=? AND m.seller_id=? AND rr.customer_id=m.buyer_id AND a.user_id=m.buyer_id AND a.status=1 AND a.audit_by=? AND a.audit_at IS NOT NULL AND a.refund_amount=c.amount AND c.amount<=m.seller_income", r.RefID, r.CustomerID, r.AdminID)
+				if r.Type == "refund_reversed" {
+					proof = proof.Where("c.amount=?", abs.String())
+				} else {
+					proof = proof.Where("m.status='paid' AND m.seller_income-c.amount=?", abs.String())
+					if r.Type == "refund_retained_to_balance" {
+						proof = proof.Where("m.settlement_mode='balance'")
+					} else {
+						proof = proof.Where("m.settlement_mode<>'balance'")
+					}
+				}
+				if err := proof.Count(&approved).Error; err != nil {
+					return err
+				}
+				if approved != 1 {
+					return ErrBusiness
+				}
+			}
+			if reviewedRefund && r.Type != "refund_reversed" && state != "paid" {
+				return ErrBusiness
+			}
+			if reviewedRefund {
+				var duplicate int64
+				if err := tx.Table("system.marketplace_flows").Where("user_id=? AND ref_id=? AND type=? AND account_version>0", r.CustomerID, r.RefID, r.Type).Count(&duplicate).Error; err != nil {
+					return err
+				}
+				if duplicate != 0 {
+					return ErrReplay
+				}
+			}
 			if (r.Type == "seller_pending" && state != "pending_pay") || ((r.Type == "settled" || r.Type == "settled_to_balance") && state != "paid") || (r.Type == "refund_reversed" && state != "paid" && state != "settled") {
 				return ErrBusiness
 			}
@@ -83,7 +125,11 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 			if r.Type != "withdraw_hold" && r.Type != "withdraw_reject" && r.Type != "withdraw" {
 				return ErrBusiness
 			}
-			if err = tx.Table("system.marketplace_withdrawals").Where("id=? AND user_id=? AND status='pending' AND amount=?", r.RefID, r.CustomerID, abs.String()).Count(&count).Error; err != nil {
+			state := "pending"
+			if r.Type == "withdraw" {
+				state = "approved"
+			}
+			if err = tx.Table("system.marketplace_withdrawals").Where("id=? AND user_id=? AND status=? AND amount=?", r.RefID, r.CustomerID, state, abs.String()).Count(&count).Error; err != nil {
 				return err
 			}
 			if count != 1 {
@@ -125,9 +171,16 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 			wallet.Balance += amount
 			wallet.FrozenBalance -= amount
 			wallet.TotalIncome += amount
+		case "refund_retained", "refund_retained_to_balance":
+			wallet.FrozenBalance -= amount
+			wallet.TotalIncome += amount
+			if r.Type == "refund_retained" {
+				wallet.Balance += amount
+			}
 		case "refund_reversed":
 			if state == "settled" {
 				wallet.Balance += amount
+				wallet.TotalIncome += amount
 			} else {
 				wallet.FrozenBalance += amount
 			}

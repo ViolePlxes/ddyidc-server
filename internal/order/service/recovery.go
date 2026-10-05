@@ -44,6 +44,9 @@ func loadRecovery(tx *gorm.DB, id int64) (recoveryState, error) {
 		return s, tasks.ErrReconcile
 	}
 	var refunds int64
+	if err := checkReviewedRefundHold(tx, order.ID); err != nil {
+		return s, tasks.ErrReconcile
+	}
 	if err := tx.Table("payment.original_refunds r").Joins("JOIN payment.payments p ON p.id=r.payment_id").Joins("LEFT JOIN payment.receipt_reviews rv ON rv.payment_id=p.id").Where("p.biz_type='order' AND p.biz_id=? AND rv.payment_id IS NULL", order.ID).Count(&refunds).Error; err != nil || refunds != 0 {
 		return s, tasks.ErrReconcile
 	}

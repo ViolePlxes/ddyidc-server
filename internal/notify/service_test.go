@@ -14,11 +14,26 @@ import (
 )
 
 type fakeNotifyRepository struct {
+	claims    map[string]bool
 	values    map[string]string
 	templates map[string]*NotificationTemplate
 	logs      []NotifyLog
 	contact   Contact
 	expiring  []ExpiringInstance
+}
+
+func (f *fakeNotifyRepository) ClaimExpiry(_ context.Context, business string, _ int64, _ int64, _ string, _ string) (bool, error) {
+	if f.claims == nil {
+		f.claims = map[string]bool{}
+	}
+	if f.claims[business] {
+		return false, nil
+	}
+	f.claims[business] = true
+	return true, nil
+}
+func (f *fakeNotifyRepository) FinishExpiry(context.Context, string, int64, int64, string, string) error {
+	return nil
 }
 
 func (f *fakeNotifyRepository) EnsureSchema(context.Context) error { return nil }
@@ -266,6 +281,11 @@ func TestExpiryScanSendsOnlyOnce(t *testing.T) {
 	if mail.calls != 1 {
 		t.Fatalf("expected one delivery, got %d", mail.calls)
 	}
+	expires = expires.Add(24 * time.Hour)
+	third, err := manager.ScanExpiring(context.Background())
+	if err != nil || third != 1 || mail.calls != 2 {
+		t.Fatalf("renewed expiry must have its own reminder: %d %v calls=%d", third, err, mail.calls)
+	}
 }
 
 func TestExpiryScanWithoutEmailDoesNotDeliverOrRecordSuccess(t *testing.T) {
@@ -286,5 +306,27 @@ func TestExpiryScanWithoutEmailDoesNotDeliverOrRecordSuccess(t *testing.T) {
 	}
 	if err := manager.NotifyCustomer(context.Background(), "expiry", 7, "99", map[string]string{"instance_no": "INS99"}); !errors.Is(err, errUnavailableContact) {
 		t.Fatalf("direct notification must still report unavailable contact: %v", err)
+	}
+}
+
+func TestExpiryFailureIsNotResent(t *testing.T) {
+	expires := time.Now().Add(time.Hour)
+	repo := &fakeNotifyRepository{values: map[string]string{"notify.expiry.enabled": "true"}, templates: map[string]*NotificationTemplate{"expiry": {ID: 2, Scene: "expiry", Channel: ChannelEmail, Title: "expiry", Content: "{{instance_no}}", Enabled: true}}, contact: Contact{Email: "fixture@example.com"}, expiring: []ExpiringInstance{{ID: 99, CustomerID: 7, InstanceNo: "fixture", ExpiresAt: &expires}}}
+	mail := &fakeMailChannel{err: context.DeadlineExceeded}
+	manager := testManager(repo, mail)
+	first, err := manager.ScanExpiring(context.Background())
+	if err != nil || first != 0 || mail.calls != 1 {
+		t.Fatal("uncertain provider result retried", first, err, mail.calls)
+	}
+	second, err := manager.ScanExpiring(context.Background())
+	if err != nil || second != 0 || mail.calls != 1 {
+		t.Fatal("next scanner resent uncertain notification", second, err, mail.calls)
+	}
+	if len(repo.logs) != 1 || repo.logs[0].Status != StatusFailed {
+		t.Fatal("failure evidence missing")
+	}
+	sent, err := manager.RemindExpiring(context.Background(), 99, 1, "127.0.0.1", "verified fixture")
+	if err != nil || sent || mail.calls != 1 {
+		t.Fatal("manual trigger resent uncertain notification")
 	}
 }

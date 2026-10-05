@@ -36,7 +36,7 @@ func main() {
 	d := db.G
 	var e error
 	e = d.WithContext(context.Background()).Transaction(func(tx *gorm.DB) error {
-		for _, key := range []string{"groupbuy.enabled", "marketplace.enabled", "push_transfer.enabled", "payment.wechat.enabled", "payment.alipay.enabled", "marketing.invite.enabled", "marketing.invite.review_enabled", "marketing.reward.enabled", "marketing.reward.recharge_enabled", "marketing.promo.poster_enabled", "notify.expiry.enabled"} {
+		for _, key := range []string{"groupbuy.enabled", "marketplace.enabled", "push_transfer.enabled", "payment.wechat.enabled", "payment.alipay.enabled", "marketing.invite.enabled", "marketing.invite.review_enabled", "marketing.reward.enabled", "marketing.reward.recharge_enabled", "marketing.promo.poster_enabled", "notify.expiry.enabled", "todos.offline.enabled", "todos.withdrawals.enabled"} {
 			if e := tx.Exec("INSERT INTO system.system_configs(id,`key`,value,description) VALUES(?,?,'true','本地测试环境功能全开') ON DUPLICATE KEY UPDATE value='true'", snowflake.GenID(), key).Error; e != nil {
 				return e
 			}

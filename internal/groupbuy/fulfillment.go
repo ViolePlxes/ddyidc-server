@@ -3,6 +3,7 @@ package groupbuy
 import (
 	"context"
 	orders "ddyidc/internal/order/service"
+	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/shared/tasks"
 	"errors"
 	"fmt"
@@ -52,6 +53,9 @@ func (s *Service) CompleteGroup(ctx context.Context, leaderID int64) error {
 		}
 		if leader.Status != 1 {
 			return nil
+		}
+		if err := refundworkflow.PendingGroup(tx, leaderID); err != nil {
+			return err
 		}
 		var members []Record
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("leader_id=?", leaderID).Order("id ASC").Find(&members).Error; err != nil {
