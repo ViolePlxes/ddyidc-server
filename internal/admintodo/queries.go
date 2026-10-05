@@ -14,9 +14,8 @@ import (
 
 var ErrQuery = errors.New("待办查询参数无效")
 
-func expiryCutoff(now time.Time, days int) time.Time {
-	local := now.In(time.FixedZone("Asia/Shanghai", 8*3600))
-	return time.Date(local.Year(), local.Month(), local.Day()+days+1, 0, 0, 0, 0, local.Location()).Add(-time.Second).UTC()
+func expiryCutoff(now time.Time) time.Time {
+	return now.UTC().Add(72 * time.Hour)
 }
 
 // Entry exposes only safe summary fields. Attachments and business operations
@@ -115,11 +114,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		}
 	}
 	if kind == "expiring" {
-		settings, e := loadSettings(db)
-		if e != nil {
-			return nil, e
-		}
-		cutoff := expiryCutoff(time.Now(), settings.ExpiringDays)
+		cutoff := expiryCutoff(time.Now())
 		sql = strings.Replace(sql, "DATE_ADD(UTC_DATE(), INTERVAL 8 DAY)-INTERVAL 1 SECOND", "'"+cutoff.Format("2006-01-02 15:04:05")+"'", 1)
 	}
 	q := db.Table("(" + sql + ") q").Joins("LEFT JOIN customer.customers c ON c.id=q.customer_id")
@@ -215,11 +210,7 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if kind == "expiring" {
-		settings, e := loadSettings(db.WithContext(ctx))
-		if e != nil {
-			return out, e
-		}
-		cutoff := expiryCutoff(out.SampledAt, settings.ExpiringDays)
+		cutoff := expiryCutoff(out.SampledAt)
 		out.CutoffAt = &cutoff
 	}
 	q, e := query(db.WithContext(ctx), kind, f)

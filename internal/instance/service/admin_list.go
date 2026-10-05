@@ -323,7 +323,7 @@ func adminView(q *gorm.DB, view string, now time.Time) *gorm.DB {
 	case "suspended":
 		return q.Where(suspendedSQL)
 	case "due":
-		return q.Where(recurringSQL).Where("i.expires_at>? AND i.expires_at<=?", now, now.Add(7*24*time.Hour))
+		return q.Where(recurringSQL).Where("i.expires_at>? AND i.expires_at<=?", now, now.Add(72*time.Hour))
 	case "expired":
 		return q.Where(recurringSQL).Where("i.expires_at<=?", now)
 	case "abnormal":

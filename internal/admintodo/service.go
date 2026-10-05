@@ -44,7 +44,7 @@ var definitions = []definition{
 	{"provisioning", "开通中产品数量", "未删除的待开通、开通中实例。", "SELECT COUNT(*) FROM instance.instances WHERE deleted_at IS NULL AND status IN (1,2)"},
 	{"offline-transfers", "待处理线下转账", "待核对实际到账凭证的线下转账申请。", ""},
 	{"manual-products", "待手动处理产品", "已付款待人工开通商品及交付、续费和操作异常；尚未生成实例的商品按订单商品列出。", ""},
-	{"expiring", "即将到期产品", "配置预警天数内到期的有效实例，排除已删除及永久产品。", ""},
+	{"expiring", "即将到期产品", "未来三天（72小时）内到期的有效实例，排除已到期、已删除及永久产品。", ""},
 }
 
 func IsSuper(ctx context.Context, db *gorm.DB, id int64) bool {
