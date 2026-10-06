@@ -11,7 +11,6 @@ import (
 
 	dom "ddyidc/internal/instance/domain"
 	instance "ddyidc/internal/instance/service"
-	"ddyidc/internal/shared/snowflake"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/clientip"
 	"github.com/zeromicro/go-zero/rest"
@@ -46,6 +45,7 @@ type ManualProductResult struct {
 	Processed bool                `json:"processed"`
 	Outcome   string              `json:"outcome"`
 	Message   string              `json:"message"`
+	Status    string              `json:"status"`
 	Facts     *instance.TodoFacts `json:"facts,omitempty"`
 }
 
@@ -60,10 +60,33 @@ func manualProductEntry(ctx context.Context, db *gorm.DB, source string, id int6
 	return page.Items[0], nil
 }
 
-func ProcessManualProduct(ctx context.Context, db *gorm.DB, reader FactReader, admin, id int64, ip string, in ManualProductInput) (ManualProductResult, error) {
-	out := ManualProductResult{}
-	in.Reason = strings.TrimSpace(in.Reason)
-	if admin <= 0 || id <= 0 || (in.Source != "instance" && in.Source != "order") || len(in.Revision) != 64 || len(in.RequestID) < 8 || len(in.RequestID) > 64 || in.Reason == "" || len([]rune(in.Reason)) > 256 || (in.Action != "mark_processed" && in.Action != "refresh") {
+type manualProductState struct {
+	Source    string `gorm:"primaryKey"`
+	ObjectID  int64  `gorm:"primaryKey"`
+	Revision  string
+	State     string
+	IPAddress string
+}
+
+func (manualProductState) TableName() string { return "system.manual_product_todos" }
+
+func manualProductHost(ctx context.Context, db *gorm.DB, entry Entry) (dom.Host, error) {
+	var host dom.Host
+	id, _ := strconv.ParseInt(entry.InstanceID, 10, 64)
+	if entry.Source == "order" {
+		var row struct{ InstanceID int64 }
+		if e := db.WithContext(ctx).Table("instance.instance_renewals").Select("instance_id").Where("order_id=? AND customer_id=?", entry.OrderID, entry.CustomerID).Order("id DESC").Take(&row).Error; e != nil {
+			return host, e
+		}
+		id = row.InstanceID
+	}
+	e := db.WithContext(ctx).Where("id=? AND customer_id=? AND deleted_at IS NULL", id, entry.CustomerID).Take(&host).Error
+	return host, e
+}
+
+func ProcessManualProduct(ctx context.Context, db *gorm.DB, reader FactReader, admin, id int64, _ string, in ManualProductInput) (ManualProductResult, error) {
+	out := ManualProductResult{Status: "review"}
+	if admin <= 0 || id <= 0 || (in.Source != "instance" && in.Source != "order") || len(in.Revision) != 64 || len(in.RequestID) < 8 || len(in.RequestID) > 64 || (in.Action != "mark_processed" && in.Action != "refresh") {
 		return out, ErrQuery
 	}
 	for _, c := range in.Revision {
@@ -71,46 +94,49 @@ func ProcessManualProduct(ctx context.Context, db *gorm.DB, reader FactReader, a
 			return out, ErrQuery
 		}
 	}
-	replay, e := auditReplay(db.WithContext(ctx), in.RequestID, "manual-products", in.Source, id, admin, in.Action, in.Reason, in.Revision)
-	if e != nil {
+	// Repeated clearing clicks use current state, not historical operation records.
+	var state manualProductState
+	if e := db.WithContext(ctx).Where("source=? AND object_id=?", in.Source, id).Take(&state).Error; e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 		return out, e
 	}
-	if replay {
-		return ManualProductResult{Processed: in.Action == "mark_processed", Outcome: "recorded", Message: "该请求已处理，请刷新列表"}, nil
-	}
 	entry, e := manualProductEntry(ctx, db, in.Source, id)
+	if errors.Is(e, ErrConflict) && state.Revision == in.Revision && state.State == "processed" && in.Action == "mark_processed" {
+		return ManualProductResult{Processed: true, Outcome: "processed", Message: "待办已清除"}, nil
+	}
 	if e != nil || entry.Revision != in.Revision {
 		return out, ErrConflict
 	}
 	var before dom.Host
 	if in.Action == "refresh" {
-		if in.Source != "instance" {
-			return ManualProductResult{Outcome: "unavailable", Message: "尚未关联实例，无法查询上游机器；待办保留"}, nil
-		}
-		if e = db.WithContext(ctx).Where("id=? AND deleted_at IS NULL", id).Take(&before).Error; e != nil {
+		before, e = manualProductHost(ctx, db, entry)
+		if errors.Is(e, gorm.ErrRecordNotFound) {
+			out.Outcome = "unavailable"
+			out.Message = "尚未关联实例，未获取上游机器信息"
+		} else if e != nil {
 			return out, e
+		} else {
+			if reader == nil {
+				return out, errors.New("只读核对服务未配置")
+			}
+			out.Facts, e = reader.InspectTodoFacts(ctx, before.CustomerID, before.ID)
+			if e != nil || out.Facts == nil {
+				out.Facts = nil
+				out.Outcome = "unavailable"
+				out.Message = "上游信息暂不可核实，保持待核查"
+			} else {
+				if !manualFactsIdentity(before, out.Facts) {
+					return out, ErrConflict
+				}
+				out.Outcome = "refreshed"
+				out.Message = "上游结果尚未完整符合待办目标，保持待核查"
+			}
 		}
-		customer, _ := strconv.ParseInt(entry.CustomerID, 10, 64)
-		if reader == nil {
-			return out, errors.New("只读核对服务未配置")
-		}
-		out.Facts, e = reader.InspectTodoFacts(ctx, customer, id)
-		if e != nil || out.Facts == nil {
-			return ManualProductResult{Outcome: "unavailable", Message: "上游信息暂不可核实，待办保留"}, nil
-		}
-		if out.Facts.CustomerID != customer || out.Facts.OwnershipVersion != before.OwnershipVersion || before.UpstreamProviderID == nil || *before.UpstreamProviderID != out.Facts.SupplierID || before.UpstreamInstanceID != out.Facts.RemoteID || time.Since(out.Facts.QueriedAt) > time.Minute {
-			return out, ErrConflict
-		}
-		out.Outcome = "refreshed"
-		out.Message = "已重新获取上游信息，核对结果后可标记已处理；待办保留"
 	} else {
 		out.Processed = true
 		out.Outcome = "processed"
-		out.Message = "已标记处理完成"
+		out.Message = "待办已清除"
 	}
 	e = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Serialize with object changes and other administrators. Check the work
-		// generation again after the remote GET; stale selections cannot dismiss it.
 		table := "instance.instances"
 		if in.Source == "order" {
 			table = "`order`.order_items"
@@ -119,29 +145,53 @@ func ProcessManualProduct(ctx context.Context, db *gorm.DB, reader FactReader, a
 		if e := tx.Table(table).Clauses(clause.Locking{Strength: "UPDATE"}).Select("id").Where("id=?", id).Take(&locked).Error; e != nil {
 			return e
 		}
-		replay, e := auditReplay(tx, in.RequestID, "manual-products", in.Source, id, admin, in.Action, in.Reason, in.Revision)
-		if e != nil {
+		var existing manualProductState
+		if e := tx.Where("source=? AND object_id=?", in.Source, id).Take(&existing).Error; e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
 			return e
 		}
-		if replay {
+		current, e := manualProductEntry(ctx, tx, in.Source, id)
+		if errors.Is(e, ErrConflict) && existing.Revision == in.Revision && existing.State == "processed" && in.Action == "mark_processed" {
 			return nil
 		}
-		current, e := manualProductEntry(ctx, tx, in.Source, id)
 		if e != nil || current.Revision != in.Revision {
 			return ErrConflict
 		}
-		if in.Action == "refresh" {
-			var host dom.Host
-			if e := tx.Where("id=? AND deleted_at IS NULL", id).Take(&host).Error; e != nil {
+		next := manualProductState{Source: in.Source, ObjectID: id, Revision: in.Revision, State: "review"}
+		if in.Action == "mark_processed" {
+			next.State = "processed"
+		} else if before.ID != 0 {
+			var lockedHost dom.Host
+			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND deleted_at IS NULL", before.ID).Take(&lockedHost).Error; e != nil {
 				return e
 			}
-			if host.CustomerID != before.CustomerID || host.OwnershipVersion != before.OwnershipVersion || host.UpstreamProviderID == nil || *host.UpstreamProviderID != out.Facts.SupplierID || host.UpstreamInstanceID != out.Facts.RemoteID {
+			host, e := manualProductHost(ctx, tx, current)
+			if e != nil || host.ID != before.ID || host.CustomerID != before.CustomerID || host.OwnershipVersion != before.OwnershipVersion || host.UpstreamProviderID == nil || before.UpstreamProviderID == nil || *host.UpstreamProviderID != *before.UpstreamProviderID || host.UpstreamInstanceID != before.UpstreamInstanceID {
 				return ErrConflict
 			}
+			if out.Facts != nil {
+				if !manualFactsIdentity(host, out.Facts) {
+					return ErrConflict
+				}
+				next.IPAddress = out.Facts.PrimaryIP
+				matches, e := manualProductMatches(tx, current, host, out.Facts)
+				if e != nil {
+					return e
+				}
+				if matches {
+					next.State = "normal"
+					out.Status = "normal"
+					out.Message = "上游数据与待办目标完整符合，状态正常"
+				}
+			}
 		}
-		return tx.Table("system.todo_audits").Create(map[string]any{"id": snowflake.GenID(), "request_id": in.RequestID, "kind": "manual-products", "source": in.Source, "object_id": id, "action": in.Action, "admin_id": admin, "operator_ip": ip, "notes": in.Reason, "evidence": in.Revision, "created_at": time.Now().UTC()}).Error
+		return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "source"}, {Name: "object_id"}}, DoUpdates: clause.AssignmentColumns([]string{"revision", "state", "ip_address"})}).Create(&next).Error
 	})
 	return out, e
+}
+
+func manualFactsIdentity(host dom.Host, facts *instance.TodoFacts) bool {
+	age := time.Since(facts.QueriedAt)
+	return host.CustomerID == facts.CustomerID && host.OwnershipVersion == facts.OwnershipVersion && host.UpstreamProviderID != nil && *host.UpstreamProviderID == facts.SupplierID && host.UpstreamInstanceID == facts.RemoteID && age >= -time.Second && age <= time.Minute
 }
 
 func RegisterManualProductActions(server *rest.Server, db *gorm.DB, manager *auth.Manager, reader FactReader) {

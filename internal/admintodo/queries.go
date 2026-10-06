@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -36,6 +37,7 @@ type Entry struct {
 	Href         string    `json:"href"`
 	LastAdminID  string    `json:"lastAdminId"`
 	Actions      []string  `json:"actions" gorm:"-"`
+	IPAddress    string    `json:"ipAddress,omitempty"`
 	Revision     string    `json:"revision,omitempty"`
 }
 type Filter struct {
@@ -87,6 +89,9 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
+	if kind == "manual-products" {
+		f.History = false
+	}
 	if f.History {
 		switch kind {
 		case "tickets":
@@ -120,7 +125,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 	}
 	q := db.Table("(" + sql + ") q").Joins("LEFT JOIN customer.customers c ON c.id=q.customer_id")
 	if kind == "manual-products" && !f.History {
-		q = q.Where("NOT EXISTS(SELECT 1 FROM system.todo_audits m WHERE m.kind='manual-products' AND m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.action='mark_processed' AND m.evidence=" + manualProductRevisionSQL() + ")")
+		q = q.Where("NOT EXISTS(SELECT 1 FROM system.manual_product_todos m WHERE m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.state='processed' AND m.revision=" + manualProductRevisionSQL() + ")")
 	}
 	if len([]rune(f.Keyword)) > 100 {
 		return nil, ErrQuery
@@ -139,7 +144,15 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		q = q.Where("q.source=?", f.Source)
 	}
 	if f.Status != "" {
-		q = q.Where("q.status=?", f.Status)
+		if kind == "manual-products" && (f.Status == "normal" || f.Status == "review") {
+			predicate := "EXISTS(SELECT 1 FROM system.manual_product_todos m WHERE m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.state='normal' AND m.revision=" + manualProductRevisionSQL() + ")"
+			if f.Status == "review" {
+				predicate = "NOT " + predicate
+			}
+			q = q.Where(predicate)
+		} else {
+			q = q.Where("q.status=?", f.Status)
+		}
 	}
 	if f.MinAmount != "" || f.MaxAmount != "" || f.Channel != "" {
 		if kind != "refunds" && kind != "withdrawals" && kind != "offline-transfers" {
@@ -207,6 +220,9 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 	return q, nil
 }
 func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error) {
+	if kind == "manual-products" {
+		f.History = false
+	}
 	out := Page{Items: make([]Entry, 0), Page: f.Page, PageSize: f.PageSize, SampledAt: time.Now().UTC(), PredicateVersion: "todos-nine-v1"}
 	if f.Page < 1 || f.Page > 100000 || f.PageSize < 1 || f.PageSize > 100 {
 		return out, ErrQuery
@@ -226,14 +242,37 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 	}
 	selection := "q.*,COALESCE(c.username,'关联客户不可用') customer_name,COALESCE((SELECT CAST(a.admin_id AS CHAR) FROM system.todo_audits a WHERE a.kind=? AND a.source=q.source AND a.object_id=CAST(q.id AS UNSIGNED) ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'') last_admin_id"
 	if kind == "manual-products" {
-		selection += "," + manualProductRevisionSQL() + " revision"
+		selection = "q.*,COALESCE(c.username,'关联客户不可用') customer_name,'' last_admin_id," + manualProductRevisionSQL() + " revision,COALESCE((SELECT h.primary_ip FROM instance.instances h WHERE q.source='instance' AND h.id=CAST(q.id AS UNSIGNED)),(SELECT h.primary_ip FROM instance.instance_renewals r JOIN instance.instances h ON h.id=r.instance_id AND h.customer_id=r.customer_id WHERE q.source='order' AND r.order_id=CAST(q.order_id AS UNSIGNED) AND r.customer_id=CAST(q.customer_id AS UNSIGNED) ORDER BY r.id DESC LIMIT 1),'') ip_address"
 	}
-	if e = q.Select(selection, kind).Order("q.created_at ASC,q.source ASC,q.id ASC").Limit(f.PageSize).Offset((f.Page - 1) * f.PageSize).Scan(&out.Items).Error; e != nil {
+	if e = q.Select(selection, func() []any {
+		if kind == "manual-products" {
+			return nil
+		}
+		return []any{kind}
+	}()...).Order("q.created_at ASC,q.source ASC,q.id ASC").Limit(f.PageSize).Offset((f.Page - 1) * f.PageSize).Scan(&out.Items).Error; e != nil {
 		return out, e
 	}
 	for i := range out.Items {
 		row := &out.Items[i]
 		row.Actions = []string{}
+		if kind == "manual-products" {
+			var current manualProductState
+			if e := db.WithContext(ctx).Where("source=? AND object_id=? AND revision=?", row.Source, row.ID, row.Revision).Take(&current).Error; e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
+				return out, e
+			}
+			if current.State == "normal" {
+				row.Status = "normal"
+			}
+			if current.IPAddress != "" {
+				row.IPAddress = current.IPAddress
+			}
+			if ip := net.ParseIP(strings.TrimSpace(row.IPAddress)); ip != nil {
+				row.IPAddress = ip.String()
+			} else {
+				row.IPAddress = ""
+			}
+			row.LastAdminID = ""
+		}
 		switch row.Source {
 		case "ticket":
 			row.Href = "/admin/tickets/" + row.ID

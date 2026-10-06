@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 PRIVILEGES = {
+ "system.manual_product_todos": "SELECT,INSERT,UPDATE,DELETE",
  "system.id_registry": "SELECT,INSERT",
  "system.todo_audits": "SELECT,INSERT",
  "system.todo_event_resolutions": "SELECT,INSERT",
