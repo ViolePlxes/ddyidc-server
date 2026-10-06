@@ -7,6 +7,7 @@ import (
 	"ddyidc/internal/order/inventory"
 	orderstate "ddyidc/internal/order/repository"
 	payment "ddyidc/internal/payment/domain"
+	"ddyidc/internal/shared/pointsevents"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/tasks"
 	"encoding/hex"
@@ -181,6 +182,24 @@ func Review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 			}
 			out.Status = 4
 			out.RefundedAt = &now
+			if calc.Refund > 0 && req.Source == "order" {
+				var original struct{ OrderNo string }
+				if err := tx.Table("`order`.orders").Select("order_no").Where("id=? AND customer_id=?", req.ObjectID, req.CustomerID).Take(&original).Error; err != nil {
+					return err
+				}
+				if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("refund:%d", id), UserID: req.CustomerID, Event: "order", RefID: original.OrderNo, RefundCents: int64(calc.Refund), PaidCents: int64(calc.Paid)}); err != nil {
+					return err
+				}
+				var inviter struct{ InviterID int64 }
+				if err := tx.Table("marketing.invite_relations").Select("inviter_id").Where("invitee_id=? AND level=1 AND status=1 AND inviter_id<>?", req.CustomerID, req.CustomerID).Scan(&inviter).Error; err != nil {
+					return err
+				}
+				if inviter.InviterID > 0 {
+					if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("refund-invite:%d", id), UserID: inviter.InviterID, Event: "invite_order", RefID: original.OrderNo, RefundCents: int64(calc.Refund), PaidCents: int64(calc.Paid)}); err != nil {
+						return err
+					}
+				}
+			}
 		}
 		out.AuditBy = &actor.ID
 		out.AuditAt = &now

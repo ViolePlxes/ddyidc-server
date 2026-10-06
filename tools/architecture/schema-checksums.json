@@ -23,5 +23,7 @@
   "022_todo_refund_requests.sql": "5052928f7cb6fb08d79d29b3a103efe4a8722bd40b1b9790cb7ca9d4bc6d9c2a",
   "023_notification_digest.sql": "c6723948b00420b7446bf995e8bbfcec332495f60b55407f0af076b3578e5a01",
   "024_notification_navigation.sql": "8c04630c2820a5d60737b3b83338442d7abf476e4d16d76752ef6d71e121deb2",
-  "025_manual_product_current_state.sql": "4511ac3778afb26cfe9cefd759adb3a198c934461b871b84983837bd4c79a0b9"
+  "025_manual_product_current_state.sql": "4511ac3778afb26cfe9cefd759adb3a198c934461b871b84983837bd4c79a0b9",
+  "026_points_production.sql": "ba8ff26d68c096d2b476fc5321e2519391226330fcbbe101cd91c05740d6c09d",
+  "027_points_activities.sql": "ff1728946c7e8695feb323d99b81638c3fbd7e6b243ff3fabea66f0ff9d32589"
 }

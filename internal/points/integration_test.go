@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"ddyidc/internal/shared/pointsevents"
 	"ddyidc/internal/shared/testenv"
 	"gorm.io/gorm"
 )
@@ -120,8 +121,18 @@ func TestPointsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deducted, refundErr := s.RefundDeduct(ctx, userID, EventOrder, "qa-refund", 1); refundErr != nil || deducted != 40 {
-		t.Fatalf("refund deducted=%d err=%v", deducted, refundErr)
+	if err = database.Transaction(func(tx *gorm.DB) error {
+		worker := NewService(tx, rdb)
+		return worker.applyRefundEvent(ctx, pointsevents.Event{Key: "qa-real-refund", UserID: userID, Event: EventOrder, RefID: "qa-refund", PaidCents: 100, RefundCents: 100})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var deducted int64
+	if err = database.Table("system.points_refund_events").Where("event_key=?", "qa-real-refund").Select("deducted").Scan(&deducted).Error; err != nil || deducted != 40 {
+		t.Fatalf("refund deducted=%d err=%v", deducted, err)
+	}
+	if err = s.EvaluateRisk(ctx, userID); err != nil {
+		t.Fatal(err)
 	}
 	var userTag UserTag
 	if err = database.Table(userTagsTable).Where("user_id=?", userID).Take(&userTag).Error; err != nil || userTag.TagID != riskTag.ID || userTag.Source != "auto" {
@@ -149,6 +160,7 @@ func openQA(t *testing.T) *gorm.DB {
 }
 
 func cleanupCore(ctx context.Context, database *gorm.DB, userID int64) {
+	database.WithContext(ctx).Exec("DELETE FROM system.points_refund_events WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_events WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_risk_logs WHERE user_id=?", userID)
 	database.WithContext(ctx).Exec("DELETE FROM system.points_user_tags WHERE user_id=?", userID)

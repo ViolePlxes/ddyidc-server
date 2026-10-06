@@ -4,6 +4,7 @@ import (
 	"context"
 	orders "ddyidc/internal/order/service"
 	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
+	"ddyidc/internal/shared/pointsevents"
 	"ddyidc/internal/shared/tasks"
 	"errors"
 	"fmt"
@@ -119,6 +120,9 @@ func (s *Service) SyncDeliveredOrder(ctx context.Context, customerID, orderID in
 			hosts[m.ID] = host.ID
 		}
 		for _, m := range members {
+			if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("group:%d", m.ID), UserID: m.ClientID, Event: "group_buy", RefID: fmt.Sprintf("group:%d", m.ID), AmountCents: m.PayAmount}); err != nil {
+				return err
+			}
 			if err := tx.Model(&Record{}).Where("id=? AND status=4", m.ID).Updates(map[string]any{"status": 2, "host_id": hosts[m.ID], "success_time": s.now()}).Error; err != nil {
 				return err
 			}

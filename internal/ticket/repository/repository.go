@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"ddyidc/internal/shared/pointsevents"
 	schemamode "ddyidc/internal/shared/schema"
 	dom "ddyidc/internal/ticket/domain"
 	"errors"
@@ -101,6 +102,9 @@ func (r *Repository) CreateTicket(tx *gorm.DB, ticket *dom.Ticket, reply *dom.Re
 		}
 	}
 	log.TicketID = ticket.ID
+	if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("ticket:%d", ticket.ID), UserID: ticket.ClientID, Event: "ticket", RefID: ticket.TicketNum}); err != nil {
+		return err
+	}
 	return tx.Table(log.TableName()).Create(log).Error
 }
 

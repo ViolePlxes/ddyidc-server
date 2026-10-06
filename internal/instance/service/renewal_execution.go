@@ -7,6 +7,7 @@ import (
 	order "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/distsync"
+	"ddyidc/internal/shared/pointsevents"
 	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
@@ -223,6 +224,9 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		}
 		if e := tx.Model(&order.OrderItem{}).Where("order_id=? AND module_type='instance_renewal'", r.OrderID).Updates(map[string]any{"delivery_status": 2, "updated_at": now}).Error; e != nil {
 			return e
+		}
+		if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("renew:%d", r.ID), UserID: r.CustomerID, Event: "renew", RefID: paid.OrderNo, AmountCents: int64(r.Amount)}); err != nil {
+			return err
 		}
 		return tx.Create(&dom.Event{InstanceID: r.InstanceID, EventType: "renew", OperatorType: 3, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: fmt.Sprintf(`{"orderId":"%d","expiresAt":%q}`, r.OrderID, formatTime(expiry)), CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}).Error
 	})

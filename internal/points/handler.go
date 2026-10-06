@@ -26,6 +26,11 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/api/v1/points/checkout-coupon", Handler: h.checkoutCoupon},
 		{Method: http.MethodGet, Path: "/api/v1/points/referrals", Handler: h.referrals},
 		{Method: http.MethodGet, Path: "/api/v1/points/categories", Handler: h.publicCategories},
+		{Method: http.MethodGet, Path: "/api/v1/points/activities", Handler: h.activities},
+		{Method: http.MethodPost, Path: "/api/v1/points/activities/:id/claim", Handler: h.claimActivity},
+		{Method: http.MethodGet, Path: "/admin/v1/points/activities", Handler: h.adminActivities},
+		{Method: http.MethodPost, Path: "/admin/v1/points/activities", Handler: h.saveActivity},
+		{Method: http.MethodPut, Path: "/admin/v1/points/activities/:id", Handler: h.saveActivity},
 		{Method: http.MethodGet, Path: "/api/v1/points/records", Handler: h.records},
 		{Method: http.MethodPost, Path: "/api/v1/points/signin", Handler: h.signin},
 		{Method: http.MethodGet, Path: "/api/v1/points/signin/calendar", Handler: h.calendar},
@@ -68,6 +73,7 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/admin/v1/points/grant", Handler: h.grant},
 		{Method: http.MethodPost, Path: "/admin/v1/points/trigger", Handler: h.trigger},
 		{Method: http.MethodGet, Path: "/admin/v1/points/stats", Handler: h.stats},
+		{Method: http.MethodGet, Path: "/admin/v1/points/event-tasks", Handler: h.eventTasks},
 		{Method: http.MethodGet, Path: "/admin/v1/points/risk-tags", Handler: h.riskTags},
 		{Method: http.MethodPost, Path: "/admin/v1/points/risk-tags", Handler: h.saveRiskTag},
 		{Method: http.MethodPut, Path: "/admin/v1/points/risk-tags/:id", Handler: h.saveRiskTag},
@@ -229,6 +235,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Quantity  int             `json:"quantity"`
 		Recipient json.RawMessage `json:"recipient"`
+		RequestID string          `json:"requestId"`
 	}
 	if !decode(w, r, &in) {
 		return
@@ -236,7 +243,7 @@ func (h *Handler) exchange(w http.ResponseWriter, r *http.Request) {
 	if len(in.Recipient) == 0 {
 		in.Recipient = json.RawMessage(`{}`)
 	}
-	v, e := h.service.Exchange(r.Context(), user, id, in.Quantity, in.Recipient)
+	v, e := h.service.ExchangeRequest(r.Context(), user, id, in.Quantity, in.Recipient, in.RequestID)
 	writeResult(w, v, e)
 }
 func (h *Handler) orders(w http.ResponseWriter, r *http.Request) {
@@ -558,19 +565,21 @@ func (h *Handler) setTag(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, map[string]bool{"updated": true}, h.service.SetUserTag(r.Context(), id, tag, admin, in.Locked, in.Remark))
 }
 func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.admin(w, r); !ok {
+	actor, ok := h.admin(w, r)
+	if !ok {
 		return
 	}
 	var in struct {
-		UserIDs []string `json:"userIds"`
-		Points  int64    `json:"points"`
-		Remark  string   `json:"remark"`
+		UserIDs   []string `json:"userIds"`
+		Points    int64    `json:"points"`
+		Remark    string   `json:"remark"`
+		RequestID string   `json:"requestId"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
 	ids := parseIDs(in.UserIDs)
-	n, e := h.service.AdminGrant(r.Context(), ids, in.Points, in.Remark)
+	n, e := h.service.AdminGrantRequest(r.Context(), actor, r.RemoteAddr, in.RequestID, ids, in.Points, in.Remark)
 	writeResult(w, map[string]int{"affected": n}, e)
 }
 func (h *Handler) trigger(w http.ResponseWriter, r *http.Request) {
