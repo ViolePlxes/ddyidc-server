@@ -82,6 +82,10 @@ func (h *adminHandler) digestTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	var total int64
 	var items []DigestTask
+	if values.Get("grouped") == "true" {
+		h.digestTaskGroups(w, r, q, page, size)
+		return
+	}
 	if e := q.Count(&total).Error; e != nil {
 		adminError(w, 500, 500, "读取任务失败")
 		return

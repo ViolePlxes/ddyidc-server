@@ -172,7 +172,9 @@ func (r *Repository) ListLogs(ctx context.Context, page, pageSize int, scene, ch
 
 func (r *Repository) CustomerContact(ctx context.Context, customerID int64) (Contact, error) {
 	var out Contact
-	err := r.db.WithContext(ctx).Table("customer.customers c").Joins("LEFT JOIN customer.admin_customer_settings s ON s.customer_id=c.id").Select("c.email, c.phone, COALESCE(s.receive_email,1)=0 skip_email, COALESCE(s.receive_sms,1)=0 skip_sms").Where("c.id = ? AND c.deleted_at IS NULL", customerID).First(&out).Error
+	// The joined projection has no primary key. Take avoids First's inferred
+	// ORDER BY on a projection field/table alias, which is invalid in this join.
+	err := r.db.WithContext(ctx).Table("customer.customers c").Joins("LEFT JOIN customer.admin_customer_settings s ON s.customer_id=c.id").Select("c.email, c.phone, COALESCE(s.receive_email,1)=0 skip_email, COALESCE(s.receive_sms,1)=0 skip_sms").Where("c.id = ? AND c.deleted_at IS NULL", customerID).Take(&out).Error
 	return out, err
 }
 
