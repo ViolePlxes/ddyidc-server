@@ -31,7 +31,9 @@ func (s *Service) providerContext(ctx context.Context, h *dom.Host) (contracts.I
 func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*StatusView, error) {
 	if outbound.DetailReadOnly() {
 		detail, err := s.Detail(ctx, customerID, instanceID)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return &StatusView{Status: detail.Status, PowerStatus: detail.PowerStatus, SyncedAt: detail.QueriedAt, Warning: detail.Warning}, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
@@ -41,6 +43,9 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 		return nil, err
 	}
 	view := &StatusView{Status: h.Status, PowerStatus: normalizePower(h.PowerStatus)}
+	if h.Status == 6 {
+		return view, nil
+	}
 	readStarted := time.Now()
 	// One database clock orders reads across nodes with different wall clocks.
 	if s.db != nil {
@@ -120,9 +125,9 @@ func actionPower(action string) string {
 	switch action {
 	case "start":
 		return "starting"
-	case "stop":
+	case "stop", "hard_stop":
 		return "stopping"
-	case "reboot":
+	case "reboot", "hard_reboot", "rescue", "exit_rescue":
 		return "rebooting"
 	case "reinstall":
 		return "reinstalling"

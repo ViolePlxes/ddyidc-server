@@ -13,6 +13,13 @@ import (
 
 // Every outstanding target must be proven. A successful GET alone is insufficient.
 func manualProductMatches(db *gorm.DB, entry Entry, host dom.Host, facts *instance.TodoFacts) (bool, error) {
+	var upgrades int64
+	if e := db.Table("instance.instance_upgrades").Where("instance_id=? AND state IN ('creating','paying','uncertain','verifying')", host.ID).Count(&upgrades).Error; e != nil {
+		return false, e
+	}
+	if upgrades > 0 {
+		return false, nil
+	}
 	var events []dom.Event
 	if entry.Source == "instance" {
 		if e := db.Where("instance_id=? AND status=3 AND event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id)", host.ID).Find(&events).Error; e != nil {

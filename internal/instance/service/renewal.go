@@ -217,6 +217,12 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 		if current.Status == 6 {
 			return ErrUnsupported
 		}
+		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := s.upgradeMutationAllowed(ctx, tx, id); err != nil {
+			return err
+		}
 		var busy int64
 		if err := tx.Table("system.push_transfers").Where("instance_id=? AND status='pending'", id).Count(&busy).Error; err != nil {
 			return err

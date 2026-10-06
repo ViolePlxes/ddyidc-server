@@ -179,6 +179,10 @@ type InstanceCapabilities struct {
 	Start         bool `json:"start"`
 	Stop          bool `json:"stop"`
 	Reboot        bool `json:"reboot"`
+	HardStop      bool `json:"hardStop"`
+	HardReboot    bool `json:"hardReboot"`
+	Rescue        bool `json:"rescue"`
+	ExitRescue    bool `json:"exitRescue"`
 	Reinstall     bool `json:"reinstall"`
 	ResetPassword bool `json:"resetPassword"`
 	Traffic       bool `json:"traffic"`
@@ -234,6 +238,8 @@ type InstanceActionInput struct {
 	ImageID        string `json:"imageId,omitempty"`
 	Port           string `json:"port,omitempty"`
 	FormatDataDisk bool   `json:"formatDataDisk,omitempty"`
+	RescueSystem   string `json:"rescueSystem,omitempty"`
+	Force          bool   `json:"force,omitempty"`
 }
 
 type InstanceActionResult struct {

@@ -85,6 +85,15 @@ func Preview(ctx context.Context, db *gorm.DB, id int64, fees Fees) (Calculation
 	return Calculate(snapshot, detail.CreatedAt, fees)
 }
 func Review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewInput) (payment.RefundApplication, error) {
+	return review(ctx, db, id, actor, in, false)
+}
+
+// ReviewMachineAction is only accepted for a locked, persisted human-approved
+// action with identical actor, request and amount. It does not bypass auditing.
+func ReviewMachineAction(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewInput) (payment.RefundApplication, error) {
+	return review(ctx, db, id, actor, in, true)
+}
+func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewInput, machine bool) (payment.RefundApplication, error) {
 	var out payment.RefundApplication
 	in.Reason = strings.TrimSpace(in.Reason)
 	if id <= 0 || actor.ID <= 0 || strings.TrimSpace(actor.Name) == "" || net.ParseIP(actor.IP) == nil || in.Reason == "" || len([]rune(in.Reason)) > 255 || (in.Action != "approve" && in.Action != "reject") || len(in.RequestID) < 8 || len(in.RequestID) > 64 || in.ExpectedUpdatedAt.IsZero() {
@@ -126,6 +135,21 @@ func Review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 		}
 		if !errors.Is(found, gorm.ErrRecordNotFound) {
 			return found
+		}
+		var intent struct {
+			AdminID                          int64
+			RequestID, Amount, State, Action string
+		}
+		lookup := tx.Table("payment.machine_refund_actions").Where("application_id=?", id).Take(&intent).Error
+		if lookup != nil && !errors.Is(lookup, gorm.ErrRecordNotFound) {
+			return lookup
+		}
+		if machine {
+			if lookup != nil || intent.AdminID != actor.ID || intent.RequestID != in.RequestID || intent.Amount != in.ExpectedAmount || (intent.State != "completing") {
+				return ErrConflict
+			}
+		} else if lookup == nil && intent.State != "completed" {
+			return ErrConflict
 		}
 		if out.Status != 0 || !out.UpdatedAt.Equal(in.ExpectedUpdatedAt) || out.UserID != req.CustomerID {
 			return ErrConflict

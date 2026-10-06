@@ -98,6 +98,21 @@ func LockHost(tx *gorm.DB, id int64) (*Host, error) {
 
 // AvailableTx requires the instance row lock. Every reservation writer takes it.
 func AvailableTx(tx *gorm.DB, instanceID, exceptTransfer, exceptListing int64) error {
+	var upgradeCount int64
+	if err := tx.Table("instance.instance_upgrades").Where("instance_id=? AND state NOT IN ('completed','cancelled') AND NOT (state='unpaid' AND order_id IN (SELECT id FROM `order`.orders WHERE status=3)) AND NOT (state='quoted' AND expires_at<NOW(3))", instanceID).Count(&upgradeCount).Error; err != nil {
+		return err
+	}
+	if upgradeCount > 0 {
+		return errors.New("实例存在未结束的升降配订单，暂不能转让或挂牌")
+	}
+	var refundCount int64
+	if err := tx.Table("payment.machine_refund_legs l").Joins("JOIN payment.machine_refund_actions a ON a.application_id=l.application_id").Where("l.instance_id=? AND (a.state<>'rejected' OR l.state NOT IN ('prepared','rejected'))", instanceID).Count(&refundCount).Error; err != nil {
+		return err
+	}
+	if refundCount > 0 {
+		return errors.New("实例存在人工退款处理，暂不能转让或挂牌")
+	}
+
 	{
 		var count int64
 		if err := tx.Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("r.instance_id=? AND r.state NOT IN ('completed','cancelled') AND o.status IN (1,2)", instanceID).Count(&count).Error; err != nil {

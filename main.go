@@ -161,7 +161,11 @@ func (h orderEventHooks) OnRechargePaid(ctx context.Context, rechargeID int64, r
 
 func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
 	if c.instances != nil {
-		matched, err := c.instances.ProvisionRenewal(ctx, customerID, orderID, method)
+		matched, err := c.instances.ProvisionUpgrade(ctx, customerID, orderID, method)
+		if matched || err != nil {
+			return err
+		}
+		matched, err = c.instances.ProvisionRenewal(ctx, customerID, orderID, method)
 		if matched || err != nil {
 			return err
 		}
@@ -320,6 +324,7 @@ func main() {
 			if err := points.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
+			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil { panic(err) }
 		}
 		fmt.Println("Offline migrations complete; API and scheduled jobs were not started")
 		return
@@ -530,7 +535,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
 		panic("instance management schema failed: " + err.Error())
 	}
-	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance)
+	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance, instanceSvc.StartMachineRefundMaintenance, instanceSvc.StartUpgradeMaintenance)
 	durableDispatcher := paymentservice.NewDeferredDurableDispatcher(db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc})
 	*cronStarts = append(*cronStarts, durableDispatcher.Start)
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)
@@ -585,6 +590,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	instancehandler.RegisterHandlers(server, instanceSvc, jwt)
 	admintodo.RegisterManualEventReviews(server, db.G, jwt, instanceSvc)
 	admintodo.RegisterManualProductActions(server, db.G, jwt, instanceSvc)
+	admintodo.RegisterMachineRefundActions(server, db.G, jwt, instanceSvc)
 	ticketSvc := ticketservice.NewService(ticketrepo.NewRepository(db.G))
 	ticketSvc.SetNotifier(notifyManager)
 	if err := ticketSvc.EnsureSchema(context.Background()); err != nil {

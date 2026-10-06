@@ -1410,6 +1410,10 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 			ResetPassword: true, Traffic: true, Remote: true, Destroy: false,
 		},
 	}
+	result.Capabilities.HardStop = hasModuleAction(data["module_button"], "hard_off")
+	result.Capabilities.HardReboot = hasModuleAction(data["module_button"], "hard_reboot")
+	result.Capabilities.Rescue = hasModuleAction(data["module_button"], "rescue_system")
+	result.Capabilities.ExitRescue = hasModuleAction(data["module_button"], "exitRescue")
 	if err := parseInstanceSnapshot(data, hostData, hostID, result); err != nil {
 		return nil, err
 	}
@@ -1439,12 +1443,18 @@ func (p *Provider) ExecuteInstanceAction(hostID int64, input contracts.InstanceA
 	upstreamFunc, ok := map[string]string{
 		"start": "on", "stop": "off", "reboot": "reboot", "reset_password": "crack_pass",
 		"reinstall": "reinstall", "remote": "vnc",
+		"hard_stop": "hard_off", "hard_reboot": "hard_reboot",
+		"rescue": "rescue_system", "exit_rescue": "exitRescue",
 	}[input.Action]
 	if !ok {
 		return nil, fmt.Errorf("finance upstream instance action %s is not supported", input.Action)
 	}
 	form := instanceActionForm(hostID, upstreamFunc, input)
-	body, err := p.authorizedFormPost("/provision/default", form)
+	path := "/provision/default"
+	if input.Action == "exit_rescue" {
+		path = "/provision/custom/" + strconv.FormatInt(hostID, 10)
+	}
+	body, err := p.authorizedFormPost(path, form)
 	if err != nil {
 		if input.Action == "remote" {
 			return nil, errors.New("remote console upstream unavailable")
@@ -1476,6 +1486,14 @@ func instanceActionForm(hostID int64, upstreamFunc string, input contracts.Insta
 	}
 	if input.Password != "" {
 		form.Set("password", input.Password)
+	}
+	if input.Action == "rescue" {
+		form.Del("password")
+		form.Set("temp_pass", input.Password)
+		form.Set("system", input.RescueSystem)
+		if input.Force {
+			form.Set("force", "on")
+		}
 	}
 	if input.ImageID != "" {
 		form.Set("os", input.ImageID)

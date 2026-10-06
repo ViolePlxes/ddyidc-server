@@ -163,6 +163,12 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 	if e != nil {
 		return nil, e
 	}
+	if h.Status == 6 {
+		return nil, ErrUnsupported
+	}
+	if e := s.refundMutationAllowed(ctx, s.db, id); e != nil {
+		return nil, e
+	}
 	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
 		return nil, ErrUnsupported

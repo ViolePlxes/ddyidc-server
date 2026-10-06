@@ -20,6 +20,7 @@ import (
 	"ddyidc/pkg/outbound"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -160,6 +161,8 @@ type ActionInput struct {
 	ImageID        string `json:"imageId,omitempty"`
 	Port           string `json:"port,omitempty"`
 	FormatDataDisk bool   `json:"formatDataDisk,omitempty"`
+	RescueSystem   string `json:"rescueSystem,omitempty"`
+	Force          bool   `json:"force,omitempty"`
 }
 
 type ActionView struct {
@@ -273,6 +276,10 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		}
 	}
 
+	if host.Status == 6 {
+		result.Capabilities = contracts.InstanceCapabilities{}
+		return result, nil
+	}
 	upstream, warning := s.providerContext(ctx, host)
 	if warning != "" {
 		result.Warning = warning
@@ -466,12 +473,18 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	if locked {
 		return nil, ErrTradingLocked
 	}
+	if err := s.refundMutationAllowed(ctx, s.db, instanceID); err != nil {
+		return nil, err
+	}
 	in.Action = strings.TrimSpace(strings.ToLower(in.Action))
 	if in.Action == "destroy" {
 		return nil, ErrUnsupported
 	}
-	if in.Action == "reset_password" && !validPassword(in.Password) {
+	if (in.Action == "reset_password" || in.Action == "rescue") && !validPassword(in.Password) {
 		return nil, errors.New("新密码至少 12 位，且必须包含大小写字母和数字")
+	}
+	if in.Action == "rescue" && (in.RescueSystem != "1" && in.RescueSystem != "2" || !in.Force) {
+		return nil, errors.New("请选择救援系统并确认业务中断")
 	}
 	if in.Action == "reinstall" && strings.TrimSpace(in.ImageID) == "" {
 		return nil, errors.New("请选择重装镜像")
@@ -516,17 +529,52 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	if warning != "" {
 		return nil, fmt.Errorf("%w: %s", ErrUnsupported, warning)
 	}
+	if in.Action == "hard_stop" || in.Action == "hard_reboot" || in.Action == "rescue" || in.Action == "exit_rescue" {
+		detail, err := upstream.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
+		if err != nil || detail == nil || detail.ID != host.UpstreamInstanceID {
+			return nil, errors.New("实例能力未确认，请刷新后重试")
+		}
+		if unavailableLifecycle(detail, host.UpstreamInstanceID) != "" {
+			return nil, ErrUnsupported
+		}
+		if in.Action == "hard_stop" && !detail.Capabilities.HardStop || in.Action == "hard_reboot" && !detail.Capabilities.HardReboot || in.Action == "rescue" && !detail.Capabilities.Rescue || in.Action == "exit_rescue" && !detail.Capabilities.ExitRescue {
+			return nil, ErrUnsupported
+		}
+	}
 	request, _ := json.Marshal(map[string]any{
-		"action": in.Action, "imageId": in.ImageID, "port": in.Port, "formatDataDisk": in.FormatDataDisk,
+		"action": in.Action, "imageId": in.ImageID, "port": in.Port, "formatDataDisk": in.FormatDataDisk, "rescueSystem": in.RescueSystem, "force": in.Force,
 	})
 	operatorType, operatorID := actionActor(ctx, customerID)
 	event := &dom.Event{InstanceID: host.ID, EventType: in.Action, FromStatus: &host.Status, OperatorType: operatorType, OperatorID: &operatorID, Status: 1, UpstreamRequest: string(request), UpstreamResponse: "{}"}
 	if err := s.repo.CreateEvent(ctx, event); err != nil {
 		return nil, err
 	}
-	result, err := upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{
-		Action: in.Action, Password: in.Password, ImageID: in.ImageID, Port: in.Port, FormatDataDisk: in.FormatDataDisk,
-	})
+	var result *contracts.InstanceActionResult
+	execute := func() error {
+		var actionErr error
+		result, actionErr = upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{Action: in.Action, Password: in.Password, ImageID: in.ImageID, Port: in.Port, FormatDataDisk: in.FormatDataDisk, RescueSystem: in.RescueSystem, Force: in.Force})
+		return actionErr
+	}
+	if s.db != nil && (in.Action == "hard_stop" || in.Action == "hard_reboot" || in.Action == "rescue" || in.Action == "exit_rescue") {
+		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var current dom.Host
+			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=? AND upstream_provider_id=? AND status<>6", host.ID, customerID, host.OwnershipVersion, host.UpstreamInstanceID, host.UpstreamProviderID).Take(&current).Error; e != nil {
+				return ErrForbidden
+			}
+			if e := s.refundMutationAllowed(ctx, tx, host.ID); e != nil {
+				return e
+			}
+			if e := s.upgradeMutationAllowed(ctx, tx, host.ID); e != nil {
+				return e
+			}
+			if e := s.refundHostUnlocked(tx, host.ID); e != nil {
+				return e
+			}
+			return execute()
+		})
+	} else {
+		err = execute()
+	}
 	if err != nil {
 		message := "实例操作暂时不可用，请稍后重试"
 		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", message)

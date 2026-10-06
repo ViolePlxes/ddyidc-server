@@ -28,6 +28,7 @@ func manualProductRevisionSQL() string {
 	return "SHA2(CONCAT(q.source,':',q.id,':',q.customer_id,':'," +
 		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_events", "instance_id=CAST(q.id AS UNSIGNED) AND status=3") + " ELSE '' END,':'," +
 		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_renewals", "instance_id=CAST(q.id AS UNSIGNED) AND state IN ('uncertain','failed','verifying')") + " ELSE '' END,':'," +
+		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_upgrades", "instance_id=CAST(q.id AS UNSIGNED) AND state IN ('creating','paying','uncertain','verifying')") + " ELSE '' END,':'," +
 		aggregate("`order`.delivery_units", "((q.source='instance' AND instance_id=CAST(q.id AS UNSIGNED)) OR (q.source='order' AND order_item_id=CAST(q.id AS UNSIGNED))) AND status IN ('unknown','failed')") + ",':'," +
 		"CASE WHEN q.source='order' THEN " + aggregate("`order`.order_items", "id=CAST(q.id AS UNSIGNED)") + " ELSE '' END,':'," +
 		aggregate("system.durable_tasks", "kind='post_payment' AND status IN ('unknown','failed') AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.customerId'))=q.customer_id AND ((JSON_UNQUOTE(JSON_EXTRACT(payload,'$.businessType'))='order' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.businessId'))=q.order_id) OR (JSON_UNQUOTE(JSON_EXTRACT(payload,'$.businessType'))='order_unit' AND JSON_UNQUOTE(JSON_EXTRACT(payload,'$.businessId')) IN (SELECT CAST(d.id AS CHAR) FROM `order`.delivery_units d WHERE (q.source='instance' AND d.instance_id=CAST(q.id AS UNSIGNED)) OR (q.source='order' AND d.order_item_id=CAST(q.id AS UNSIGNED)))))") +
@@ -76,7 +77,12 @@ func manualProductHost(ctx context.Context, db *gorm.DB, entry Entry) (dom.Host,
 	if entry.Source == "order" {
 		var row struct{ InstanceID int64 }
 		if e := db.WithContext(ctx).Table("instance.instance_renewals").Select("instance_id").Where("order_id=? AND customer_id=?", entry.OrderID, entry.CustomerID).Order("id DESC").Take(&row).Error; e != nil {
-			return host, e
+			if !errors.Is(e, gorm.ErrRecordNotFound) {
+				return host, e
+			}
+			if e = db.WithContext(ctx).Table("instance.instance_upgrades").Select("instance_id").Where("order_id=? AND customer_id=?", entry.OrderID, entry.CustomerID).Take(&row).Error; e != nil {
+				return host, e
+			}
 		}
 		id = row.InstanceID
 	}

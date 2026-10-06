@@ -26,6 +26,8 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 	h := &handler{service: service, jwt: jwt}
 	server.AddRoutes(h.adminListRoutes())
 	server.AddRoutes(h.managementRoutes())
+	server.AddRoutes(h.securityRoutes())
+	server.AddRoutes(h.upgradeRoutes())
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/status", Handler: h.status},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/status", Handler: h.status},
