@@ -328,7 +328,7 @@ func (h *handler) customers(w http.ResponseWriter, r *http.Request) {
 	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		query = query.Where("c.username LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.real_name LIKE ? OR cp.company LIKE ? OR EXISTS (SELECT 1 FROM customer.customer_realname cr WHERE cr.customer_id = c.id AND (cr.name LIKE ? OR cr.company_name LIKE ?))", like, like, like, like, like, like, like)
+		query = query.Where("CAST(c.id AS CHAR) LIKE ? OR c.username LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.real_name LIKE ? OR cp.company LIKE ? OR EXISTS (SELECT 1 FROM customer.customer_realname cr WHERE cr.customer_id = c.id AND (cr.name LIKE ? OR cr.company_name LIKE ?))", like, like, like, like, like, like, like, like)
 	}
 	var total int64
 	if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
