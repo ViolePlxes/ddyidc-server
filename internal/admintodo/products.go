@@ -58,8 +58,7 @@ func RegisterProductWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Ma
 			reply(w, 404, nil, "实例不存在")
 			return
 		}
-		var problems []ProductProblem
-		e := db.WithContext(r.Context()).Raw("SELECT CAST(id AS CHAR) id,'event' source,event_type action,CAST(status AS CHAR) status,updated_at updated_at FROM instance.instance_events WHERE instance_id=? AND status=3 AND event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id) UNION ALL SELECT CAST(id AS CHAR),'delivery','create',status,updated_at FROM `order`.delivery_units WHERE instance_id=? AND status IN ('unknown','failed') UNION ALL SELECT CAST(id AS CHAR),'renewal','renew',state,updated_at FROM instance.instance_renewals WHERE instance_id=? AND state IN ('uncertain','failed','verifying')", id, id, id).Scan(&problems).Error
+		problems, e := productProblems(r.Context(), db, id)
 		if e != nil {
 			reply(w, 503, nil, "异常查询暂不可用")
 			return
