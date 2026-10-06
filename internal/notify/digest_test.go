@@ -1,10 +1,28 @@
 package notify
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestDigestSceneAndTestChannelApproval(t *testing.T) {
+	if !validScene("expiry_digest") || validVerificationScene("expiry_digest") {
+		t.Fatal("digest must be a notification scene, not a verification scene")
+	}
+	repo := &fakeNotifyRepository{values: map[string]string{}, templates: map[string]*NotificationTemplate{"expiry_digest": {Enabled: true, Channel: ChannelBoth, Content: "您有{{server_count}}台服务器即将到期，时间{{earliest_expiry}}"}}}
+	mail := &fakeMailChannel{}
+	manager := testManager(repo, mail)
+	params := map[string]string{"server_count": "2", "earliest_expiry": "2026-10-09 09:00"}
+	if err := manager.SendTestNotify(context.Background(), "expiry_digest", "isolated@example.test", params); err != nil || mail.calls != 1 {
+		t.Fatalf("digest email test failed: %v", err)
+	}
+	manager.yaml.SMS.Templates["expiry_digest"] = "SMS_UNAPPROVED_FIXTURE"
+	if err := manager.SendTestNotify(context.Background(), "expiry_digest", "18631428991", params); err == nil {
+		t.Fatal("unapproved test SMS accepted")
+	}
+}
 
 func TestDigestScheduleShanghaiAndUrgency(t *testing.T) {
 	cases := []struct{ now, expiry, want string }{

@@ -382,6 +382,15 @@ func (m *Manager) SendNotify(ctx context.Context, scene, target string, params m
 // SendTestNotify sends at most once: a transport failure does not prove that
 // the provider failed to deliver the administrator's test message.
 func (m *Manager) SendTestNotify(ctx context.Context, scene, target string, params map[string]string) error {
+	if scene == "expiry_digest" && validMobile(strings.TrimSpace(target)) {
+		config, err := m.loadConfig(ctx)
+		if err != nil {
+			return err
+		}
+		if !m.digestSMSApproved(ctx, config.SMS.Templates[scene]) {
+			return errors.New("汇总到期短信模板尚未审核通过")
+		}
+	}
 	return m.sendNotify(ctx, scene, target, params, false)
 }
 

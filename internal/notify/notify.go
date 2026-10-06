@@ -335,7 +335,7 @@ func (s *VerificationService) key(channel, target, scene string) string {
 }
 func validScene(v string) bool {
 	switch v {
-	case "register", "login", "reset", "bind", "bindMobile", "bindEmail", "order", "activation", "expiry", "recharge", "ticket_reply", "ticket_new":
+	case "register", "login", "reset", "bind", "bindMobile", "bindEmail", "order", "activation", "expiry", "expiry_digest", "recharge", "ticket_reply", "ticket_new":
 		return true
 	}
 	return false
