@@ -36,6 +36,7 @@ type Entry struct {
 	Href         string    `json:"href"`
 	LastAdminID  string    `json:"lastAdminId"`
 	Actions      []string  `json:"actions" gorm:"-"`
+	Revision     string    `json:"revision,omitempty"`
 }
 type Filter struct {
 	Page, PageSize                                                  int
@@ -118,6 +119,9 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		sql = strings.Replace(sql, "DATE_ADD(UTC_DATE(), INTERVAL 8 DAY)-INTERVAL 1 SECOND", "'"+cutoff.Format("2006-01-02 15:04:05")+"'", 1)
 	}
 	q := db.Table("(" + sql + ") q").Joins("LEFT JOIN customer.customers c ON c.id=q.customer_id")
+	if kind == "manual-products" && !f.History {
+		q = q.Where("NOT EXISTS(SELECT 1 FROM system.todo_audits m WHERE m.kind='manual-products' AND m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.action='mark_processed' AND m.evidence=" + manualProductRevisionSQL() + ")")
+	}
 	if len([]rune(f.Keyword)) > 100 {
 		return nil, ErrQuery
 	}
@@ -220,7 +224,11 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 	if e = q.Count(&out.Total).Error; e != nil {
 		return out, e
 	}
-	if e = q.Select("q.*,COALESCE(c.username,'关联客户不可用') customer_name,COALESCE((SELECT CAST(a.admin_id AS CHAR) FROM system.todo_audits a WHERE a.kind=? AND a.source=q.source AND a.object_id=CAST(q.id AS UNSIGNED) ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'') last_admin_id", kind).Order("q.created_at ASC,q.source ASC,q.id ASC").Limit(f.PageSize).Offset((f.Page - 1) * f.PageSize).Scan(&out.Items).Error; e != nil {
+	selection := "q.*,COALESCE(c.username,'关联客户不可用') customer_name,COALESCE((SELECT CAST(a.admin_id AS CHAR) FROM system.todo_audits a WHERE a.kind=? AND a.source=q.source AND a.object_id=CAST(q.id AS UNSIGNED) ORDER BY a.created_at DESC,a.id DESC LIMIT 1),'') last_admin_id"
+	if kind == "manual-products" {
+		selection += "," + manualProductRevisionSQL() + " revision"
+	}
+	if e = q.Select(selection, kind).Order("q.created_at ASC,q.source ASC,q.id ASC").Limit(f.PageSize).Offset((f.Page - 1) * f.PageSize).Scan(&out.Items).Error; e != nil {
 		return out, e
 	}
 	for i := range out.Items {

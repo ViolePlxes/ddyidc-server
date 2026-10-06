@@ -65,7 +65,7 @@ func TestTodoHTTPPermissionsMySQL(t *testing.T) {
 		}
 		tokens[actor.name] = token
 	}
-	paths := []struct{ method, path string }{{"GET", "/admin/v1/todos/order-items/100/problems"}, {"POST", "/admin/v1/todos/order-items/100/tasks/100/review"}, {"GET", "/admin/v1/todos/products/100/problems"}, {"GET", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/tasks/100/review"}, {"POST", "/admin/v1/todos/products/100/events/100/review"}, {"GET", "/admin/v1/todos"}, {"GET", "/admin/v1/todos/tickets/items"}, {"GET", "/admin/v1/todos/refunds/items"}, {"GET", "/admin/v1/todos/certifications/items"}, {"GET", "/admin/v1/todos/withdrawals/items"}, {"GET", "/admin/v1/todos/recommendations/items"}, {"GET", "/admin/v1/todos/provisioning/items"}, {"GET", "/admin/v1/todos/offline-transfers/items"}, {"GET", "/admin/v1/todos/manual-products/items"}, {"GET", "/admin/v1/todos/expiring/items"}, {"POST", "/admin/v1/todos/refund-applications/100/review"}, {"POST", "/admin/v1/payment/offline-transfers/100/review"}, {"POST", "/admin/v1/finance/withdrawals/100/review"}, {"POST", "/admin/v1/todos/refunds/100/confirm-manual"}}
+	paths := []struct{ method, path string }{{"POST", "/admin/v1/todos/manual-products/items/100/process"}, {"GET", "/admin/v1/todos/order-items/100/problems"}, {"POST", "/admin/v1/todos/order-items/100/tasks/100/review"}, {"GET", "/admin/v1/todos/products/100/problems"}, {"GET", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/expiry-reminders"}, {"POST", "/admin/v1/todos/products/100/tasks/100/review"}, {"POST", "/admin/v1/todos/products/100/events/100/review"}, {"GET", "/admin/v1/todos"}, {"GET", "/admin/v1/todos/tickets/items"}, {"GET", "/admin/v1/todos/refunds/items"}, {"GET", "/admin/v1/todos/certifications/items"}, {"GET", "/admin/v1/todos/withdrawals/items"}, {"GET", "/admin/v1/todos/recommendations/items"}, {"GET", "/admin/v1/todos/provisioning/items"}, {"GET", "/admin/v1/todos/offline-transfers/items"}, {"GET", "/admin/v1/todos/manual-products/items"}, {"GET", "/admin/v1/todos/expiring/items"}, {"POST", "/admin/v1/todos/refund-applications/100/review"}, {"POST", "/admin/v1/payment/offline-transfers/100/review"}, {"POST", "/admin/v1/finance/withdrawals/100/review"}, {"POST", "/admin/v1/todos/refunds/100/confirm-manual"}}
 	for _, actor := range []string{"", "customer", "sales", "admin", "super"} {
 		for _, path := range paths {
 			conf := rest.RestConf{}
@@ -78,6 +78,7 @@ func TestTodoHTTPPermissionsMySQL(t *testing.T) {
 			RegisterExpiryWorkflows(server, tx, manager, unusedWorkflow{})
 			RegisterProductWorkflows(server, tx, manager, unusedWorkflow{})
 			RegisterManualEventReviews(server, tx, manager, unusedWorkflow{})
+			RegisterManualProductActions(server, tx, manager, unusedWorkflow{})
 			request := httptest.NewRequest(path.method, path.path, strings.NewReader("{}"))
 			if actor != "" {
 				request.Header.Set("Authorization", "Bearer "+tokens[actor])

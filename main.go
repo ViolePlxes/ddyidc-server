@@ -583,6 +583,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	pushtransfer.RegisterHandlers(server, pushtransfer.New(db.G, cache.RDB), jwt)
 	instancehandler.RegisterHandlers(server, instanceSvc, jwt)
 	admintodo.RegisterManualEventReviews(server, db.G, jwt, instanceSvc)
+	admintodo.RegisterManualProductActions(server, db.G, jwt, instanceSvc)
 	ticketSvc := ticketservice.NewService(ticketrepo.NewRepository(db.G))
 	ticketSvc.SetNotifier(notifyManager)
 	if err := ticketSvc.EnsureSchema(context.Background()); err != nil {
