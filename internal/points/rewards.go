@@ -67,7 +67,7 @@ func (s *Service) Activity(ctx context.Context, userID int64) error {
 }
 
 func (s *Service) referralEvent(ctx context.Context, event string, userID int64, meta EventMeta) error {
-	if event != EventRegister && event != EventOrder && event != EventRecharge {
+	if event != EventRegister && event != EventOrder && event != EventRecharge && event != EventCertification {
 		return nil
 	}
 	var rel struct{ InviterID int64 }
@@ -79,10 +79,32 @@ func (s *Service) referralEvent(ctx context.Context, event string, userID int64,
 		return err
 	}
 	switch event {
+	case EventCertification:
+		_, err = s.GrantByEvent(ctx, "invite_verified", rel.InviterID, EventMeta{RefID: fmt.Sprintf("invite:%d", userID), Remark: "邀请好友完成实名认证"})
 	case EventRegister:
 		_, err = s.GrantByEvent(ctx, EventInvite, rel.InviterID, EventMeta{RefID: fmt.Sprintf("invite:%d", userID), Remark: "邀请好友注册奖励"})
 	case EventOrder:
+		if meta.AmountCents <= 0 {
+			return nil
+		}
+		var certified int64
+		if err = s.db.WithContext(ctx).Table("customer.customer_realname").Where("customer_id=? AND status=2", userID).Count(&certified).Error; err != nil {
+			return err
+		}
+		if certified == 0 {
+			return nil
+		}
 		_, err = s.GrantByEvent(ctx, "invite_order", rel.InviterID, EventMeta{RefID: meta.RefID, AmountCents: meta.AmountCents, Remark: "好友消费返积分"})
+		if err != nil {
+			return err
+		}
+		var first string
+		if err = s.db.WithContext(ctx).Table("`order`.orders").Select("order_no").Where("customer_id=? AND paid_at IS NOT NULL AND pay_amount>0", userID).Order("paid_at,id").Limit(1).Scan(&first).Error; err != nil {
+			return err
+		}
+		if first == meta.RefID && meta.AmountCents >= 1000 {
+			_, err = s.GrantByEvent(ctx, "invite_first_purchase", rel.InviterID, EventMeta{RefID: meta.RefID, Remark: "已认证好友首次实际消费奖励"})
+		}
 	case EventRecharge:
 		var first string
 		if err = s.db.WithContext(ctx).Table("payment.recharge_orders").Select("recharge_no").Where("customer_id=? AND status=2", userID).Order("paid_at,id").Limit(1).Scan(&first).Error; err != nil {

@@ -147,16 +147,16 @@ func (h orderEventHooks) OnOrderPaid(ctx context.Context, orderID int64, orderNo
 		return err
 	}
 	meta := points.EventMeta{RefID: orderNo, AmountCents: payCents, Remark: "订单支付赠送积分"}
-	_, _ = h.points.GrantByEvent(ctx, points.EventOrder, customerID, meta)
-	_, _ = h.points.GrantByEvent(ctx, points.EventFirstPurchase, customerID, meta)
-	return nil
+	if err := h.points.QueueEvent(ctx, points.EventOrder, customerID, meta); err != nil {
+		return err
+	}
+	return h.points.QueueEvent(ctx, points.EventFirstPurchase, customerID, meta)
 }
 func (h orderEventHooks) OnRechargePaid(ctx context.Context, rechargeID int64, rechargeNo string, customerID, amountCents int64) error {
 	if err := h.marketing.OnRechargePaid(ctx, rechargeID, rechargeNo, customerID, amountCents); err != nil {
 		return err
 	}
-	_, _ = h.points.GrantByEvent(ctx, points.EventRecharge, customerID, points.EventMeta{RefID: rechargeNo, AmountCents: amountCents, Remark: "充值赠送积分"})
-	return nil
+	return h.points.QueueEvent(ctx, points.EventRecharge, customerID, points.EventMeta{RefID: rechargeNo, AmountCents: amountCents, Remark: "充值赠送积分"})
 }
 
 func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerID, orderID int64, method string) error {
@@ -315,6 +315,9 @@ func main() {
 		}
 		if *migrationSocket != "" {
 			if err := notify.ApplyDigestRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
+			if err := points.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
 		}
@@ -476,6 +479,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 
 	// 订单/充值（M2/M4 挂钩分销与优惠券）
 	orderSvc := orderservice.NewService(repositories.Order, orderEventHooks{marketing: marketingapi.NewOrderHooks(marketingSvc), points: pointsSvc}, snapshotKey)
+	pointsSvc.SetOrderService(orderSvc)
 	*cronStarts = append(*cronStarts, orderSvc.StartStockExpiry)
 	orderSvc.SetNotifier(notifyManager)
 	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)
@@ -542,8 +546,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
 	*cronStarts = append(*cronStarts, marketplaceSvc.StartMaintenance)
 	marketplaceSvc.SetRefunder(paymentSvc)
-	pointsEnabled, err := pointsSvc.Enabled(context.Background())
-	if err != nil {
+	if _, err := pointsSvc.Enabled(context.Background()); err != nil {
 		panic("points configuration failed: " + err.Error())
 	}
 	points.RegisterHandlers(server, pointsSvc, jwt)
@@ -555,9 +558,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := videobind.SeedNavigation(db.G); err != nil {
 		panic("video navigation initialization failed")
 	}
-	if pointsEnabled {
-		*cronStarts = append(*cronStarts, pointsSvc.StartExpiryScanner)
-	}
+	*cronStarts = append(*cronStarts, pointsSvc.StartMaintenance)
 
 	remoteRegistry := remoteconsole.NewRegistry()
 	remoteProvider := remoteconsole.NewNoVNCProvider(instanceSvc)

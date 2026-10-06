@@ -6,6 +6,7 @@ import (
 	balance "ddyidc/internal/billing/balance"
 	marketingdom "ddyidc/internal/marketing/domain"
 	marketingrepo "ddyidc/internal/marketing/repository"
+	orderservice "ddyidc/internal/order/service"
 	"ddyidc/internal/shared/distsync"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
@@ -34,12 +35,16 @@ var (
 //go:embed schema.sql
 var schemaSQL string
 
+//go:embed production_schema.sql
+var productionSchemaSQL string
+
 type EventMeta struct {
 	RefID       string
 	AmountCents int64
 	Remark      string
 }
 type Service struct {
+	orders *orderservice.Service
 	db     *gorm.DB
 	redis  *redis.Client
 	now    func() time.Time
@@ -53,7 +58,10 @@ func (s *Service) EnsureSchema(ctx context.Context) error {
 	if !schemamode.MigrationsEnabled() {
 		return nil
 	}
-	return s.db.WithContext(ctx).Exec(schemaSQL).Error
+	if err := s.db.WithContext(ctx).Exec(schemaSQL).Error; err != nil {
+		return err
+	}
+	return s.db.WithContext(ctx).Exec(productionSchemaSQL).Error
 }
 func (s *Service) Enabled(ctx context.Context) (bool, error) {
 	var v bool
@@ -185,7 +193,7 @@ func (s *Service) calculate(rule *Rule, amountCents int64) int64 {
 		}
 		return rule.PointsMin + mathrand.Int63n(rule.PointsMax-rule.PointsMin+1)
 	case "ratio":
-		return int64(math.Floor(float64(amountCents) * rule.Ratio / 10000))
+		return ratioReward(amountCents, rule.Ratio)
 	case "ladder":
 		var rows []ladderBand
 		_ = json.Unmarshal(rule.LadderConfig, &rows)
@@ -676,6 +684,19 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 		total := goods.PointsCost * int64(quantity)
 		out = Order{ID: snowflake.GenID(), OrderNo: fmt.Sprintf("PM%d", snowflake.GenID()), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
 		cfg := jsonObject(goods.Config)
+		if goods.Type == "system" {
+			if quantity != 1 {
+				return errors.New("系统商品每次限兑1件")
+			}
+			id, err := s.createSystemOrder(ctx, tx, userID, goods)
+			if err != nil {
+				return err
+			}
+			snapshot := jsonObject(goods.Config)
+			snapshot["platformOrderId"] = id
+			out.ConfigSnapshot, _ = json.Marshal(snapshot)
+			out.DeliveryContent = "系统订单已创建，请在我的实例中查看交付结果"
+		}
 		if goods.Type == "physical" {
 			out.Status = "pending"
 		}
@@ -690,6 +711,9 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 			}
 			if a.Balance < total {
 				return errors.New("可用积分不足")
+			}
+			if !a.Status {
+				return errors.New("积分账户已停用")
 			}
 			a.Balance -= total
 			a.Frozen += total
@@ -723,6 +747,13 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 		}
 		if goods.Type == "balance" {
 			amount, _ := strconv.ParseInt(stringValue(cfg["amountCents"]), 10, 64)
+			if yuan, ok := cfg["amountYuan"]; ok {
+				parsed, err := balance.ParseMoney(stringValue(yuan))
+				if err != nil {
+					return errors.New("余额商品金额无效")
+				}
+				amount = int64(parsed)
+			}
 			if amount <= 0 {
 				return errors.New("余额商品配置无效")
 			}
@@ -829,7 +860,18 @@ func (s *Service) Order(ctx context.Context, userID, id int64, admin bool) (*Ord
 	return &v, nil
 }
 func (s *Service) Deliver(ctx context.Context, id int64, tracking json.RawMessage) error {
-	return s.db.WithContext(ctx).Table(ordersTable).Where("id=? AND goods_type='physical' AND status IN ('pending','processing')", id).Updates(map[string]any{"tracking": tracking, "status": "processing"}).Error
+	var fields map[string]string
+	if json.Unmarshal(tracking, &fields) != nil || strings.TrimSpace(fields["company"]) == "" || strings.TrimSpace(fields["number"]) == "" || len(fields["company"]) > 100 || len(fields["number"]) > 100 {
+		return errors.New("请填写有效的快递公司和单号")
+	}
+	result := s.db.WithContext(ctx).Table(ordersTable).Where("id=? AND goods_type='physical' AND status IN ('pending','processing')", id).Updates(map[string]any{"tracking": tracking, "status": "processing", "updated_at": s.now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 func (s *Service) Confirm(ctx context.Context, userID, id int64) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -857,6 +899,71 @@ func (s *Service) SetOrderStatus(ctx context.Context, id int64, status string) e
 		}
 		if o.Status == status {
 			return nil
+		}
+		if o.Status == "completed" || o.Status == "cancelled" {
+			return errors.New("已结束的兑换订单不能再次变更")
+		}
+		if o.GoodsType == "system" {
+			var platform struct {
+				Status   uint8
+				CouponID *int64
+			}
+			platformID := stringValue(jsonObject(o.ConfigSnapshot)["platformOrderId"])
+			if platformID == "" {
+				return errors.New("系统兑换缺少平台订单关联，请先核查")
+			}
+			if err := tx.Table("`order`.orders").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", platformID, o.UserID).Take(&platform).Error; err != nil {
+				return err
+			}
+			if status == "completed" && platform.Status != 6 {
+				return errors.New("平台订单尚未交付，不能完成兑换")
+			}
+			if status == "cancelled" {
+				if platform.Status != 3 && platform.Status != 4 {
+					return errors.New("请先核查并关闭平台交付，不能直接退还冻结积分")
+				}
+				if platform.CouponID != nil {
+					var issued struct{ CouponID int64 }
+					if err := tx.Table("marketing.user_coupons").Where("id=? AND user_id=?", *platform.CouponID, o.UserID).Take(&issued).Error; err != nil {
+						return err
+					}
+					if err := tx.Table("marketing.user_coupons").Where("id=? AND user_id=? AND status=0", *platform.CouponID, o.UserID).Update("status", 3).Error; err != nil {
+						return err
+					}
+					if err := tx.Table("marketing.coupons").Where("id=?", issued.CouponID).Update("status", 0).Error; err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if o.GoodsType == "physical" {
+			if status == "processing" {
+				return errors.New("请通过发货操作填写物流信息")
+			}
+			if status == "completed" && o.Status != "processing" {
+				return errors.New("未发货订单不能确认完成")
+			}
+			if status == "cancelled" {
+				if o.Status != "pending" {
+					return errors.New("已发货订单需人工核查，不能直接取消")
+				}
+				if err := s.ensureAccountTx(ctx, tx, o.UserID); err != nil {
+					return err
+				}
+				var a Account
+				if err := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", o.UserID).Take(&a).Error; err != nil {
+					return err
+				}
+				if a.TotalUsed < o.PointsCost {
+					return errors.New("兑换积分流水不一致")
+				}
+				if err := tx.Table(accountsTable).Where("user_id=?", o.UserID).Updates(map[string]any{"balance": a.Balance + o.PointsCost, "total_used": a.TotalUsed - o.PointsCost}).Error; err != nil {
+					return err
+				}
+				if err := tx.Table(recordsTable).Create(&Record{UserID: o.UserID, Type: "gain", Source: "exchange_refund", Event: "exchange_refund", Change: o.PointsCost, BalanceAfter: a.Balance + o.PointsCost, RefID: o.OrderNo, Remark: "未发货兑换取消，退还积分"}).Error; err != nil {
+					return err
+				}
+			}
 		}
 		if o.GoodsType == "system" && o.Status == "processing" {
 			var a Account
@@ -940,22 +1047,25 @@ func (s *Service) RefundDeduct(ctx context.Context, userID int64, event, refID s
 	return done, e
 }
 func (s *Service) ExpireDue(ctx context.Context) (int, error) {
-	var rows []Record
-	e := s.db.WithContext(ctx).Table(recordsTable+" gain").Select("gain.*").Joins("LEFT JOIN system.points_records expired ON expired.event='expire' AND expired.ref_id=CAST(gain.id AS CHAR) COLLATE utf8mb4_unicode_ci AND expired.source='expiry'").Where("gain.type='gain' AND gain.expire_at IS NOT NULL AND gain.expire_at<=? AND expired.id IS NULL", s.now()).Limit(1000).Find(&rows).Error
-	if e != nil {
-		return 0, e
-	}
 	n := 0
-	for _, r := range rows {
-		e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			_, x := s.debitTx(ctx, tx, r.UserID, r.Change, "expiry", "expire", strconv.FormatInt(r.ID, 10), "积分到期清零", true)
-			return x
-		})
-		if e == nil {
+	var after int64
+	for {
+		var rows []Record
+		e := s.db.WithContext(ctx).Table(recordsTable+" gain").Select("gain.*").Joins("LEFT JOIN system.points_records expired ON expired.event='expire' AND expired.ref_id=CAST(gain.id AS CHAR) COLLATE utf8mb4_unicode_ci AND expired.source='expiry'").Where("gain.type='gain' AND gain.id>? AND gain.expire_at IS NOT NULL AND gain.expire_at<=? AND expired.id IS NULL", after, s.now()).Order("gain.id").Limit(500).Find(&rows).Error
+		if e != nil {
+			return n, e
+		}
+		if len(rows) == 0 {
+			return n, nil
+		}
+		for _, r := range rows {
+			if e = s.expireBatch(ctx, r); e != nil {
+				return n, e
+			}
 			n++
+			after = r.ID
 		}
 	}
-	return n, nil
 }
 func (s *Service) StartExpiryScanner(ctx context.Context) {
 	go func() {
@@ -982,6 +1092,11 @@ func (s *Service) ListRules(ctx context.Context, enabledOnly bool) ([]Rule, erro
 	return rows, e
 }
 func (s *Service) SaveRule(ctx context.Context, v *Rule) error {
+	if v.Type == "ladder" {
+		if err := validateLadder(v.LadderConfig); err != nil {
+			return err
+		}
+	}
 	if v.PointsFixed < 0 || v.PointsFixed > 1000000 || v.PointsMin < 0 || v.PointsMax < v.PointsMin || v.PointsMax > 1000000 || math.IsNaN(v.Ratio) || math.IsInf(v.Ratio, 0) || v.Ratio < 0 || v.Ratio > 9999 || v.LimitValue < 0 {
 		return errors.New("积分奖励金额或次数无效")
 	}
@@ -1184,18 +1299,18 @@ func (s *Service) riskMetric(ctx context.Context, userID int64, condition riskCo
 		days = 30
 	}
 	since := s.now().AddDate(0, 0, -days)
-	q := s.db.WithContext(ctx).Table(recordsTable).Where("user_id=? AND source='refund' AND created_at>=?", userID, since)
+	q := s.db.WithContext(ctx).Table("system.points_refund_events").Where("user_id=? AND event NOT IN ('invite_order','group_buy') AND created_at>=?", userID, since)
 	switch condition.Metric {
 	case "refund_amount":
 		var amount float64
-		e := q.Select("COALESCE(SUM(ABS(change_value)),0)").Scan(&amount).Error
+		e := q.Select("COALESCE(SUM(refund_amount),0)").Scan(&amount).Error
 		return amount, e
 	case "refund_rate":
 		var refunds, gains int64
 		if e := q.Count(&refunds).Error; e != nil {
 			return 0, e
 		}
-		if e := s.db.WithContext(ctx).Table(recordsTable).Where("user_id=? AND event IN ? AND type='gain' AND created_at>=?", userID, []string{EventOrder, EventRecharge}, since).Count(&gains).Error; e != nil {
+		if e := s.db.WithContext(ctx).Table("`order`.orders").Where("customer_id=? AND paid_at>=?", userID, since).Count(&gains).Error; e != nil {
 			return 0, e
 		}
 		if gains == 0 {
