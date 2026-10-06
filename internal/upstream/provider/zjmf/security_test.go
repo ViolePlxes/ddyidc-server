@@ -8,3 +8,12 @@ func TestSecurityGroupsParseScopedIDsWithoutExecutingHTML(t *testing.T) {
 		t.Fatalf("invalid groups %#v %v", groups, e)
 	}
 }
+
+func TestSecurityGroupsAppliedNameKeepsOwnershipMarker(t *testing.T) {
+	for _, prefix := range []string{"(当前)", "（当前）"} {
+		groups, err := parseSecurityGroups(`<table><tr><td>` + prefix + ` ddy-901697731749</td><td>专属测试组</td><td><button class="trView" data-id="1504">查看</button></td></tr></table>`)
+		if err != nil || len(groups) != 1 || groups[0].ID != "1504" || groups[0].Name != "ddy-901697731749" || !groups[0].Applied {
+			t.Fatalf("bound group ownership marker lost: %#v %v", groups, err)
+		}
+	}
+}

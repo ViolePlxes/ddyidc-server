@@ -57,6 +57,15 @@ func parseSecurityGroups(source string) ([]contracts.SecurityGroup, error) {
 			return
 		}
 		g := contracts.SecurityGroup{Name: cells[0], Description: cells[1]}
+		// The finance module marks the bound group in its name and removes the
+		// apply button. Preserve the stable ownership marker when reading it.
+		for _, prefix := range []string{"(当前)", "（当前）"} {
+			if strings.HasPrefix(g.Name, prefix) {
+				g.Name = strings.TrimSpace(strings.TrimPrefix(g.Name, prefix))
+				g.Applied = true
+				break
+			}
+		}
 		securityWalk(n, func(c *html.Node) {
 			classes := strings.Fields(securityAttribute(c, "class"))
 			for _, cl := range classes {
