@@ -10,6 +10,7 @@ import (
 	"github.com/zeromicro/go-zero/rest/pathvar"
 	"gorm.io/gorm"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,11 @@ import (
 
 type ExpiryNotifier interface {
 	RemindExpiring(context.Context, int64, int64, string, string) (bool, error)
+}
+
+type expiryHistoryRow struct {
+	Channel, Status, Error, BusinessID string
+	CreatedAt                          time.Time
 }
 
 func RegisterExpiryWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Manager, notifier ExpiryNotifier) {
@@ -41,13 +47,20 @@ func RegisterExpiryWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Man
 			return
 		}
 		if r.Method == http.MethodGet {
-			var rows []struct {
-				Channel, Status, Error, BusinessID string
-				CreatedAt                          time.Time
-			}
+			rows := []expiryHistoryRow{}
 			if db.WithContext(r.Context()).Table("system.notify_logs").Select("channel,status,error,business_id,created_at").Where("scene='expiry' AND (business_id=? OR business_id LIKE ?)", strconv.FormatInt(id, 10), strconv.FormatInt(id, 10)+":%").Order("created_at DESC,id DESC").Limit(100).Scan(&rows).Error != nil {
 				reply(w, 503, nil, "提醒记录暂不可用")
 				return
+			}
+			var batches []expiryHistoryRow
+			if e := db.WithContext(r.Context()).Table("system.notification_tasks t").Joins("JOIN system.notification_task_items i ON i.task_id=t.id").Select("t.channel,t.status,t.error,CAST(t.id AS CHAR) business_id,t.created_at").Where("i.instance_id=?", id).Order("t.created_at DESC,t.id DESC").Limit(100).Scan(&batches).Error; e != nil {
+				reply(w, 503, nil, "汇总提醒记录暂不可用")
+				return
+			}
+			rows = append(rows, batches...)
+			sort.SliceStable(rows, func(i, j int) bool { return rows[i].CreatedAt.After(rows[j].CreatedAt) })
+			if len(rows) > 100 {
+				rows = rows[:100]
 			}
 			if rows == nil {
 				reply(w, 200, []any{}, "")
@@ -76,12 +89,22 @@ func RegisterExpiryWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Man
 			reply(w, 409, nil, "提醒请求审计保存失败，未发送")
 			return
 		}
+		queued := false
+		if digest, ok := notifier.(interface {
+			ReminderUsesDigest(context.Context, int64) (bool, error)
+		}); ok {
+			queued, e = digest.ReminderUsesDigest(r.Context(), id)
+			if e != nil {
+				reply(w, 503, nil, "提醒范围读取失败")
+				return
+			}
+		}
 		delivered, e := notifier.RemindExpiring(r.Context(), id, c.UserID, clientip.FromRequest(r), in.Reason)
 		if e != nil {
 			reply(w, 409, nil, "提醒未确认成功，请核对通知配置、产品资格及渠道日志；不自动重发")
 			return
 		}
-		reply(w, 200, map[string]bool{"delivered": delivered}, "")
+		reply(w, 200, map[string]bool{"delivered": delivered && !queued, "queued": delivered && queued}, "")
 	}
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/todos/products/:id/expiry-reminders", Handler: h})
 	server.AddRoute(rest.Route{Method: http.MethodPost, Path: "/admin/v1/todos/products/:id/expiry-reminders", Handler: h})

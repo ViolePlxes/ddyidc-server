@@ -20,5 +20,7 @@
   "019_todo_operations.sql": "883cc147013860ccfd1dc5e0b992103dcd1b9cb26daa58d8f34ea467903f005d",
   "020_todo_registration_scope.sql": "49e99a6b781c2e7dd669dcd02637ae1d0b6536efa0971fb9427f41a81c8077a4",
   "021_todo_refund_calculations.sql": "6cfcb59aa886729822c4ac1f98378581b7c70dd704dd947b5757514523c11169",
-  "022_todo_refund_requests.sql": "5052928f7cb6fb08d79d29b3a103efe4a8722bd40b1b9790cb7ca9d4bc6d9c2a"
+  "022_todo_refund_requests.sql": "5052928f7cb6fb08d79d29b3a103efe4a8722bd40b1b9790cb7ca9d4bc6d9c2a",
+  "023_notification_digest.sql": "c6723948b00420b7446bf995e8bbfcec332495f60b55407f0af076b3578e5a01",
+  "024_notification_navigation.sql": "8c04630c2820a5d60737b3b83338442d7abf476e4d16d76752ef6d71e121deb2"
 }

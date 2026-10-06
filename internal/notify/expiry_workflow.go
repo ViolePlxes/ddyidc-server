@@ -76,6 +76,9 @@ func (m *Manager) remindExpiry(ctx context.Context, item ExpiringInstance, admin
 }
 
 func (m *Manager) RemindExpiring(ctx context.Context, id, admin int64, ip, reason string) (bool, error) {
+	if m.digest != nil {
+		return m.digest.ManualCollect(ctx, id, admin, ip, reason)
+	}
 	config, err := m.loadConfig(ctx)
 	if err != nil {
 		return false, err

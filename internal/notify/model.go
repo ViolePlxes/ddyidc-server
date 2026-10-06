@@ -65,6 +65,7 @@ type Contact struct {
 }
 
 type ExpiringInstance struct {
+	PrimaryIP   string     `gorm:"column:primary_ip"`
 	ID          int64      `gorm:"column:id"`
 	CustomerID  int64      `gorm:"column:customer_id"`
 	InstanceNo  string     `gorm:"column:instance_no"`

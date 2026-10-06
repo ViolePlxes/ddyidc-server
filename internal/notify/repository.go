@@ -51,6 +51,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
             KEY idx_notify_log_dedupe (scene,business_id,status), KEY idx_notify_log_template (template_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='通知发送记录'`,
 	}
+	statements = append(statements, r.ensureDigestSchema()...)
 	for _, statement := range statements {
 		if err := r.db.WithContext(ctx).Exec(statement).Error; err != nil {
 			return fmt.Errorf("ensure notify schema: %w", err)
@@ -62,6 +63,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 type templateSeed struct{ scene, channel, title, content string }
 
 var defaultTemplates = []templateSeed{
+	{"expiry_digest", ChannelBoth, "服务器即将到期汇总", "您有{{server_count}}台服务器即将到期，最早到期时间为{{earliest_expiry}}，请登录用户中心查看并续费。"},
 	{"balance_freeze", ChannelBoth, "余额冻结通知", "您的余额已冻结 {{amount}} 元，原因：{{reason}}。"},
 	{"register", ChannelBoth, "注册验证码", "您的注册验证码为 {{code}}，{{minutes}} 分钟内有效。"},
 	{"login", ChannelBoth, "登录验证码", "您的登录验证码为 {{code}}，{{minutes}} 分钟内有效。"},
@@ -182,7 +184,7 @@ func (r *Repository) AdminContact(ctx context.Context, adminID int64) (Contact, 
 
 func (r *Repository) ExpiringInstances(ctx context.Context, deadline time.Time) ([]ExpiringInstance, error) {
 	var out []ExpiringInstance
-	err := r.db.WithContext(ctx).Table("instance.instances").Select("id, customer_id, instance_no, product_name, expires_at").Where("deleted_at IS NULL AND status IN ? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?", []int{1, 2, 3, 4}, time.Now().UTC(), deadline).Find(&out).Error
+	err := r.db.WithContext(ctx).Table("instance.instances").Select("id, customer_id, instance_no, product_name, primary_ip, expires_at").Where("deleted_at IS NULL AND status IN ? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND expires_at IS NOT NULL AND expires_at > ? AND expires_at <= ?", []int{1, 2, 3, 4}, time.Now().UTC(), deadline).Find(&out).Error
 	return out, err
 }
 

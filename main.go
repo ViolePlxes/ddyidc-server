@@ -313,6 +313,11 @@ func main() {
 		if err := migrations.Apply(ctx, db.DB, migrationSteps, *retryDirty, func(ctx context.Context) error { return seedModules(ctx, []byte(c.Crypto.AESKey), paths.Root) }); err != nil {
 			panic(err)
 		}
+		if *migrationSocket != "" {
+			if err := notify.ApplyDigestRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
+		}
 		fmt.Println("Offline migrations complete; API and scheduled jobs were not started")
 		return
 	}
@@ -385,7 +390,7 @@ func main() {
 	var cronStarts []func(context.Context)
 	proc.AddShutdownListener(func() { draining.Store(true) })
 	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
-	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, balance.New(db.G).StartReconciliation,
+	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, notifyManager.StartDigestWorker, balance.New(db.G).StartReconciliation,
 		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
 	if !c.Cron.IsEnabled() || *noCron {
 		fmt.Println("定时任务已关闭（测试模式），仅提供 API 服务")

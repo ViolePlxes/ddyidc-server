@@ -994,5 +994,17 @@
     "enabled": true,
     "sort": 2,
     "gate": ""
+  },
+  {
+    "id": "900759908150",
+    "scope": "admin",
+    "parentId": "38",
+    "name": "通知任务",
+    "href": "/admin/notification-tasks",
+    "icon": "BellIcon",
+    "target": "self",
+    "enabled": true,
+    "sort": 2,
+    "gate": ""
   }
 ]

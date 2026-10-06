@@ -24,6 +24,15 @@ type adminHandler struct {
 func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *auth.Manager, outbox *balance.BalanceService) {
 	h := &adminHandler{manager: manager, auth: authManager, outbox: outbox}
 	server.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/admin/v1/system/notify/task-summary", Handler: h.digestSummary},
+		{Method: http.MethodGet, Path: "/admin/v1/system/notify/tasks", Handler: h.digestTasks},
+		{Method: http.MethodGet, Path: "/admin/v1/system/notify/tasks/:id", Handler: h.digestDetail},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/tasks/:id/resolve", Handler: h.digestResolve},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/tasks/:id/retry", Handler: h.digestRetry},
+		{Method: http.MethodPut, Path: "/admin/v1/system/notify/digest-settings", Handler: h.digestSettings},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/sms-template/apply", Handler: h.applyDigestSMSTemplate},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/sms-template/check", Handler: h.checkDigestSMSTemplate},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/diagnostics", Handler: h.digestDiagnostics},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/reviews", Handler: h.noticeReviews},
 		{Method: http.MethodPost, Path: "/admin/v1/system/notify/reviews/:id", Handler: h.reviewNotice},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/config", Handler: h.getConfig},

@@ -78,12 +78,25 @@ func (c *aliyunSMSChannel) Send(ctx context.Context, config SMSConfig, mobile, t
 	}
 	code, message := stringValue(response.Body.Code), stringValue(response.Body.Message)
 	if code != "OK" {
-		return "", fmt.Errorf("阿里云短信返回 %s: %s", code, message)
+		return "", &knownRejection{err: fmt.Errorf("阿里云短信返回 %s: %s", code, message), transient: code == "isv.SYSTEM_ERROR"}
 	}
 	return stringValue(response.Body.BizId), nil
 }
 
 type smtpMailChannel struct{}
+
+// KnownRejection means no message was submitted; all other errors are conservatively unknown.
+type knownRejection struct {
+	err       error
+	transient bool
+}
+
+func (e *knownRejection) Error() string { return e.err.Error() }
+func (e *knownRejection) Unwrap() error { return e.err }
+func beforeSubmission(err error) error {
+	var n net.Error
+	return &knownRejection{err: err, transient: errors.As(err, &n) && n.Timeout()}
+}
 
 func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subject, htmlBody string) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -99,7 +112,7 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 	if port == 465 {
 		conn, err := (&tls.Dialer{NetDialer: dialer, Config: tlsConfig}).DialContext(ctx, "tcp", address)
 		if err != nil {
-			return fmt.Errorf("连接 SMTPS: %w", err)
+			return beforeSubmission(fmt.Errorf("连接 SMTPS: %w", err))
 		}
 		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		defer stop()
@@ -108,13 +121,13 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 		created, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("创建 SMTP 客户端: %w", err)
+			return beforeSubmission(fmt.Errorf("创建 SMTP 客户端: %w", err))
 		}
 		client = created
 	} else {
 		conn, err := dialer.DialContext(ctx, "tcp", address)
 		if err != nil {
-			return fmt.Errorf("连接 SMTP: %w", err)
+			return beforeSubmission(fmt.Errorf("连接 SMTP: %w", err))
 		}
 		stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 		defer stop()
@@ -123,32 +136,32 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 		created, err := smtp.NewClient(conn, config.Host)
 		if err != nil {
 			_ = conn.Close()
-			return fmt.Errorf("创建 SMTP 客户端: %w", err)
+			return beforeSubmission(fmt.Errorf("创建 SMTP 客户端: %w", err))
 		}
 		client = created
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			if err := client.StartTLS(tlsConfig); err != nil {
 				_ = client.Close()
-				return fmt.Errorf("SMTP STARTTLS: %w", err)
+				return beforeSubmission(fmt.Errorf("SMTP STARTTLS: %w", err))
 			}
 		} else if port == 587 {
 			_ = client.Close()
-			return errors.New("SMTP 587 服务未提供 STARTTLS")
+			return beforeSubmission(errors.New("SMTP 587 服务未提供 STARTTLS"))
 		}
 	}
 	defer client.Close()
 	if err := client.Auth(smtp.PlainAuth("", config.Username, config.Password, config.Host)); err != nil {
-		return fmt.Errorf("SMTP 认证: %w", err)
+		return beforeSubmission(fmt.Errorf("SMTP 认证: %w", err))
 	}
 	if err := client.Mail(config.Username); err != nil {
-		return fmt.Errorf("SMTP 发件人: %w", err)
+		return beforeSubmission(fmt.Errorf("SMTP 发件人: %w", err))
 	}
 	if err := client.Rcpt(target); err != nil {
-		return fmt.Errorf("SMTP 收件人: %w", err)
+		return beforeSubmission(fmt.Errorf("SMTP 收件人: %w", err))
 	}
 	writer, err := client.Data()
 	if err != nil {
-		return fmt.Errorf("SMTP 正文: %w", err)
+		return beforeSubmission(fmt.Errorf("SMTP 正文: %w", err))
 	}
 	fromName := strings.TrimSpace(config.FromName)
 	if fromName == "" {
@@ -162,9 +175,8 @@ func (smtpMailChannel) Send(ctx context.Context, config MailConfig, target, subj
 	if err = writer.Close(); err != nil {
 		return fmt.Errorf("提交 SMTP 正文: %w", err)
 	}
-	if err = client.Quit(); err != nil {
-		return fmt.Errorf("结束 SMTP 会话: %w", err)
-	}
+	// DATA was acknowledged: a later QUIT failure cannot make the submission ambiguous.
+	_ = client.Quit()
 	return nil
 }
 

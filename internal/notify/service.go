@@ -40,6 +40,7 @@ type notifyRepository interface {
 }
 
 type Manager struct {
+	digest     *DigestService
 	repo       notifyRepository
 	yaml       Config
 	aesKey     []byte
@@ -52,6 +53,7 @@ type Manager struct {
 func NewManager(database *gorm.DB, yaml Config, aesKey []byte) (*Manager, error) {
 	repo := NewRepository(database)
 	manager := &Manager{repo: repo, yaml: yaml, aesKey: append([]byte(nil), aesKey...), sms: &aliyunSMSChannel{}, mail: smtpMailChannel{}, retryDelay: 3 * time.Second, now: time.Now}
+	manager.digest = &DigestService{db: database, manager: manager}
 	if err := repo.EnsureSchema(context.Background()); err != nil {
 		return nil, err
 	}
@@ -116,7 +118,7 @@ type ConfigInput struct {
 }
 
 func (m *Manager) loadConfig(ctx context.Context) (RuntimeConfig, error) {
-	config := RuntimeConfig{Mock: m.yaml.Mock, SMS: m.yaml.SMS, Mail: m.yaml.Mail, Expiry: ExpiryConfig{Enabled: true, DaysBefore: 7}}
+	config := RuntimeConfig{Mock: m.yaml.Mock, SMS: m.yaml.SMS, Mail: m.yaml.Mail, Expiry: ExpiryConfig{Enabled: true, DaysBefore: 3}}
 	config.SMS.Templates = cloneMap(m.yaml.SMS.Templates)
 	values, err := m.repo.ConfigValues(ctx)
 	if err != nil {
@@ -161,7 +163,7 @@ func (m *Manager) loadConfig(ctx context.Context) (RuntimeConfig, error) {
 	if value, parseErr := strconv.ParseBool(strings.TrimSpace(values["notify.expiry.enabled"])); parseErr == nil {
 		config.Expiry.Enabled = value
 	}
-	if value, parseErr := strconv.Atoi(strings.TrimSpace(values["notify.expiry.days_before"])); parseErr == nil && value > 0 && value <= 90 {
+	if value, parseErr := strconv.Atoi(strings.TrimSpace(values["notify.expiry.days_before"])); parseErr == nil && value > 0 && value <= 30 {
 		config.Expiry.DaysBefore = value
 	}
 	config.Mock = m.mockMode(config, ChannelEmail, "") || m.mockMode(config, ChannelSMS, "register")
@@ -242,8 +244,8 @@ func (m *Manager) SaveConfig(ctx context.Context, input ConfigInput) error {
 	}
 	if input.Expiry != nil {
 		days := input.Expiry.DaysBefore
-		if days < 1 || days > 90 {
-			return errors.New("到期提醒天数需为 1-90")
+		if days < 1 || days > 30 {
+			return errors.New("到期提醒天数需为 1-30")
 		}
 		if err := m.repo.SaveConfig(ctx, "notify.expiry.days_before", strconv.Itoa(days)); err != nil {
 			return err
@@ -474,6 +476,9 @@ func (m *Manager) notifyContactWithRetry(ctx context.Context, scene string, cont
 }
 
 func (m *Manager) ScanExpiring(ctx context.Context) (int, error) {
+	if m.digest != nil {
+		return m.digest.Scan(ctx)
+	}
 	config, err := m.loadConfig(ctx)
 	if err != nil || !config.Expiry.Enabled {
 		return 0, err
@@ -512,7 +517,7 @@ func (m *Manager) StartExpiryScanner(ctx context.Context) {
 			distsync.Task(ctx, "notify_expiry", time.Minute, func(ctx context.Context) error { _, err := m.ScanExpiring(ctx); return err })
 		}
 		run()
-		ticker := time.NewTicker(time.Hour)
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		for {
 			select {
