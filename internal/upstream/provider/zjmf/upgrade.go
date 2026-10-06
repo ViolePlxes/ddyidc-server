@@ -36,12 +36,12 @@ func (p *Provider) UpgradePlans(id int64) ([]contracts.UpgradePlan, error) {
 		if !ok {
 			return nil, fmt.Errorf("升级列表格式无效")
 		}
-		pid := firstMapString(row, "id")
+		pid := firstMapString(row, "id", "pid")
 		n, e := strconv.ParseInt(pid, 10, 64)
 		if e != nil || n <= 0 {
 			continue
 		}
-		plan := contracts.UpgradePlan{ProductID: pid, Name: firstMapString(row, "name"), Cycles: []contracts.UpgradeCycle{}}
+		plan := contracts.UpgradePlan{ProductID: pid, Name: firstMapString(row, "name", "host"), Cycles: []contracts.UpgradeCycle{}}
 		cycles, _ := row["cycle"].([]any)
 		for _, rawCycle := range cycles {
 			cycle, ok := rawCycle.(map[string]any)

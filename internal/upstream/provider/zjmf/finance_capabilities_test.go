@@ -32,6 +32,26 @@ func TestUpgradeDiscountUsesExactMoneyAndRejectsUnverifiedRates(t *testing.T) {
 	}
 }
 
+func TestUpgradePlansAcceptFinanceProductFieldNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/zjmf_api_login":
+			fmt.Fprint(w, `{"status":200,"jwt":"isolated"}`)
+		case "/upgrade/upgrade_product/55101":
+			fmt.Fprint(w, `{"status":200,"data":{"old_host":{"pid":247},"host":[{"pid":256,"host":"香港云服务器-C型","cycle":[{"billingcycle":"monthly","billingcycle_zh":"月付"}]}]}}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	p := New(contracts.Supplier{URL: server.URL, Username: "isolated", Token: "isolated"})
+	plans, err := p.UpgradePlans(55101)
+	if err != nil || len(plans) != 1 || plans[0].ProductID != "256" || plans[0].Name != "香港云服务器-C型" || len(plans[0].Cycles) != 1 || plans[0].Cycles[0].ID != "monthly" {
+		t.Fatalf("finance product plans not recognized: %#v %v", plans, err)
+	}
+}
+
 func TestUpgradeInvoiceChecksHostAmountAndAlreadyPaidCredit(t *testing.T) {
 	host := "55101"
 	state := "Unpaid"
