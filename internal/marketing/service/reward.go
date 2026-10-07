@@ -123,13 +123,18 @@ func (s *Service) MyEarnings(ctx context.Context, rewardUserID int64) (*Earnings
 
 // MyRewardList 我的奖励明细。
 func (s *Service) MyRewardList(ctx context.Context, rewardUserID int64, page, pageSize int) ([]*RewardDTO, int64, error) {
-	rows, total, err := s.repo.ListRewards(ctx, page, pageSize, nil, nil, "", rewardUserID)
+	status := uint8(dom.RewardSettled)
+	rows, total, err := s.repo.ListRewards(ctx, page, pageSize, &status, nil, "", rewardUserID)
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询奖励记录失败: %w", err)
 	}
 	out := make([]*RewardDTO, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, rewardToDTO(row))
+		dto := rewardToDTO(row)
+		dto.Username = ""
+		dto.RewardUserName = ""
+		dto.Remark = nil
+		out = append(out, dto)
 	}
 	return out, total, nil
 }
