@@ -55,7 +55,7 @@ func TestAdminInputAndSyncWhitelist(t *testing.T) {
 	}
 	now := time.Now().UTC()
 	h := &dom.Host{UpstreamInstanceID: "42", ConfigSnapshot: `{"renewalAmount":"9.99","password":"LOCAL_SECRET","billingCycle":"monthly"}`}
-	detail := &contracts.InstanceDetail{ID: "42", Password: "REMOTE_SECRET", Status: "deleted", PowerStatus: "suspended", Remark: "remote remark", RenewalAmount: "1.00", PrimaryIP: "203.0.113.8", ExpiresAt: &now, Config: []contracts.InstanceConfig{{Field: "cpu", Value: "4"}, {Field: "password", Value: "REMOTE_SECRET"}}, IPs: []contracts.InstanceIP{{Address: "203.0.113.9"}, {Address: "not-an-ip"}}}
+	detail := &contracts.InstanceDetail{ID: "42", Hostname: "synced-host", Port: "2222", OperatingSystem: "Ubuntu", Password: "REMOTE_SECRET", Status: "deleted", PowerStatus: "suspended", Remark: "remote remark", RenewalAmount: "1.00", PrimaryIP: "203.0.113.8", ExpiresAt: &now, Config: []contracts.InstanceConfig{{Field: "cpu", Value: "4"}, {Field: "password", Value: "REMOTE_SECRET"}}, IPs: []contracts.InstanceIP{{Address: "203.0.113.9"}, {Address: "not-an-ip"}}}
 	fields, e := safeSyncFields(h, detail, now)
 	if e != nil {
 		t.Fatal(e)
@@ -73,6 +73,12 @@ func TestAdminInputAndSyncWhitelist(t *testing.T) {
 	_ = json.Unmarshal([]byte(raw), &cache)
 	if cache["renewalAmount"] != "9.99" || cache["password"] != "LOCAL_SECRET" {
 		t.Fatal("existing snapshot overwritten")
+	}
+	updated := *h
+	updated.ConfigSnapshot = raw
+	row := listItem(&updated)
+	if row.Hostname != "synced-host" || row.Port != "2222" || row.OperatingSystem != "Ubuntu" || row.RenewalAmount != "9.99" || row.BillingCycle != "monthly" {
+		t.Fatalf("admin sync display facts or retail price lost: %+v", row)
 	}
 	detail.ID = "43"
 	if _, e = safeSyncFields(h, detail, now); e == nil {

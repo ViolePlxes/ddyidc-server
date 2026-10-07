@@ -253,6 +253,20 @@ func safeSyncFields(h *dom.Host, detail *contracts.InstanceDetail, now time.Time
 	if len(config) > 0 {
 		snapshot["syncedConfig"], _ = json.Marshal(config)
 	}
+	// Store safe display facts for the local-only customer list. Preserve the
+	// verified retail price and billing cycle; supplier detail prices may be costs.
+	local := listItem(h)
+	display := listDisplay{Hostname: local.Hostname, Port: local.Port, OperatingSystem: local.OperatingSystem, BillingCycle: local.BillingCycle, RenewalAmount: local.RenewalAmount}
+	if utf8.ValidString(detail.Hostname) && len(detail.Hostname) <= 255 && detail.Hostname != "" {
+		display.Hostname = detail.Hostname
+	}
+	if port, err := strconv.Atoi(detail.Port); err == nil && port > 0 && port <= 65535 {
+		display.Port = strconv.Itoa(port)
+	}
+	if os, ok := fields["operating_system"].(string); ok {
+		display.OperatingSystem = os
+	}
+	snapshot["listDisplay"], _ = json.Marshal(display)
 	raw, _ := json.Marshal(snapshot)
 	fields["config_snapshot"] = string(raw)
 	// Lifecycle, power, ownership, bindings, remarks, auto-renew and pricing are
