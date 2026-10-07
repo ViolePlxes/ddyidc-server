@@ -24,6 +24,13 @@ class Gate(http.server.BaseHTTPRequestHandler):
   self.send_header('Set-Cookie','entry-probe=passed; HttpOnly; Path=/');self.end_headers()
  def log_message(self,*args):pass
 class TestAdminSecurityNginx(unittest.TestCase):
+ def test_portal_does_not_redirect_legacy_admin(self):
+  portal='location ~ ^/(login|register|reset-password|forgot-password|console|admin|sales|cart|order|bind-mobile|auth|wallet)(?:/|$) { return 302 https://console.example$request_uri; }'
+  installed='location = /_ddyidc_admin_entry_check {}\n'+portal
+  transformed=module.transform(installed)
+  self.assertNotIn('console|admin|sales',transformed)
+  self.assertIn('console|sales|cart',transformed)
+  self.assertEqual(module.transform(transformed),transformed)
  def test_transform_and_real_gate(self):
   source=(root/'nginx-ddyidc.conf').read_text()
   legacy=source.replace('location = /admin.html { internal;','location = /admin.html {')

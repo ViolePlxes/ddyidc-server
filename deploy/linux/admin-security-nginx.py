@@ -6,6 +6,10 @@ import subprocess
 from pathlib import Path
 
 def transform(source: str) -> str:
+    # The separate public portal must not redirect a scanned /admin path to
+    # Console. Its existing fallback returns 404 after removing that alias.
+    source = source.replace('forgot-password|console|admin|sales|cart',
+                            'forgot-password|console|sales|cart')
     if 'location = /_ddyidc_admin_entry_check' in source:
         return source
     old = re.search(r'location\s+~\s+\^/admin\(\?:/\|\$\)\s*\{', source)
