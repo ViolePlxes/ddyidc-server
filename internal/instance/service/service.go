@@ -57,16 +57,22 @@ type ListInput struct {
 }
 
 type ListItem struct {
-	Remark       string `json:"remark"`
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	ProductName  string `json:"productName"`
-	PrimaryIP    string `json:"primaryIp,omitempty"`
-	Status       uint8  `json:"status"`
-	PowerStatus  string `json:"powerStatus,omitempty"`
-	BillingCycle string `json:"billingCycle,omitempty"`
-	ExpiresAt    string `json:"expiresAt,omitempty"`
-	CreatedAt    string `json:"createdAt"`
+	ReadOnly        bool   `json:"readOnly"`
+	Hostname        string `json:"hostname,omitempty"`
+	Port            string `json:"port,omitempty"`
+	OperatingSystem string `json:"operatingSystem,omitempty"`
+	RenewalAmount   string `json:"renewalAmount,omitempty"`
+	LastSyncedAt    string `json:"lastSyncedAt,omitempty"`
+	Remark          string `json:"remark"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	ProductName     string `json:"productName"`
+	PrimaryIP       string `json:"primaryIp,omitempty"`
+	Status          uint8  `json:"status"`
+	PowerStatus     string `json:"powerStatus,omitempty"`
+	BillingCycle    string `json:"billingCycle,omitempty"`
+	ExpiresAt       string `json:"expiresAt,omitempty"`
+	CreatedAt       string `json:"createdAt"`
 }
 
 type ListResult struct {
@@ -171,7 +177,17 @@ type ActionView struct {
 	Remote  *remoteconsole.RemoteSession `json:"remote,omitempty"`
 }
 
+type listDisplay struct {
+	Hostname        string `json:"hostname"`
+	Port            string `json:"port"`
+	OperatingSystem string `json:"operatingSystem"`
+	BillingCycle    string `json:"billingCycle"`
+	RenewalAmount   string `json:"renewalAmount"`
+}
+
 type rawSnapshot struct {
+	ListDisplay   *listDisplay `json:"listDisplay,omitempty"`
+	RenewalAmount string       `json:"renewalAmount"`
 	ConfigOptions map[string]struct {
 		Value        string `json:"value"`
 		Field        string `json:"field"`
@@ -202,6 +218,32 @@ func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*Li
 	items := make([]ListItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, listItem(row))
+	}
+	// Resolve migration editability in one local query, without fetching row details.
+	if s.db != nil {
+		legacyIDs := []int64{}
+		for _, host := range rows {
+			if host.ModuleType == "legacy_snapshot" {
+				legacyIDs = append(legacyIDs, host.ID)
+			}
+		}
+		if len(legacyIDs) > 0 {
+			var sources []struct {
+				InstanceID int64
+				ReadOnly   bool
+			}
+			if s.db.WithContext(ctx).Table("system.v10_instance_source").Select("instance_id,read_only").Where("instance_id IN ?", legacyIDs).Find(&sources).Error == nil {
+				editable := map[int64]bool{}
+				for _, source := range sources {
+					editable[source.InstanceID] = !source.ReadOnly
+				}
+				for i, host := range rows {
+					if editable[host.ID] {
+						items[i].ReadOnly = outbound.DetailReadOnly()
+					}
+				}
+			}
+		}
 	}
 	return &ListResult{Items: items, Total: total, Page: in.Page, PageSize: in.PageSize}, nil
 }
@@ -384,6 +426,9 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		"operating_system": result.OperatingSystem, "last_synced_at": now,
 	}
 	if s.db != nil {
+		display, _ := json.Marshal(listDisplay{Hostname: result.Hostname, Port: result.Port, OperatingSystem: result.OperatingSystem, BillingCycle: result.BillingCycle, RenewalAmount: result.RenewalAmount})
+		// Merge display facts atomically; preserve configuration, credentials and concurrent edits.
+		updates["config_snapshot"] = gorm.Expr("JSON_SET(config_snapshot, '$.listDisplay', CAST(? AS JSON))", string(display))
 		_ = s.db.WithContext(ctx).Model(&dom.Host{}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", host.ID, customerID, host.OwnershipVersion, host.UpstreamInstanceID).Updates(updates).Error
 	} else {
 		_ = s.repo.UpdateFields(ctx, host.ID, updates)
@@ -703,7 +748,25 @@ func (s *Service) provider(host *dom.Host) (contracts.InstanceProvider, string) 
 
 func listItem(host *dom.Host) ListItem {
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
-	result := ListItem{ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	result.Hostname = snapshot.Hostname
+	result.OperatingSystem = host.OperatingSystem
+	result.RenewalAmount = snapshot.RenewalAmount
+	if result.OperatingSystem == "" {
+		_, result.OperatingSystem = snapshotImage(snapshot)
+	}
+	if snapshot.ListDisplay != nil {
+		result.Hostname = snapshot.ListDisplay.Hostname
+		result.Port = snapshot.ListDisplay.Port
+		result.BillingCycle = snapshot.ListDisplay.BillingCycle
+		result.RenewalAmount = snapshot.ListDisplay.RenewalAmount
+		if result.OperatingSystem == "" {
+			result.OperatingSystem = snapshot.ListDisplay.OperatingSystem
+		}
+	}
+	if host.LastSyncedAt != nil {
+		result.LastSyncedAt = formatTime(*host.LastSyncedAt)
+	}
 	if host.ExpiresAt != nil {
 		result.ExpiresAt = formatTime(*host.ExpiresAt)
 	}
