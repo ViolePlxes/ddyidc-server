@@ -39,6 +39,16 @@ func TestRedactSensitiveHeaders(t *testing.T) {
 }
 
 func TestSalesBusinessRoutesUseSalesSession(t *testing.T) {
+	for _, path := range []string{"/admin/v1/auth/captcha", "/admin/v1/auth/captcha/challenge", "/admin/v1/auth/captcha/verify", "/admin/v1/sales/auth/captcha", "/admin/v1/sales/auth/captcha/challenge", "/admin/v1/sales/auth/captcha/verify"} {
+		_, protected := sessionKindForRequest(path)
+		if protected {
+			t.Fatalf("pre-login captcha route protected: %s", path)
+		}
+	}
+	_, protectedSettings := sessionKindForRequest("/admin/v1/security/captcha")
+	if !protectedSettings {
+		t.Fatal("captcha settings must require admin session")
+	}
 	kind, protected := sessionKindForRequest("/admin/v1/sales/customers")
 	if kind != "sales" || !protected {
 		t.Fatalf("sales route kind = %q, protected = %v", kind, protected)

@@ -6,6 +6,7 @@ import (
 	"ddyidc/internal/admintodo"
 	"ddyidc/internal/backup"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/captcha"
 	"ddyidc/internal/cdnsell"
 	"ddyidc/internal/certification"
 	customerhandler "ddyidc/internal/customer/handler"
@@ -487,7 +488,9 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	}
 	accessSecurity := security.New(db.G, snapshotKey)
 	accessSecurity.Register(server, jwt)
-	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService, accessSecurity)
+	humanVerification := captcha.New(db.G, cache.RDB, snapshotKey)
+	humanVerification.Register(server, jwt, accessSecurity)
+	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService, accessSecurity, humanVerification)
 	socialauth.Register(server, db.G, jwt, snapshotKey, verificationService)
 	marketinghandler.RegisterUserHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterAdminHandlers(server, marketingSvc, jwt)

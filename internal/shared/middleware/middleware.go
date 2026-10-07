@@ -108,6 +108,10 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 
 func sessionKindForRequest(path string) (auth.SessionKind, bool) {
 	switch {
+	case path == "/admin/v1/auth/captcha" || path == "/admin/v1/auth/captcha/challenge" || path == "/admin/v1/auth/captcha/verify":
+		return auth.SessionAdmin, false
+	case path == "/admin/v1/sales/auth/captcha" || path == "/admin/v1/sales/auth/captcha/challenge" || path == "/admin/v1/sales/auth/captcha/verify":
+		return auth.SessionSales, false
 	case path == "/admin/v1/auth/login" || path == "/admin/v1/auth/login/mfa":
 		return auth.SessionAdmin, false
 	case path == "/admin/v1/sales/auth/login":

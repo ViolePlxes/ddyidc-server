@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"ddyidc/internal/captcha"
 	domain "ddyidc/internal/customer/domain"
 	repository "ddyidc/internal/customer/repository"
 	"ddyidc/internal/security"
@@ -41,11 +42,12 @@ type SMSCodeConsumer interface {
 }
 
 type authHandler struct {
-	customers repository.Repository
-	jwt       *auth.Manager
-	hooks     AuthHooks
-	smsCodes  SMSCodeConsumer
-	security  *security.Service
+	customers         repository.Repository
+	jwt               *auth.Manager
+	hooks             AuthHooks
+	smsCodes          SMSCodeConsumer
+	security          *security.Service
+	humanVerification *captcha.Service
 }
 
 // administrator is intentionally local to the authentication boundary: admin
@@ -76,10 +78,15 @@ type salesUser struct {
 
 // RegisterAuthHandlers registers the password-authentication endpoints backed
 // by persistent customer data, plus registration and referral verification.
-func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer, access ...*security.Service) {
+func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer, access ...any) {
 	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks, smsCodes: smsCodes}
-	if len(access) > 0 {
-		h.security = access[0]
+	for _, option := range access {
+		switch v := option.(type) {
+		case *security.Service:
+			h.security = v
+		case *captcha.Service:
+			h.humanVerification = v
+		}
 	}
 	if h.security != nil {
 		h.registerMFA(server)
@@ -111,9 +118,10 @@ func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, 
 
 func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		RememberMe bool   `json:"rememberMe"`
-		Account    string `json:"account"`
-		Password   string `json:"password"`
+		RememberMe   bool   `json:"rememberMe"`
+		Account      string `json:"account"`
+		Password     string `json:"password"`
+		CaptchaGrant string `json:"captchaGrant"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "登录参数格式错误")
@@ -124,6 +132,9 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	account := strings.TrimSpace(input.Account)
+	if !h.checkCaptcha(w, r, "user_login", input.CaptchaGrant) {
+		return
+	}
 	rateKey := "user:" + clientIP(r) + ":" + account
 	locked, rateErr := h.jwt.IsLoginLocked(r.Context(), rateKey)
 	if rateErr != nil {
@@ -148,6 +159,9 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "查询账号失败")
 		return
 	}
+	if !h.recordCaptchaFailure(w, r, "user_login") {
+		return
+	}
 	locked, rateErr = h.jwt.RecordLoginFailure(r.Context(), rateKey)
 	if rateErr != nil {
 		writeError(w, http.StatusServiceUnavailable, "登录保护服务暂时不可用")
@@ -161,11 +175,14 @@ func (h *authHandler) userLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *authHandler) adminLogin(w http.ResponseWriter, r *http.Request) {
-	account, password, ok := decodeLoginCredentials(w, r)
+	account, password, grant, ok := decodeLoginCredentials(w, r)
 	if !ok {
 		return
 	}
 	rateKey := "admin:" + clientIP(r) + ":" + account
+	if !h.checkCaptcha(w, r, "admin_login", grant) {
+		return
+	}
 	if !h.allowLoginAttempt(w, r, rateKey) {
 		return
 	}
@@ -175,6 +192,9 @@ func (h *authHandler) adminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if admin == nil || admin.Status != 1 || !auth.PasswordMatches(admin.PasswordHash, password) {
+		if !h.recordCaptchaFailure(w, r, "admin_login") {
+			return
+		}
 		h.rejectLogin(w, r, rateKey)
 		return
 	}
@@ -210,11 +230,14 @@ func (h *authHandler) writeAdminLogin(w http.ResponseWriter, r *http.Request, ad
 }
 
 func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
-	account, password, ok := decodeLoginCredentials(w, r)
+	account, password, grant, ok := decodeLoginCredentials(w, r)
 	if !ok {
 		return
 	}
 	rateKey := "sales:" + clientIP(r) + ":" + account
+	if !h.checkCaptcha(w, r, "sales_login", grant) {
+		return
+	}
 	if !h.allowLoginAttempt(w, r, rateKey) {
 		return
 	}
@@ -224,6 +247,9 @@ func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if sales == nil || sales.Status != 1 || !auth.PasswordMatches(sales.PasswordHash, password) {
+		if !h.recordCaptchaFailure(w, r, "sales_login") {
+			return
+		}
 		h.rejectLogin(w, r, rateKey)
 		return
 	}
@@ -238,21 +264,22 @@ func (h *authHandler) salesLogin(w http.ResponseWriter, r *http.Request) {
 	h.writeSessionLogin(w, r, auth.SessionSales, sales.ID, sales.Username, "sales", user, false, sales.AuthVersion)
 }
 
-func decodeLoginCredentials(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+func decodeLoginCredentials(w http.ResponseWriter, r *http.Request) (string, string, string, bool) {
 	var input struct {
-		Account  string `json:"account"`
-		Password string `json:"password"`
+		Account      string `json:"account"`
+		Password     string `json:"password"`
+		CaptchaGrant string `json:"captchaGrant"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "登录参数格式错误")
-		return "", "", false
+		return "", "", "", false
 	}
 	account := strings.TrimSpace(input.Account)
 	if account == "" || input.Password == "" {
 		writeError(w, http.StatusBadRequest, "账号和密码不能为空")
-		return "", "", false
+		return "", "", "", false
 	}
-	return account, input.Password, true
+	return account, input.Password, input.CaptchaGrant, true
 }
 
 func (h *authHandler) allowLoginAttempt(w http.ResponseWriter, r *http.Request, rateKey string) bool {
