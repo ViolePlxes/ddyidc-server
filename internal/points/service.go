@@ -52,7 +52,8 @@ type Service struct {
 }
 
 func NewService(database *gorm.DB, redisClient *redis.Client) *Service {
-	return &Service{db: database, redis: redisClient, now: time.Now, random: mathrand.New(mathrand.NewSource(time.Now().UnixNano()))}
+	zone := time.FixedZone("Asia/Shanghai", 8*60*60)
+	return &Service{db: database, redis: redisClient, now: func() time.Time { return time.Now().In(zone) }, random: mathrand.New(mathrand.NewSource(time.Now().UnixNano()))}
 }
 func (s *Service) EnsureSchema(ctx context.Context) error {
 	if !schemamode.MigrationsEnabled() {
@@ -74,6 +75,9 @@ func (s *Service) Settings(ctx context.Context) (*Settings, error) {
 	return &v, e
 }
 func (s *Service) SaveSettings(ctx context.Context, v *Settings) error {
+	if v.DailyRewardLimit < 1 || v.DailyRewardLimit > 1000000 || v.InviteMonthlyLimit < 1 || v.InviteMonthlyLimit > 10000000 || v.CheckoutDailyLimit < 1 || v.CheckoutDailyLimit > 100 {
+		return errors.New("每日奖励、邀请月度额度或兑换次数无效")
+	}
 	if v.CheckoutPointsPerYuan < 1 || v.CheckoutPointsPerYuan > 1000000 || v.CheckoutCouponDays < 1 || v.CheckoutCouponDays > 365 {
 		return errors.New("积分抵扣比例或有效期无效")
 	}
@@ -98,6 +102,7 @@ func (s *Service) SaveSettings(ctx context.Context, v *Settings) error {
 		seen[m.Days] = true
 	}
 	return s.db.WithContext(ctx).Table(settingsTable).Where("id=1").Updates(map[string]any{
+		"daily_reward_limit": v.DailyRewardLimit, "invite_monthly_limit": v.InviteMonthlyLimit, "checkout_daily_limit": v.CheckoutDailyLimit,
 		"checkout_enabled": v.CheckoutEnabled, "checkout_points_per_yuan": v.CheckoutPointsPerYuan, "checkout_coupon_days": v.CheckoutCouponDays,
 		"enabled": v.Enabled, "points_expire_days": v.PointsExpireDays, "show_mall": v.ShowMall, "show_signin": v.ShowSignin, "show_tasks": v.ShowTasks,
 		"refund_mode": v.RefundMode, "refund_insufficient": v.RefundInsufficient, "recharge_refund_deduct": v.RechargeRefundDeduct,
@@ -274,7 +279,7 @@ func (s *Service) GrantByEvent(ctx context.Context, event string, userID int64, 
 		})
 		if e == nil && credited {
 			total += points
-		} else if e != nil && !isDuplicate(e) {
+		} else if e != nil && !isDuplicate(e) && !errors.Is(e, ErrRewardLimit) {
 			return total, e
 		}
 	}
@@ -312,6 +317,9 @@ func (s *Service) creditTx(ctx context.Context, tx *gorm.DB, userID, points int6
 	if e != nil {
 		return e
 	}
+	if err := s.checkCreditLimits(ctx, tx, userID, points, source, event, ref, settings); err != nil {
+		return err
+	}
 	var expire *time.Time
 	if settings.PointsExpireDays > 0 {
 		v := s.now().AddDate(0, 0, settings.PointsExpireDays)
@@ -322,11 +330,16 @@ func (s *Service) creditTx(ctx context.Context, tx *gorm.DB, userID, points int6
 	if e = tx.WithContext(ctx).Table(accountsTable).Where("user_id=?", userID).Updates(map[string]any{"balance": a.Balance, "total_earned": a.TotalEarned}).Error; e != nil {
 		return e
 	}
-	return tx.WithContext(ctx).Table(recordsTable).Create(&Record{UserID: userID, Type: "gain", Source: source, Event: event, Change: points, BalanceAfter: a.Balance, ExpireAt: expire, RefID: ref, Remark: remark}).Error
+	return tx.WithContext(ctx).Table(recordsTable).Create(&Record{UserID: userID, Type: "gain", Source: source, Event: event, Change: points, BalanceAfter: a.Balance, ExpireAt: expire, RefID: ref, Remark: remark, CreatedAt: s.now()}).Error
 }
 func (s *Service) debitTx(ctx context.Context, tx *gorm.DB, userID, points int64, source, event, ref, remark string, allowPartial bool) (int64, error) {
 	if e := s.ensureAccountTx(ctx, tx, userID); e != nil {
 		return 0, e
+	}
+	if source != "expiry" {
+		if err := s.expireUserTx(ctx, tx, userID); err != nil {
+			return 0, err
+		}
 	}
 	var a Account
 	if e := tx.WithContext(ctx).Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", userID).Take(&a).Error; e != nil {
@@ -357,12 +370,19 @@ func (s *Service) debitTx(ctx context.Context, tx *gorm.DB, userID, points int64
 	if e := tx.WithContext(ctx).Table(accountsTable).Where("user_id=?", userID).Updates(map[string]any{"balance": a.Balance, "total_used": a.TotalUsed}).Error; e != nil {
 		return 0, e
 	}
-	e := tx.WithContext(ctx).Table(recordsTable).Create(&Record{UserID: userID, Type: "deduct", Source: source, Event: event, Change: -deduct, BalanceAfter: a.Balance, RefID: ref, Remark: remark}).Error
+	e := tx.WithContext(ctx).Table(recordsTable).Create(&Record{UserID: userID, Type: "deduct", Source: source, Event: event, Change: -deduct, BalanceAfter: a.Balance, RefID: ref, Remark: remark, CreatedAt: s.now()}).Error
 	return deduct, e
 }
 
 func (s *Service) Account(ctx context.Context, userID int64) (*Account, error) {
-	_ = s.db.WithContext(ctx).Exec("INSERT IGNORE INTO system.points_accounts (user_id,status) VALUES (?,1)", userID).Error
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ensureAccountTx(ctx, tx, userID); err != nil {
+			return err
+		}
+		return s.expireUserTx(ctx, tx, userID)
+	}); err != nil {
+		return nil, err
+	}
 	var v Account
 	e := s.db.WithContext(ctx).Table(accountsTable).Where("user_id=?", userID).Take(&v).Error
 	return &v, e
@@ -389,7 +409,7 @@ func (s *Service) Records(ctx context.Context, userID int64, typ, source, keywor
 	var rows []Record
 	e := q.Count(&total).Error
 	if e == nil {
-		e = q.Order("created_at DESC").Offset((p - 1) * z).Limit(z).Find(&rows).Error
+		e = q.Order("created_at DESC,ledger_seq DESC").Offset((p - 1) * z).Limit(z).Find(&rows).Error
 	}
 	return rows, total, e
 }
@@ -433,7 +453,7 @@ func (s *Service) Signin(ctx context.Context, userID int64, mode string) (*Signi
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		today, _ := time.ParseInLocation("2006-01-02", s.now().Format("2006-01-02"), s.now().Location())
 		var existing int64
-		if e := tx.Table(signinsTable).Where("user_id=? AND signin_date=?", userID, today).Count(&existing).Error; e != nil {
+		if e := tx.Table(signinsTable).Where("user_id=? AND signin_date=?", userID, today.Format("2006-01-02")).Count(&existing).Error; e != nil {
 			return e
 		}
 		if existing > 0 {
@@ -467,8 +487,8 @@ func (s *Service) Signin(ctx context.Context, userID int64, mode string) (*Signi
 		if settings.StreakRewardEnabled {
 			bonus = signinBonus(milestones, streak, settings.SigninProgressive)
 		}
-		created = Signin{UserID: userID, SigninDate: today, Mode: mode, Points: points + bonus, Streak: streak}
-		if e := tx.Table(signinsTable).Create(&created).Error; e != nil {
+		created = Signin{ID: snowflake.GenID(), UserID: userID, SigninDate: today, Mode: mode, Points: points + bonus, Streak: streak, CreatedAt: s.now()}
+		if e := tx.Table(signinsTable).Create(map[string]any{"id": created.ID, "user_id": userID, "signin_date": today.Format("2006-01-02"), "mode": mode, "points": created.Points, "streak": streak, "created_at": created.CreatedAt}).Error; e != nil {
 			return e
 		}
 		return s.creditTx(ctx, tx, userID, points+bonus, "signin", "signin", today.Format("2006-01-02"), fmt.Sprintf("每日签到（连续 %d 天）", streak))
@@ -490,7 +510,7 @@ func (s *Service) SigninCalendar(ctx context.Context, userID int64, month string
 	end := start.AddDate(0, 1, 0)
 	var rows []Signin
 	var total int64
-	if e = s.db.WithContext(ctx).Table(signinsTable).Where("user_id=? AND signin_date>=? AND signin_date<?", userID, start, end).Order("signin_date").Find(&rows).Error; e != nil {
+	if e = s.db.WithContext(ctx).Table(signinsTable).Where("user_id=? AND signin_date>=? AND signin_date<?", userID, start.Format("2006-01-02"), end.Format("2006-01-02")).Order("signin_date").Find(&rows).Error; e != nil {
 		return nil, e
 	}
 	if e = s.db.WithContext(ctx).Table(signinsTable).Where("user_id=?", userID).Count(&total).Error; e != nil {
@@ -668,6 +688,16 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 	}
 	var out Order
 	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := s.ensureAccountTx(ctx, tx, userID); e != nil {
+			return e
+		}
+		var account Account
+		if e := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", userID).Take(&account).Error; e != nil {
+			return e
+		}
+		if err := s.expireUserTx(ctx, tx, userID); err != nil {
+			return err
+		}
 		var goods Goods
 		if e := tx.Table(goodsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND status=1", goodsID).Take(&goods).Error; e != nil {
 			return ErrNotFound
@@ -681,8 +711,11 @@ func (s *Service) Exchange(ctx context.Context, userID, goodsID int64, quantity 
 				return errors.New("实物商品需要填写完整收货信息")
 			}
 		}
+		if err := s.checkGoodsDailyLimit(ctx, tx, userID, goods, quantity); err != nil {
+			return err
+		}
 		total := goods.PointsCost * int64(quantity)
-		out = Order{ID: snowflake.GenID(), OrderNo: fmt.Sprintf("PM%d", snowflake.GenID()), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config}
+		out = Order{ID: snowflake.GenID(), OrderNo: fmt.Sprintf("PM%d", snowflake.GenID()), UserID: userID, GoodsID: goods.ID, GoodsName: goods.Name, GoodsType: goods.Type, PointsCost: total, Quantity: quantity, Status: "completed", Recipient: recipient, Tracking: json.RawMessage(`{}`), ConfigSnapshot: goods.Config, CreatedAt: s.now(), UpdatedAt: s.now()}
 		cfg := jsonObject(goods.Config)
 		if goods.Type == "system" {
 			if quantity != 1 {
@@ -882,10 +915,17 @@ func (s *Service) Confirm(ctx context.Context, userID, id int64) error {
 		if order.UserID != userID {
 			return ErrForbidden
 		}
+		if order.GoodsType == "physical" && order.Status == "completed" {
+			return nil
+		}
 		if order.GoodsType != "physical" || order.Status != "processing" {
 			return errors.New("当前订单不能确认收货")
 		}
-		return tx.Table(ordersTable).Where("id=?", id).Update("status", "completed").Error
+		var tracking map[string]string
+		if json.Unmarshal(order.Tracking, &tracking) != nil || tracking["number"] == "" || tracking["company"] == "" {
+			return errors.New("尚未发货，不能确认收货")
+		}
+		return tx.Table(ordersTable).Where("id=?", id).Updates(map[string]any{"status": "completed", "updated_at": s.now()}).Error
 	})
 }
 func (s *Service) SetOrderStatus(ctx context.Context, id int64, status string) error {
@@ -943,6 +983,12 @@ func (s *Service) SetOrderStatus(ctx context.Context, id int64, status string) e
 			if status == "completed" && o.Status != "processing" {
 				return errors.New("未发货订单不能确认完成")
 			}
+			if status == "completed" {
+				var tracking map[string]string
+				if json.Unmarshal(o.Tracking, &tracking) != nil || tracking["number"] == "" || tracking["company"] == "" {
+					return errors.New("缺少发货信息，不能确认完成")
+				}
+			}
 			if status == "cancelled" {
 				if o.Status != "pending" {
 					return errors.New("已发货订单需人工核查，不能直接取消")
@@ -954,13 +1000,7 @@ func (s *Service) SetOrderStatus(ctx context.Context, id int64, status string) e
 				if err := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", o.UserID).Take(&a).Error; err != nil {
 					return err
 				}
-				if a.TotalUsed < o.PointsCost {
-					return errors.New("兑换积分流水不一致")
-				}
-				if err := tx.Table(accountsTable).Where("user_id=?", o.UserID).Updates(map[string]any{"balance": a.Balance + o.PointsCost, "total_used": a.TotalUsed - o.PointsCost}).Error; err != nil {
-					return err
-				}
-				if err := tx.Table(recordsTable).Create(&Record{UserID: o.UserID, Type: "gain", Source: "exchange_refund", Event: "exchange_refund", Change: o.PointsCost, BalanceAfter: a.Balance + o.PointsCost, RefID: o.OrderNo, Remark: "未发货兑换取消，退还积分"}).Error; err != nil {
+				if err := s.restoreExchangePoints(ctx, tx, o, a); err != nil {
 					return err
 				}
 			}
@@ -986,7 +1026,16 @@ func (s *Service) SetOrderStatus(ctx context.Context, id int64, status string) e
 				return e
 			}
 		}
-		return tx.Table(ordersTable).Where("id=?", id).Update("status", status).Error
+		if status == "cancelled" && (o.GoodsType == "physical" || o.GoodsType == "system") {
+			result := tx.Table(goodsTable).Where("id=? AND sold>=?", o.GoodsID, o.Quantity).Update("sold", gorm.Expr("sold-?", o.Quantity))
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("兑换库存记录不一致，请先核查")
+			}
+		}
+		return tx.Table(ordersTable).Where("id=?", id).Updates(map[string]any{"status": status, "updated_at": s.now()}).Error
 	})
 }
 
@@ -1144,6 +1193,14 @@ func (s *Service) SaveGoods(ctx context.Context, v *Goods) error {
 	}
 	if len(v.Config) == 0 {
 		v.Config = json.RawMessage(`{}`)
+	}
+	if _, err := goodsDailyLimit(v.Config); err != nil {
+		return err
+	}
+	if v.Type == "physical" {
+		if _, err := physicalConfirmDays(v.Config); err != nil {
+			return err
+		}
 	}
 	if v.ID == 0 {
 		return s.db.WithContext(ctx).Table(goodsTable).Create(v).Error
@@ -1307,7 +1364,7 @@ func (s *Service) riskMetric(ctx context.Context, userID int64, condition riskCo
 		return amount, e
 	case "refund_rate":
 		var refunds, gains int64
-		if e := q.Count(&refunds).Error; e != nil {
+		if e := q.Distinct("ref_id").Count(&refunds).Error; e != nil {
 			return 0, e
 		}
 		if e := s.db.WithContext(ctx).Table("`order`.orders").Where("customer_id=? AND paid_at>=?", userID, since).Count(&gains).Error; e != nil {
@@ -1332,7 +1389,7 @@ func (s *Service) riskMetric(ctx context.Context, userID int64, condition riskCo
 		return float64(streak), nil
 	default: // refund_count
 		var count int64
-		e := q.Count(&count).Error
+		e := q.Distinct("ref_id").Count(&count).Error
 		return float64(count), e
 	}
 }
@@ -1383,6 +1440,21 @@ func (s *Service) EvaluateRisk(ctx context.Context, userID int64) error {
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		after := UserTag{UserID: userID, TagID: matched.TagID, Source: "auto"}
+		if err := s.ensureAccountTx(ctx, tx, userID); err != nil {
+			return err
+		}
+		var account Account
+		if err := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", userID).Take(&account).Error; err != nil {
+			return err
+		}
+		current = UserTag{}
+		readErr := tx.Table(userTagsTable).Where("user_id=?", userID).Take(&current).Error
+		if readErr != nil && !errors.Is(readErr, gorm.ErrRecordNotFound) {
+			return readErr
+		}
+		if current.IsLocked || current.TagID == matched.TagID {
+			return nil
+		}
 		if e := tx.Table(userTagsTable).Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "user_id"}}, DoUpdates: clause.AssignmentColumns([]string{"tag_id", "is_locked", "source", "updated_at"})}).Create(&after).Error; e != nil {
 			return e
 		}
@@ -1409,6 +1481,13 @@ func (s *Service) DeleteRiskRule(ctx context.Context, id int64) error {
 }
 func (s *Service) SetUserTag(ctx context.Context, userID, tagID, operatorID int64, locked bool, remark string) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.ensureAccountTx(ctx, tx, userID); err != nil {
+			return err
+		}
+		var account Account
+		if err := tx.Table(accountsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=?", userID).Take(&account).Error; err != nil {
+			return err
+		}
 		var before UserTag
 		_ = tx.Table(userTagsTable).Where("user_id=?", userID).Take(&before).Error
 		after := UserTag{UserID: userID, TagID: tagID, IsLocked: locked, Source: "manual"}

@@ -61,7 +61,7 @@ func (s *Service) expireBatch(ctx context.Context, batch Record) error {
 			return nil
 		}
 		var records []Record
-		if err := tx.Table(recordsTable).Where("user_id=?", batch.UserID).Order("created_at,id").Find(&records).Error; err != nil {
+		if err := tx.Table(recordsTable).Where("user_id=?", batch.UserID).Order("created_at,ledger_seq").Find(&records).Error; err != nil {
 			return err
 		}
 		remaining := remainingBatches(records, account.Frozen)[batch.ID]
@@ -77,7 +77,30 @@ func (s *Service) expireBatch(ctx context.Context, batch Record) error {
 			return tx.Table(recordsTable).Create(&Record{UserID: batch.UserID, Type: "deduct", Source: "expiry", Event: "expire", Change: 0, BalanceAfter: account.Balance, RefID: strconv.FormatInt(batch.ID, 10), Remark: "该批次积分已使用，无需过期扣除"}).Error
 		}
 		worker := NewService(tx, s.redis)
+		worker.now = s.now
 		_, err := worker.debitTx(ctx, tx, batch.UserID, remaining, "expiry", "expire", strconv.FormatInt(batch.ID, 10), "积分到期，扣除该批次未使用积分", true)
 		return err
 	})
+}
+
+func (s *Service) expireUserTx(ctx context.Context, tx *gorm.DB, user int64) error {
+	worker := NewService(tx, s.redis)
+	worker.now = s.now
+	var after int64
+	for {
+		var rows []Record
+		err := tx.Table(recordsTable+" gain").Select("gain.*").Joins("LEFT JOIN system.points_records expired ON expired.user_id=gain.user_id AND expired.event='expire' AND expired.ref_id=CAST(gain.id AS CHAR) COLLATE utf8mb4_unicode_ci AND expired.source='expiry'").Where("gain.user_id=? AND gain.id>? AND gain.type='gain' AND gain.expire_at IS NOT NULL AND gain.expire_at<=? AND expired.id IS NULL", user, after, s.now()).Order("gain.id").Limit(500).Find(&rows).Error
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil
+		}
+		for _, row := range rows {
+			if err = worker.expireBatch(ctx, row); err != nil {
+				return err
+			}
+			after = row.ID
+		}
+	}
 }

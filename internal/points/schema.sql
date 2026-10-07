@@ -1,6 +1,9 @@
 CREATE TABLE IF NOT EXISTS `system`.`points_settings` (
   `id` bigint unsigned NOT NULL,
   `enabled` tinyint(1) NOT NULL DEFAULT 0,
+  `daily_reward_limit` bigint NOT NULL DEFAULT 20,
+  `invite_monthly_limit` bigint NOT NULL DEFAULT 10000,
+  `checkout_daily_limit` int NOT NULL DEFAULT 1,
   `points_expire_days` int unsigned NOT NULL DEFAULT 0,
   `show_mall` tinyint(1) NOT NULL DEFAULT 1,
   `show_signin` tinyint(1) NOT NULL DEFAULT 1,
@@ -148,6 +151,6 @@ CREATE TABLE IF NOT EXISTS system.points_events (
 
 CREATE TABLE IF NOT EXISTS system.points_checkout_coupons (
  user_id BIGINT UNSIGNED NOT NULL,request_id VARCHAR(64) NOT NULL,points BIGINT NOT NULL,
- user_coupon_id BIGINT UNSIGNED NOT NULL,amount_yuan DECIMAL(14,2) NOT NULL,
+ user_coupon_id BIGINT UNSIGNED NOT NULL,amount_yuan DECIMAL(14,2) NOT NULL,created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  PRIMARY KEY(user_id,request_id),UNIQUE KEY points_checkout_coupon(user_coupon_id)
 ) ENGINE=InnoDB;

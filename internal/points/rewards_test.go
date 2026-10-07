@@ -120,7 +120,7 @@ func TestRewardsIdempotencyIntegration(t *testing.T) {
 	if e = s.SaveSettings(ctx, settings); e != nil {
 		t.Fatal(e)
 	}
-	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.FixedZone("Asia/Shanghai", 8*60*60))
 	for day, want := range []int64{5, 6, 7, 8, 9, 10, 15, 15} {
 		current := now.AddDate(0, 0, day)
 		s.now = func() time.Time { return current }

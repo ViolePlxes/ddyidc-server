@@ -55,6 +55,9 @@ type Milestone struct {
 }
 
 type Settings struct {
+	DailyRewardLimit      int64           `gorm:"column:daily_reward_limit" json:"dailyRewardLimit"`
+	InviteMonthlyLimit    int64           `gorm:"column:invite_monthly_limit" json:"inviteMonthlyLimit"`
+	CheckoutDailyLimit    int             `gorm:"column:checkout_daily_limit" json:"checkoutDailyLimit"`
 	ID                    int64           `gorm:"column:id;primaryKey" json:"id,string"`
 	Enabled               bool            `gorm:"column:enabled" json:"enabled"`
 	PointsExpireDays      int             `gorm:"column:points_expire_days" json:"pointsExpireDays"`
@@ -143,17 +146,18 @@ type Account struct {
 }
 
 type Record struct {
-	ID           int64      `gorm:"column:id;primaryKey" json:"id,string"`
-	UserID       int64      `gorm:"column:user_id" json:"userId,string"`
-	Type         string     `gorm:"column:type" json:"type"`
-	Source       string     `gorm:"column:source" json:"source"`
-	Event        string     `gorm:"column:event" json:"event"`
-	Change       int64      `gorm:"column:change_value" json:"change"`
-	BalanceAfter int64      `gorm:"column:balance_after" json:"balanceAfter"`
-	ExpireAt     *time.Time `gorm:"column:expire_at" json:"expireAt,omitempty"`
-	RefID        string     `gorm:"column:ref_id" json:"refId"`
-	Remark       string     `gorm:"column:remark" json:"remark"`
-	CreatedAt    time.Time  `gorm:"column:created_at" json:"createdAt"`
+	LedgerSequence uint64     `gorm:"column:ledger_seq;->" json:"-"`
+	ID             int64      `gorm:"column:id;primaryKey" json:"id,string"`
+	UserID         int64      `gorm:"column:user_id" json:"userId,string"`
+	Type           string     `gorm:"column:type" json:"type"`
+	Source         string     `gorm:"column:source" json:"source"`
+	Event          string     `gorm:"column:event" json:"event"`
+	Change         int64      `gorm:"column:change_value" json:"change"`
+	BalanceAfter   int64      `gorm:"column:balance_after" json:"balanceAfter"`
+	ExpireAt       *time.Time `gorm:"column:expire_at" json:"expireAt,omitempty"`
+	RefID          string     `gorm:"column:ref_id" json:"refId"`
+	Remark         string     `gorm:"column:remark" json:"remark"`
+	CreatedAt      time.Time  `gorm:"column:created_at" json:"createdAt"`
 }
 
 func (v *Record) BeforeCreate(*gorm.DB) error {

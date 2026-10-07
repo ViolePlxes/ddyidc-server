@@ -74,6 +74,7 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/admin/v1/points/trigger", Handler: h.trigger},
 		{Method: http.MethodGet, Path: "/admin/v1/points/stats", Handler: h.stats},
 		{Method: http.MethodGet, Path: "/admin/v1/points/event-tasks", Handler: h.eventTasks},
+		{Method: http.MethodPost, Path: "/admin/v1/points/event-tasks/retry", Handler: h.retryEventTask},
 		{Method: http.MethodGet, Path: "/admin/v1/points/risk-tags", Handler: h.riskTags},
 		{Method: http.MethodPost, Path: "/admin/v1/points/risk-tags", Handler: h.saveRiskTag},
 		{Method: http.MethodPut, Path: "/admin/v1/points/risk-tags/:id", Handler: h.saveRiskTag},
@@ -583,29 +584,27 @@ func (h *Handler) grant(w http.ResponseWriter, r *http.Request) {
 	writeResult(w, map[string]int{"affected": n}, e)
 }
 func (h *Handler) trigger(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.admin(w, r); !ok {
+	actor, ok := h.admin(w, r)
+	if !ok {
 		return
 	}
-	var in struct {
+	var input struct {
 		UserIDs     []string `json:"userIds"`
 		Event       string   `json:"event"`
 		AmountCents int64    `json:"amountCents"`
 		Remark      string   `json:"remark"`
+		RequestID   string   `json:"requestId"`
 	}
-	if !decode(w, r, &in) {
+	if !decode(w, r, &input) {
 		return
 	}
-	ids := parseIDs(in.UserIDs)
-	if len(ids) == 0 {
-		_ = h.service.db.WithContext(r.Context()).Table("customer.customers").Where("status=1").Pluck("id", &ids).Error
+	users := parseIDs(input.UserIDs)
+	if len(users) != len(input.UserIDs) {
+		writeMessage(w, 400, "用户编号无效或重复")
+		return
 	}
-	affected := 0
-	for _, id := range ids {
-		if _, e := h.service.GrantByEvent(r.Context(), in.Event, id, EventMeta{RefID: "admin-trigger-" + strconv.FormatInt(id, 10) + "-" + strconv.FormatInt(h.service.now().UnixNano(), 10), AmountCents: in.AmountCents, Remark: in.Remark}); e == nil {
-			affected++
-		}
-	}
-	writeOK(w, map[string]int{"affected": affected})
+	affected, err := h.service.AdminTriggerRequest(r.Context(), actor, r.RemoteAddr, input.RequestID, users, input.Event, input.AmountCents, input.Remark)
+	writeResult(w, map[string]int{"affected": affected}, err)
 }
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.admin(w, r); !ok {

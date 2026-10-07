@@ -43,12 +43,12 @@ func TestCheckoutCouponIntegration(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			v, err := s.CheckoutCoupon(ctx, uid, 2000, "test-request-9951001")
+			v, err := s.CheckoutCoupon(ctx, uid, 1000, "test-request-9951001")
 			if err != nil {
 				t.Error(err)
 				return
 			}
-			if v.AmountYuan != "2.00" {
+			if v.AmountYuan != "1.00" {
 				t.Errorf("yuan=%s", v.AmountYuan)
 			}
 			ids <- v.UserCouponID
@@ -66,14 +66,14 @@ func TestCheckoutCouponIntegration(t *testing.T) {
 		}
 	}
 	a, err := s.Account(ctx, uid)
-	if err != nil || a.Balance != 3000 || a.TotalUsed != 2000 {
+	if err != nil || a.Balance != 4000 || a.TotalUsed != 1000 {
 		t.Fatalf("account %+v %v", a, err)
 	}
 	var faceValue int64
-	if err := db.Table("marketing.coupons c").Select("c.face_value").Joins("JOIN marketing.user_coupons uc ON uc.coupon_id=c.id").Where("uc.id=? AND uc.user_id=?", couponID, uid).Scan(&faceValue).Error; err != nil || faceValue != 200 {
+	if err := db.Table("marketing.coupons c").Select("c.face_value").Joins("JOIN marketing.user_coupons uc ON uc.coupon_id=c.id").Where("uc.id=? AND uc.user_id=?", couponID, uid).Scan(&faceValue).Error; err != nil || faceValue != 100 {
 		t.Fatalf("coupon monetary boundary=%d %v", faceValue, err)
 	}
-	if _, err = s.CheckoutCoupon(ctx, uid, 1000, "test-request-9951001"); err == nil {
+	if _, err = s.CheckoutCoupon(ctx, uid, 2000, "test-request-9951001"); err == nil {
 		t.Fatal("request reused with changed amount")
 	}
 	if _, err = s.CheckoutCoupon(ctx, uid, 4000, "test-request-9951002"); err == nil {
@@ -83,7 +83,14 @@ func TestCheckoutCouponIntegration(t *testing.T) {
 		t.Fatal("fractional yuan accepted")
 	}
 	a, err = s.Account(ctx, uid)
-	if err != nil || a.Balance != 3000 {
+	if _, err = s.CheckoutCoupon(ctx, uid, 1000, "test-request-daily-limit"); err == nil {
+		t.Fatal("second daily coupon accepted")
+	}
+	var minimum int64
+	if err = db.Table("marketing.coupons c").Select("c.min_amount").Joins("JOIN marketing.user_coupons uc ON uc.coupon_id=c.id").Where("uc.id=?", couponID).Scan(&minimum).Error; err != nil || minimum != 1000 {
+		t.Fatalf("coupon minimum=%d %v", minimum, err)
+	}
+	if err != nil || a.Balance != 4000 {
 		t.Fatal("failed exchange changed points")
 	}
 }

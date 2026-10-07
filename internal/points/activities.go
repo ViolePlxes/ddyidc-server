@@ -111,9 +111,15 @@ func (s *Service) ClaimActivity(ctx context.Context, user, id int64) (int64, err
 		}
 		var rewards []ActivityReward
 		_ = json.Unmarshal(a.Rewards, &rewards)
-		var total int64
+		var total, largest int64
 		for _, reward := range rewards {
 			total += reward.Weight
+			largest = max(largest, reward.Points)
+		}
+		// Stop before drawing when any configured outcome cannot be funded.
+		// A rejected draw must never let retries select a different outcome.
+		if a.BudgetPoints-a.AwardedPoints < largest {
+			return errors.New("活动奖励额度已不足，请等待补充")
 		}
 		draw, err := rand.Int(rand.Reader, big.NewInt(total))
 		if err != nil {

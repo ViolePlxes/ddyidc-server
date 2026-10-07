@@ -10,14 +10,16 @@ import (
 	"gorm.io/gorm/clause"
 	"net/http"
 	"regexp"
+	"time"
 )
 
 type CheckoutCoupon struct {
-	UserID       int64  `json:"-"`
-	RequestID    string `json:"-"`
-	Points       int64  `json:"points"`
-	UserCouponID int64  `json:"userCouponId,string"`
-	AmountYuan   string `json:"amountYuan"`
+	UserID       int64     `json:"-"`
+	RequestID    string    `json:"-"`
+	Points       int64     `json:"points"`
+	UserCouponID int64     `json:"userCouponId,string"`
+	AmountYuan   string    `json:"amountYuan"`
+	CreatedAt    time.Time `json:"-"`
 }
 
 var checkoutRequestPattern = regexp.MustCompile(`^[a-zA-Z0-9-]{16,64}$`)
@@ -36,10 +38,10 @@ func (s *Service) CheckoutCoupon(ctx context.Context, userID, points int64, requ
 		return nil, errors.New("积分抵扣暂未开放")
 	}
 	rate := settings.CheckoutPointsPerYuan
-	if rate < 1 || points < rate || points > 1000000000 || points%rate != 0 {
+	if rate < 1 || points != rate {
 		return nil, errors.New("请按整元对应积分数量兑换")
 	}
-	out := CheckoutCoupon{UserID: userID, RequestID: requestID, Points: points, AmountYuan: fmt.Sprintf("%d.00", points/rate)}
+	out := CheckoutCoupon{UserID: userID, RequestID: requestID, Points: points, AmountYuan: fmt.Sprintf("%d.00", points/rate), CreatedAt: s.now()}
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if e := s.ensureAccountTx(ctx, tx, userID); e != nil {
 			return e
@@ -60,10 +62,18 @@ func (s *Service) CheckoutCoupon(ctx context.Context, userID, points int64, requ
 		if err != gorm.ErrRecordNotFound {
 			return err
 		}
+		var daily int64
+		start, end := dayBounds(s.now())
+		if err := tx.Table("system.points_checkout_coupons").Where("user_id=? AND created_at>=? AND created_at<?", userID, start, end).Count(&daily).Error; err != nil {
+			return err
+		}
+		if daily >= int64(settings.CheckoutDailyLimit) {
+			return errors.New("今日积分抵扣券兑换次数已达上限")
+		}
 		if _, e := s.debitTx(ctx, tx, userID, points, "checkout", "checkout", requestID, "积分兑换订单抵扣券", false); e != nil {
 			return e
 		}
-		coupon := marketingdom.Coupon{Name: "积分抵扣券", Type: 1, FaceValue: (points / rate) * 100, TotalCount: 1, PerUserLimit: 1, ValidDays: uint32(settings.CheckoutCouponDays), Status: 1, ClaimCode: marketingdom.StrPtr("POINTS-" + randomCode())}
+		coupon := marketingdom.Coupon{Name: "积分抵扣券", Type: 1, FaceValue: (points / rate) * 100, MinAmount: 1000, TotalCount: 1, PerUserLimit: 1, ValidDays: uint32(settings.CheckoutCouponDays), Status: 1, ClaimCode: marketingdom.StrPtr("POINTS-" + randomCode())}
 		repo := marketingrepo.NewRepository(tx)
 		if e := repo.CreateCoupon(ctx, &coupon); e != nil {
 			return e

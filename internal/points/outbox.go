@@ -170,6 +170,9 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 		if err == nil && enabled {
 			distsync.Task(ctx, "points_delivery", 50*time.Second, func(ctx context.Context) error {
 				e := s.SyncSystemOrders(ctx)
+				if e == nil {
+					e = s.AutoConfirmShippedOrders(ctx)
+				}
 				if e != nil {
 					log.Print("POINTS delivery reconciliation failed")
 				}
