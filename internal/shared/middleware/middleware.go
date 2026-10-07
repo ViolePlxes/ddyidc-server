@@ -108,7 +108,7 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 
 func sessionKindForRequest(path string) (auth.SessionKind, bool) {
 	switch {
-	case path == "/admin/v1/auth/login":
+	case path == "/admin/v1/auth/login" || path == "/admin/v1/auth/login/mfa":
 		return auth.SessionAdmin, false
 	case path == "/admin/v1/sales/auth/login":
 		return auth.SessionSales, false
@@ -145,7 +145,7 @@ func redactSensitiveHeaders(headers http.Header) {
 func isSensitiveHeader(name string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(name))
 	switch normalized {
-	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-token":
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-token", "x-admin-entry":
 		return true
 	}
 	return strings.Contains(normalized, "token") ||

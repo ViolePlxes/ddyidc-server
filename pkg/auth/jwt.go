@@ -13,28 +13,35 @@ import (
 
 // Claims JWT 载荷
 type Claims struct {
-	DeviceID       string `json:"device_id,omitempty"`
-	AuthVersion    uint64 `json:"auth_version,omitempty"`
-	ActorID        int64  `json:"actor_id,omitempty"`
-	ActorVersion   uint64 `json:"actor_version,omitempty"`
-	ActorSessionID string `json:"actor_session_id,omitempty"`
-	UserID         int64  `json:"user_id"`
-	Username       string `json:"username"`
-	Role           string `json:"role"`
+	SecurityVersion      int64  `json:"security_version,omitempty"`
+	FactorVersion        int64  `json:"factor_version,omitempty"`
+	MFAVerified          bool   `json:"mfa_verified,omitempty"`
+	ActorSecurityVersion int64  `json:"actor_security_version,omitempty"`
+	ActorFactorVersion   int64  `json:"actor_factor_version,omitempty"`
+	ActorMFAVerified     bool   `json:"actor_mfa_verified,omitempty"`
+	DeviceID             string `json:"device_id,omitempty"`
+	AuthVersion          uint64 `json:"auth_version,omitempty"`
+	ActorID              int64  `json:"actor_id,omitempty"`
+	ActorVersion         uint64 `json:"actor_version,omitempty"`
+	ActorSessionID       string `json:"actor_session_id,omitempty"`
+	UserID               int64  `json:"user_id"`
+	Username             string `json:"username"`
+	Role                 string `json:"role"`
 	jwt.RegisteredClaims
 }
 
 // Manager JWT 管理器
 type Manager struct {
-	devicesEnabled bool
-	accounts       *gorm.DB
-	accountState   func(context.Context, SessionKind, int64) (uint64, error)
-	accessSecret   []byte
-	accessExpire   time.Duration
-	refreshSecret  []byte
-	refreshExpire  time.Duration
-	security       SecurityConfig
-	clock          func() time.Time
+	sessionValidator func(context.Context, SessionKind, *Claims) error
+	devicesEnabled   bool
+	accounts         *gorm.DB
+	accountState     func(context.Context, SessionKind, int64) (uint64, error)
+	accessSecret     []byte
+	accessExpire     time.Duration
+	refreshSecret    []byte
+	refreshExpire    time.Duration
+	security         SecurityConfig
+	clock            func() time.Time
 }
 
 // NewManager 创建JWT管理器
@@ -53,7 +60,7 @@ func (m *Manager) GenerateAccessToken(userID int64, username, role string) (stri
 	return m.generateVersionedToken(userID, username, role, 0, nil)
 }
 
-func (m *Manager) generateVersionedToken(userID int64, username, role string, version uint64, actor *Claims) (string, error) {
+func (m *Manager) generateVersionedToken(userID int64, username, role string, version uint64, actor *Claims, assurance ...SessionAssurance) (string, error) {
 	id, err := uuid.NewRandom()
 	if err != nil {
 		return "", errors.New("cannot generate session identity")
@@ -74,10 +81,14 @@ func (m *Manager) generateVersionedToken(userID int64, username, role string, ve
 		},
 	}
 	if actor != nil {
+		claims.ActorSecurityVersion, claims.ActorFactorVersion, claims.ActorMFAVerified = actor.SecurityVersion, actor.FactorVersion, actor.MFAVerified
 		claims.ActorID, claims.ActorVersion, claims.ActorSessionID = actor.UserID, actor.AuthVersion, actor.ID
 		if actor.ExpiresAt != nil && actor.ExpiresAt.Before(claims.ExpiresAt.Time) {
 			claims.ExpiresAt = actor.ExpiresAt
 		}
+	}
+	if len(assurance) > 0 {
+		claims.SecurityVersion, claims.FactorVersion, claims.MFAVerified = assurance[0].PolicyVersion, assurance[0].FactorVersion, assurance[0].Verified
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(m.accessSecret)

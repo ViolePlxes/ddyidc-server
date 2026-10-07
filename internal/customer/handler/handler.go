@@ -15,6 +15,7 @@ import (
 
 	domain "ddyidc/internal/customer/domain"
 	repository "ddyidc/internal/customer/repository"
+	"ddyidc/internal/security"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/db"
 	"github.com/zeromicro/go-zero/rest"
@@ -44,6 +45,7 @@ type authHandler struct {
 	jwt       *auth.Manager
 	hooks     AuthHooks
 	smsCodes  SMSCodeConsumer
+	security  *security.Service
 }
 
 // administrator is intentionally local to the authentication boundary: admin
@@ -74,8 +76,14 @@ type salesUser struct {
 
 // RegisterAuthHandlers registers the password-authentication endpoints backed
 // by persistent customer data, plus registration and referral verification.
-func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer) {
+func RegisterAuthHandlers(server *rest.Server, customers repository.Repository, jwt *auth.Manager, hooks AuthHooks, smsCodes SMSCodeConsumer, access ...*security.Service) {
 	h := &authHandler{customers: customers, jwt: jwt, hooks: hooks, smsCodes: smsCodes}
+	if len(access) > 0 {
+		h.security = access[0]
+	}
+	if h.security != nil {
+		h.registerMFA(server)
+	}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodPost, Path: "/api/v1/auth/login", Handler: h.userLogin},
 		{Method: http.MethodPost, Path: "/api/v1/auth/refresh", Handler: h.refreshLogin},
@@ -171,6 +179,26 @@ func (h *authHandler) adminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = h.jwt.ClearLoginFailures(r.Context(), rateKey)
+	if h.security != nil && h.adminMFAStart(w, r, admin) {
+		return
+	}
+	h.writeAdminLogin(w, r, admin)
+}
+
+func (h *authHandler) writeAdminLogin(w http.ResponseWriter, r *http.Request, admin *administrator) {
+	if h.security != nil && r.Context().Value(adminAssuranceKey{}) == nil {
+		c, e := h.security.Config(r.Context())
+		if e != nil || c.MFAEnabled {
+			writeError(w, 401, "请完成二步验证后重新登录")
+			return
+		}
+		f, e := h.security.Factor(r.Context(), security.Subject{Kind: "admin", ID: admin.ID})
+		if e != nil {
+			writeError(w, 503, "验证器读取失败")
+			return
+		}
+		r = r.WithContext(auth.WithSessionAssurance(r.Context(), auth.SessionAssurance{PolicyVersion: c.Version, FactorVersion: f.Version}))
+	}
 	user := map[string]any{"id": strconv.FormatInt(admin.ID, 10), "account": admin.Username, "name": admin.RealName, "role": "admin"}
 	if admin.Email != nil {
 		user["email"] = *admin.Email
@@ -305,6 +333,9 @@ func (h *authHandler) writeSessionLogin(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	response := map[string]any{"token": "", "user": user, "needBindMobile": needBindMobile}
+	if codes, ok := r.Context().Value(recoveryResponseKey{}).([]string); ok {
+		response["recoveryCodes"] = codes
+	}
 	if kind == auth.SessionUser {
 		h.jwt.SetDeviceCookie(w, pair, len(rememberMe) > 0 && rememberMe[0])
 		response["access_token"], response["refresh_token"] = pair.AccessToken, pair.RefreshToken

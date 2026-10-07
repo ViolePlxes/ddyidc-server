@@ -186,13 +186,19 @@ func (m *Manager) issueSession(ctx context.Context, kind SessionKind, userID int
 	if len(expectedVersion) > 0 && expectedVersion[0] != version {
 		return "", errors.New("account changed during authentication; sign in again")
 	}
-	token, err := m.generateVersionedToken(userID, account, role, version, actor)
+	assurance, _ := ctx.Value(sessionAssuranceKey{}).(SessionAssurance)
+	token, err := m.generateVersionedToken(userID, account, role, version, actor, assurance)
 	if err != nil {
 		return "", err
 	}
 	claims, err := m.parseAccessToken(token)
 	if err != nil || claims.IssuedAt == nil {
 		return "", errors.New("generated token has no issued time")
+	}
+	if m.sessionValidator != nil {
+		if err := m.sessionValidator(ctx, kind, claims); err != nil {
+			return "", err
+		}
 	}
 	record := SessionRecord{SessionID: claims.ID, UserID: userID, Account: account, Role: role, IssuedAt: claims.IssuedAt.Unix()}
 	encoded, err := json.Marshal(record)
@@ -209,6 +215,11 @@ func (m *Manager) issueSession(ctx context.Context, kind SessionKind, userID int
 }
 
 func (m *Manager) validateSession(ctx context.Context, kind SessionKind, claims *Claims) error {
+	if m.sessionValidator != nil {
+		if err := m.sessionValidator(ctx, kind, claims); err != nil {
+			return err
+		}
+	}
 	if claims != nil && claims.DeviceID != "" {
 		return m.validateDeviceSession(ctx, kind, claims)
 	}

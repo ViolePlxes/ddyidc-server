@@ -28,5 +28,6 @@
   "027_points_activities.sql": "ff1728946c7e8695feb323d99b81638c3fbd7e6b243ff3fabea66f0ff9d32589",
   "028_instance_security_groups.sql": "c574a3dbd0dace527c9b034d464ce138747fe5fd294a44d25eb4d85bcbb74ee3",
   "029_machine_refund_actions.sql": "e214a290df3763c36ac453dba5a141c6a5fa21378f64e006ec9f169e83492fb1",
-  "030_instance_upgrades.sql": "ca3c1b49a607de8dbfb269b1696c84d952ddea65f0161793f5b76ff9d02d7d23"
+  "030_instance_upgrades.sql": "ca3c1b49a607de8dbfb269b1696c84d952ddea65f0161793f5b76ff9d02d7d23",
+  "031_security_mfa.sql": "6bf09c02ccb9c69dc05d52d8cd7f1f536f9c22a9c755ed616c066005d41d301c"
 }

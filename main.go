@@ -33,6 +33,7 @@ import (
 	productrepo "ddyidc/internal/product/repository"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/remoteconsole"
+	"ddyidc/internal/security"
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/logger"
 	"ddyidc/internal/shared/middleware"
@@ -324,7 +325,12 @@ func main() {
 			if err := points.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
-			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil { panic(err) }
+			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
+			if err := security.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 		}
 		fmt.Println("Offline migrations complete; API and scheduled jobs were not started")
 		return
@@ -391,6 +397,9 @@ func main() {
 	server.Use(middleware.RequestID())
 	server.Use(middleware.Logger())
 	server.Use(middleware.RedactSensitiveHeaders())
+	accessSecurity := security.New(db.G, []byte(c.Crypto.AESKey))
+	authManager.SetSessionValidator(accessSecurity.ValidateSession)
+	server.Use(accessSecurity.Middleware)
 	server.Use(middleware.CookieSession(authManager))
 	server.Use(workgate.Middleware)
 
@@ -476,7 +485,9 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := pointsSvc.EnsureSchema(context.Background()); err != nil {
 		panic("points schema initialization failed: " + err.Error())
 	}
-	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService)
+	accessSecurity := security.New(db.G, snapshotKey)
+	accessSecurity.Register(server, jwt)
+	customerhandler.RegisterAuthHandlers(server, repositories.Customer, jwt, authEventHooks{marketing: marketingapi.NewAuthHooks(marketingSvc), points: pointsSvc}, verificationService, accessSecurity)
 	socialauth.Register(server, db.G, jwt, snapshotKey, verificationService)
 	marketinghandler.RegisterUserHandlers(server, marketingSvc, jwt)
 	marketinghandler.RegisterAdminHandlers(server, marketingSvc, jwt)
