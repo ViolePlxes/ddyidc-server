@@ -230,7 +230,7 @@ func (p *Provider) GetProductList() ([]contracts.UpstreamProduct, error) {
 	return products, nil
 }
 
-// GetProductDetail requests the supplier-specific agent price. A 401/405
+// GetProductDetail requests the supplier's standard catalogue price. A 401/405
 // response invalidates the in-memory JWT and retries once after re-login.
 func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, error) {
 	if id <= 0 {
@@ -244,17 +244,9 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 		return nil, err
 	}
 	detail := product.toContract(id)
-	// Finance product_price may describe the public catalogue while set_config
-	// carries this account's actual cycle quote. Keep import/sync/list prices
-	// on the same basis as the configuration page; procurement stays separate.
-	if page, pageErr := p.GetOrderPage(id); pageErr == nil && page != nil {
-		for _, cycle := range page.Cycles {
-			if cycle.Billingcycle == detail.Cycle && cycle.Price > 0 {
-				detail.Price, detail.SetupFee = cycle.Price, cycle.SetupFee
-				break
-			}
-		}
-	}
+	// set_config cycle prices exclude configurable options. Replacing the complete
+	// catalogue price with that base fee underprices configured products. Purchase
+	// configuration and procurement quotes remain separate from this catalogue.
 	return detail, nil
 }
 

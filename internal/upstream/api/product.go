@@ -75,6 +75,11 @@ func (h *Handler) updateProduct(w http.ResponseWriter, r *http.Request) {
 }
 func (h *Handler) syncProduct(w http.ResponseWriter, r *http.Request) {
 	key := productID(r)
+	if r.URL.Query().Get("scope") == "price" {
+		summary, e := h.Store.SyncProductPrice(key)
+		respond(w, map[string]any{"status": "success", "summary": summary}, e)
+		return
+	}
 	summary, e := h.Store.SyncProductWithSummary(key)
 	respond(w, map[string]any{"status": "success", "summary": summary}, e)
 }

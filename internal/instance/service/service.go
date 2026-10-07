@@ -301,6 +301,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	if s.db != nil {
 		// A saved host amount is the supplier's procurement charge, never the customer original price.
 		result.RenewalAmount = ""
+		result.Warning = "续费原价暂未确认，请稍后重试或联系支持"
 		if renewalProvider, ok := upstream.(contracts.RenewalProvider); ok {
 			quotes, quoteErr := renewalProvider.RenewalQuotes(parseHostID(host.UpstreamInstanceID))
 			var pricing struct{ Rate string }
@@ -311,11 +312,13 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 						continue
 					}
 					original, e := balance.ParseMoney(quote.OriginalAmount)
-					if e != nil || original <= 0 {
+					cost, costErr := balance.ParseMoney(quote.Amount)
+					if e != nil || original <= 0 || costErr != nil || cost <= 0 || original < cost {
 						continue
 					}
 					if amount, e := retailRenewal(original, pricing.Rate, "0", 0); e == nil {
 						result.RenewalAmount = amount.String()
+						result.Warning = ""
 					}
 					break
 				}

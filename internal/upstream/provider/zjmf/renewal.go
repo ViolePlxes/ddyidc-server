@@ -5,6 +5,7 @@ import (
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
 	"fmt"
+	"math/big"
 	"net/url"
 	"strconv"
 )
@@ -19,6 +20,7 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 		return nil, e
 	}
 	rows, _ := d["cycle"].([]any)
+	current := nestedMap(d, "host")
 	out := []contracts.RenewalQuote{}
 	for _, raw := range rows {
 		r, ok := raw.(map[string]any)
@@ -27,9 +29,9 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 		}
 		cycle := firstMapString(r, "billingcycle")
 		amount := firstMapString(r, "amount")
-		original, originalErr := billing.ParseMoney(firstMapString(r, "price"))
-		if originalErr != nil || original <= 0 {
-			return nil, fmt.Errorf("供应商未返回有效续费原价，停止报价")
+		original, originalErr := renewalOriginalAmount(r, rows, current)
+		if originalErr != nil {
+			return nil, originalErr
 		}
 		money, e := billing.ParseMoney(amount)
 		duration, _ := strconv.ParseInt(firstMapString(r, "duration"), 10, 64)
@@ -42,6 +44,59 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 		return nil, fmt.Errorf("暂无可用续费周期")
 	}
 	return out, nil
+}
+
+// price is only the base product fee. amount includes the selected configuration,
+// and saleproducts is the supplier discount. Fixed current-cycle contracts omit
+// that discount; accept a percentage only when multiple other cycles confirm it.
+func renewalOriginalAmount(row map[string]any, rows []any, host map[string]any) (billing.Money, error) {
+	invalid := fmt.Errorf("供应商完整续费原价未确认，停止报价")
+	cost, err := billing.ParseMoney(firstMapString(row, "amount"))
+	if err != nil || cost <= 0 {
+		return 0, invalid
+	}
+	discount, err := billing.ParseMoney(firstMapString(row, "saleproducts"))
+	if err != nil || discount < 0 {
+		return 0, invalid
+	}
+	if discount > 0 || firstMapString(host, "flag") != "1" || firstMapString(row, "billingcycle") != firstMapString(host, "billingcycle") {
+		if discount > billing.Money(99999999999999)-cost {
+			return 0, invalid
+		}
+		return cost + discount, nil
+	}
+	var rate *big.Rat
+	confirmed := 0
+	for _, raw := range rows {
+		r, ok := raw.(map[string]any)
+		if !ok || firstMapString(r, "billingcycle") == firstMapString(host, "billingcycle") {
+			continue
+		}
+		amount, e := billing.ParseMoney(firstMapString(r, "amount"))
+		off, e2 := billing.ParseMoney(firstMapString(r, "saleproducts"))
+		if e != nil || e2 != nil || amount <= 0 || off < 0 || off > billing.Money(99999999999999)-amount {
+			return 0, invalid
+		}
+		next := big.NewRat(int64(amount), int64(amount+off))
+		if rate != nil && rate.Cmp(next) != 0 {
+			return 0, invalid
+		}
+		rate = next
+		confirmed++
+	}
+	if rate == nil || confirmed < 2 {
+		return 0, invalid
+	}
+	value := new(big.Rat).Quo(new(big.Rat).SetInt64(int64(cost)), rate)
+	whole, rem := new(big.Int), new(big.Int)
+	whole.QuoRem(value.Num(), value.Denom(), rem)
+	if rem.Sign() > 0 {
+		whole.Add(whole, big.NewInt(1))
+	}
+	if !whole.IsInt64() || whole.Int64() > 99999999999999 {
+		return 0, invalid
+	}
+	return billing.Money(whole.Int64()), nil
 }
 func (p *Provider) CreateRenewalInvoice(id int64, cycle string, duration int64) (string, string, error) {
 	quotes, err := p.RenewalQuotes(id)

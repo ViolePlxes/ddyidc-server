@@ -10,7 +10,7 @@ import (
 )
 
 func TestRenewalOriginalPriceRemainsSeparateFromProcurement(t *testing.T) {
-	for _, original := range []string{`"10.00"`, `null`, `"0.00"`} {
+	for _, original := range []string{`"2.00"`, `null`, `"-1.00"`} {
 		t.Run(original, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/host/renewpage" {
@@ -18,7 +18,7 @@ func TestRenewalOriginalPriceRemainsSeparateFromProcurement(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","price":%s,"amount":"8.00","duration":2592000}]}}`, original)
+				fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","price":"5.00","saleproducts":%s,"amount":"8.00","duration":2592000}]}}`, original)
 			}))
 			defer server.Close()
 			p := New(contracts.Supplier{URL: server.URL, Username: "isolated", Token: "isolated"})
@@ -27,7 +27,7 @@ func TestRenewalOriginalPriceRemainsSeparateFromProcurement(t *testing.T) {
 			tokens.Unlock()
 			defer p.clearToken()
 			quotes, err := p.RenewalQuotes(123)
-			if original == `"10.00"` {
+			if original == `"2.00"` {
 				if err != nil || len(quotes) != 1 || quotes[0].OriginalAmount != "10.00" || quotes[0].Amount != "8.00" {
 					t.Fatalf("original/cost mismatch: %#v %v", quotes, err)
 				}

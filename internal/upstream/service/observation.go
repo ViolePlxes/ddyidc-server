@@ -9,6 +9,7 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"math"
 	"reflect"
 	"time"
 )
@@ -167,4 +168,64 @@ func (s *Store) saveCheck(v model.UpstreamProduct, stamp int64) error {
 	}
 	task := model.SyncTask{ID: v.ID, SupplierID: v.SupplierID, Type: "product_check", Status: "success", StartedAt: stamp, FinishedAt: stamp, TriggerBy: "admin", Total: 1, Progress: 1}
 	return s.db.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoUpdates: clause.AssignmentColumns([]string{"status", "started_at", "finished_at", "total", "progress"})}).Create(&task).Error
+}
+
+// SyncProductPrice refreshes only the standard catalogue price and billing cycle.
+// It never calls configuration/cart endpoints or changes stock, visibility or specs.
+func (s *Store) SyncProductPrice(key string) (ChangeSummary, error) {
+	v, e := s.findProduct(key)
+	if e != nil {
+		return ChangeSummary{}, e
+	}
+	result := ChangeSummary{SupplierID: v.SupplierID, UpstreamProductID: v.UpstreamProductID}
+	p, e := s.catalogueProvider(v.SupplierID)
+	if e != nil {
+		return result, e
+	}
+	if fresh, ok := p.(interface{ InvalidateProduct(int) error }); ok {
+		if e = fresh.InvalidateProduct(v.UpstreamProductID); e != nil {
+			return result, e
+		}
+	}
+	detail, e := p.GetProductDetail(v.UpstreamProductID)
+	if e != nil {
+		return result, e
+	}
+	supplier, e := s.GetSupplier(v.SupplierID)
+	if e != nil {
+		return result, e
+	}
+	if detail == nil || detail.ID != v.UpstreamProductID || detail.Price < 0 || math.IsNaN(detail.Price) || math.IsInf(detail.Price, 0) || supplier.Rate <= 0 || math.IsNaN(supplier.Rate) || math.IsInf(supplier.Rate, 0) {
+		return result, errors.New("商品原价或汇率未确认")
+	}
+	price := CalculatePrice(detail.Price, supplier.Rate, 0, 0)
+	if v.Price != price || v.UpstreamPrice != detail.Price || v.Cycle != detail.Cycle {
+		result.Price = 1
+	} else {
+		result.Unchanged = 1
+	}
+	if s.isMemory() {
+		s.mu.Lock()
+		v.Price = price
+		v.UpstreamPrice = detail.Price
+		v.Cycle = detail.Cycle
+		v.UpdatedAt = now()
+		s.products[key] = v
+		s.mu.Unlock()
+	} else {
+		e = s.db.Transaction(func(tx *gorm.DB) error {
+			if e := tx.Table(v.TableName()).Where("id=? AND supplier_id=? AND upstream_product_id=?", key, v.SupplierID, v.UpstreamProductID).Updates(map[string]any{"upstream_price": detail.Price, "price": price, "cycle": detail.Cycle, "updated_at": now()}).Error; e != nil {
+				return e
+			}
+			if v.ProductID != "" && v.ProductID != "0" {
+				return tx.Exec("UPDATE product.product_spec_snapshots SET data=JSON_SET(data,'$.spec.price',?,'$.spec.priceMode','upstream') WHERE product_id=?", price, v.ProductID).Error
+			}
+			return nil
+		})
+		if e != nil {
+			return result, e
+		}
+	}
+	result.CheckedAt = time.Now().Unix()
+	return result, s.saveCheck(v, result.CheckedAt)
 }

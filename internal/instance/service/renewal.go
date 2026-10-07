@@ -155,7 +155,7 @@ func (s *Service) RenewalOptions(ctx context.Context, customer, id int64) ([]Ren
 			continue
 		}
 		original, e := balance.ParseMoney(q.OriginalAmount)
-		if e != nil || original <= 0 {
+		if e != nil || original <= 0 || original < cost {
 			return nil, errors.New("供应商续费原价未确认")
 		}
 		amount, e := retailRenewal(original, price.Rate, "0", 0)
