@@ -32,6 +32,7 @@ import (
 	"ddyidc/internal/portal"
 	producthandler "ddyidc/internal/product/handler"
 	productrepo "ddyidc/internal/product/repository"
+	"ddyidc/internal/promocoupon"
 	"ddyidc/internal/pushtransfer"
 	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/security"
@@ -77,6 +78,8 @@ import (
 )
 
 var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
+var cronOnly = flag.String("cron-only", "", "仅运行指定模块任务，支持 promo_coupon；与 -no-cron 互斥")
+var promoMaintenance func(context.Context)
 var draining atomic.Bool
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
@@ -326,6 +329,9 @@ func main() {
 			if err := points.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
+			if err := promocoupon.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
@@ -405,12 +411,18 @@ func main() {
 	server.Use(workgate.Middleware)
 
 	// 注册路由（各域 handler 在此注册）
+	if *cronOnly != "" && (*cronOnly != "promo_coupon" || *noCron) {
+		panic("invalid cron-only selection")
+	}
 	var cronStarts []func(context.Context)
 	proc.AddShutdownListener(func() { draining.Store(true) })
 	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
 	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, notifyManager.StartDigestWorker, balance.New(db.G).StartReconciliation,
 		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
-	if !c.Cron.IsEnabled() || *noCron {
+	if *cronOnly == "promo_coupon" {
+		cronStarts = []func(context.Context){promoMaintenance}
+	}
+	if (!c.Cron.IsEnabled() && *cronOnly == "") || *noCron {
 		fmt.Println("定时任务已关闭（测试模式），仅提供 API 服务")
 	} else {
 		cronCtx, cancelCron := context.WithCancel(upstreammetrics.WithBackground(context.Background()))
@@ -499,6 +511,14 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	// 订单/充值（M2/M4 挂钩分销与优惠券）
 	orderSvc := orderservice.NewService(repositories.Order, orderEventHooks{marketing: marketingapi.NewOrderHooks(marketingSvc), points: pointsSvc}, snapshotKey)
 	pointsSvc.SetOrderService(orderSvc)
+	promoCouponSvc := promocoupon.New(db.G, pointsSvc, snapshotKey)
+	marketingSvc.SetFundedCouponHooks(promoCouponSvc.GuardCouponTx, promoCouponSvc.CouponChargedTx)
+	marketingSvc.SetFundedCouponRelease(promoCouponSvc.CouponReleasedTx)
+	promoCouponSvc.SetCouponApply(marketingSvc.ChargeCouponForOrder)
+	orderSvc.RegisterModuleBalancePayer("promo_coupon", promoCouponSvc.PayBalance)
+	promocoupon.Register(server, promoCouponSvc, jwt)
+	promoMaintenance = promoCouponSvc.StartMaintenance
+	*cronStarts = append(*cronStarts, promoCouponSvc.StartMaintenance)
 	*cronStarts = append(*cronStarts, orderSvc.StartStockExpiry)
 	orderSvc.SetNotifier(notifyManager)
 	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)

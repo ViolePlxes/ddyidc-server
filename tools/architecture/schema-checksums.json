@@ -32,5 +32,6 @@
   "031_security_mfa.sql": "6bf09c02ccb9c69dc05d52d8cd7f1f536f9c22a9c755ed616c066005d41d301c",
   "032_points_operating_limits.sql": "0cae7f9f44bcac160701663eb3189bb944b8be8d6a30e296139660fa07a537ba",
   "033_points_admin_navigation.sql": "51131a7b167103fe625afd680dafbcc5ce77c0b53897e492ca08671da449a1ac",
-  "034_points_ledger_sequence.sql": "d5c9ecb076b17000ee27edfb2627d166d2cfd4659ee47e521c4f912ae25fde4b"
+  "034_points_ledger_sequence.sql": "d5c9ecb076b17000ee27edfb2627d166d2cfd4659ee47e521c4f912ae25fde4b",
+  "035_promo_coupons.sql": "523db5be2e7b40949c58bca1f53ebebe28bc628458abc327a6981c229a4c65c2"
 }

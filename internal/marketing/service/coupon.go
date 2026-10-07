@@ -201,6 +201,9 @@ func (s *Service) ClaimCoupon(ctx context.Context, userID int64, couponID int64,
 	if coupon == nil {
 		return nil, errors.New("优惠券不存在")
 	}
+	if coupon.ClaimCode != nil && strings.HasPrefix(*coupon.ClaimCode, "PROMO-PRIVATE-") {
+		return nil, errors.New("请通过专属优惠券活动领取")
+	}
 	if coupon.Status != dom.CouponEnabled {
 		return nil, errors.New("优惠券已停用")
 	}
@@ -266,6 +269,11 @@ func (s *Service) UsableCouponsForOrder(ctx context.Context, userID int64, amoun
 // ChargeCouponForOrder 由订单模块在创建订单的事务内调用：校验并把券核销。
 // 返回服务端计算的优惠金额（分）。
 func (s *Service) ChargeCouponForOrder(ctx context.Context, tx *gorm.DB, userID, userCouponID, orderID, amountCents int64) (int64, error) {
+	if s.couponGuard != nil {
+		if err := s.couponGuard(ctx, tx, userID, userCouponID, orderID); err != nil {
+			return 0, err
+		}
+	}
 	row, err := s.repo.FindUserCoupon(ctx, userCouponID)
 	if err != nil {
 		return 0, fmt.Errorf("查询优惠券失败: %w", err)
@@ -296,6 +304,11 @@ func (s *Service) ChargeCouponForOrder(ctx context.Context, tx *gorm.DB, userID,
 	if err := s.repo.MarkUserCouponUsedTx(ctx, tx, userCouponID, userID, orderID); err != nil {
 		return 0, err
 	}
+	if s.couponCharged != nil {
+		if err := s.couponCharged(tx, userCouponID, discount); err != nil {
+			return 0, err
+		}
+	}
 	if err := tx.WithContext(ctx).Exec(
 		"UPDATE marketing.coupons SET used_count = used_count + 1 WHERE id = ?", coupon.ID).Error; err != nil {
 		return 0, fmt.Errorf("更新优惠券核销统计失败: %w", err)
@@ -308,7 +321,13 @@ func (s *Service) ChargeCouponForOrder(ctx context.Context, tx *gorm.DB, userID,
 
 // ReleaseCouponForOrder 订单取消时归还优惠券。
 func (s *Service) ReleaseCouponForOrder(ctx context.Context, tx *gorm.DB, orderID int64) error {
-	return s.repo.ReleaseUserCouponTx(ctx, tx, orderID)
+	if err := s.repo.ReleaseUserCouponTx(ctx, tx, orderID); err != nil {
+		return err
+	}
+	if s.couponReleased != nil {
+		return s.couponReleased(tx, orderID)
+	}
+	return nil
 }
 
 // computeDiscount 服务端金额计算：全部以分为单位。

@@ -76,6 +76,15 @@ type Service struct {
 	notifier       NotificationHooks
 	snapshotKey    []byte
 	renewalBalance RenewalBalancePayer
+	moduleBalance  map[string]func(context.Context, int64, int64) error
+}
+
+// RegisterModuleBalancePayer lets paid modules reuse the platform order endpoint.
+func (s *Service) RegisterModuleBalancePayer(module string, payer func(context.Context, int64, int64) error) {
+	if s.moduleBalance == nil {
+		s.moduleBalance = map[string]func(context.Context, int64, int64) error{}
+	}
+	s.moduleBalance[module] = payer
 }
 
 func (s *Service) SetNotifier(notifier NotificationHooks) { s.notifier = notifier }
@@ -498,6 +507,11 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		if err := inventory.Reserve(tx, orderRow.ID, productID, qty); err != nil {
 			return err
 		}
+		item.OrderID = orderRow.ID
+		item.Subtotal = total
+		if err := s.repo.CreateItemTx(ctx, tx, item); err != nil {
+			return err
+		}
 		if couponID > 0 {
 			discount, e := s.hooks.ChargeCoupon(ctx, tx, customerID, couponID, orderRow.ID, total)
 			if e != nil {
@@ -510,11 +524,6 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 			if e := s.repo.UpdateOrderTx(ctx, tx, orderRow); e != nil {
 				return e
 			}
-		}
-		item.OrderID = orderRow.ID
-		item.Subtotal = total
-		if err := s.repo.CreateItemTx(ctx, tx, item); err != nil {
-			return err
 		}
 		if orderRow.PayAmount < 0 {
 			return errors.New("订单应付金额无效")
@@ -897,7 +906,7 @@ func itemToView(v *dom.OrderItem) OrderItemView {
 		durationText = fmt.Sprintf("%d 个月", *v.DurationMonths)
 	}
 	view := OrderItemView{
-		ID: formatID(v.ID), ProductID: formatID(v.ProductID), ProductName: v.ProductName,
+		ID: formatID(v.ID), ProductID: formatID(v.ProductID), ProductName: v.ProductName, ModuleType: v.ModuleType,
 		UnitPrice: v.UnitPrice, Quantity: uint32(v.Qty), Subtotal: v.Subtotal,
 		DurationText: durationText, ConfigSnapshot: configSnapshotView(v.ConfigSnapshot), DeliveryStatus: v.DeliveryStatus,
 	}

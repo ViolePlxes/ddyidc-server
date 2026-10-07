@@ -481,7 +481,7 @@ func (r *GormRepository) ListClaimableCoupons(c context.Context, userID int64) (
 	e := r.db.WithContext(c).Table(dom.Coupon{}.TableName()+" AS cp").
 		Select("cp.*, (CASE WHEN cp.total_count = -1 THEN 999999 ELSE cp.total_count - cp.claimed_count END) AS remaining, "+
 			"(SELECT COUNT(*) FROM marketing.user_coupons uc WHERE uc.coupon_id = cp.id AND uc.user_id = ? AND uc.status <> 3) AS user_claimed", userID).
-		Where("cp.status = 1 AND (cp.end_at IS NULL OR cp.end_at > NOW())").
+		Where("cp.status = 1 AND (cp.end_at IS NULL OR cp.end_at > NOW()) AND (cp.claim_code IS NULL OR cp.claim_code NOT LIKE 'PROMO-PRIVATE-%')").
 		Order("cp.created_at DESC").Scan(&rows).Error
 	return rows, e
 }

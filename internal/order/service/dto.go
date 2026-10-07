@@ -54,6 +54,7 @@ type OrderView struct {
 
 // OrderItemView 订单明细视图。
 type OrderItemView struct {
+	ModuleType     string                  `json:"moduleType"`
 	ID             string                  `json:"id"`
 	ProductID      string                  `json:"productId"`
 	ProductName    string                  `json:"productName"`

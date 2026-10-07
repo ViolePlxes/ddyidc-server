@@ -112,8 +112,8 @@ func validate(r ChangeRequest) (Money, error) {
 	}
 	sign := 1
 	switch r.Type {
-	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income", "withdrawal_release":
-	case "manual_debit", "freeze", "order_pay", "instance_renewal_pay", "instance_upgrade_pay", "withdraw", "underpayment", "withdrawal_hold":
+	case "recharge", "manual_credit", "unfreeze", "refund", "overpayment", "points_credit", "commission", "marketplace_income", "withdrawal_release", "promo_coupon_refund":
+	case "manual_debit", "freeze", "order_pay", "instance_renewal_pay", "instance_upgrade_pay", "withdraw", "underpayment", "withdrawal_hold", "promo_coupon_pay":
 		sign = -1
 	default:
 		return 0, ErrInvalid
@@ -242,9 +242,9 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		switch r.Type {
 		case "recharge":
 			updates["total_recharge"] = account.TotalRecharge + amount
-		case "order_pay", "instance_renewal_pay", "instance_upgrade_pay":
+		case "order_pay", "instance_renewal_pay", "instance_upgrade_pay", "promo_coupon_pay":
 			updates["total_consume"] = account.TotalConsume - amount
-		case "refund":
+		case "refund", "promo_coupon_refund":
 			updates["total_refund"] = account.TotalRefund + amount
 			if r.Channel == "groupbuy" {
 				remaining := account.TotalConsume - amount
@@ -300,6 +300,27 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		return nil
 	}
 	switch r.RefType {
+	case "promo_coupon_batch":
+		if r.Type != "promo_coupon_pay" || r.Channel != "promo_coupon" {
+			return ErrBusiness
+		}
+		if err := tx.Table("marketing.promo_coupon_batches b").Joins("JOIN `order`.orders o ON o.id=b.order_id").Where("b.id=? AND b.owner_id=? AND b.source='balance' AND b.status='awaiting_payment' AND b.balance_cost=? AND o.customer_id=b.owner_id AND o.status=1 AND o.pay_amount=?", r.RefID, r.CustomerID, (-amount).String(), int64(-amount)).Count(&count).Error; err != nil {
+			return err
+		}
+	case "promo_coupon_unit":
+		if r.Type != "promo_coupon_refund" || r.Channel != "promo_coupon" {
+			return ErrBusiness
+		}
+		if err := tx.Table("marketing.promo_coupon_units u").Joins("JOIN marketing.promo_coupon_batches b ON b.id=u.batch_id").Where("u.id=? AND b.owner_id=? AND b.source='balance' AND u.status='refunding' AND u.owner_balance=?", r.RefID, r.CustomerID, amount.String()).Count(&count).Error; err != nil {
+			return err
+		}
+		var refunded int64
+		if err := tx.Table("billing.transactions").Where("related_type='promo_coupon_unit' AND related_id=? AND type='promo_coupon_refund'", r.RefID).Count(&refunded).Error; err != nil {
+			return err
+		}
+		if refunded > 0 {
+			return ErrBusiness
+		}
 	case "refund_application":
 		if r.Type != "refund" || r.Channel != "refund_review" || r.AdminID <= 0 {
 			return ErrBusiness

@@ -95,6 +95,13 @@ type GormRepository struct{ db *gorm.DB }
 func NewRepository(database *gorm.DB) Repository { return &GormRepository{db: database} }
 
 func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID int64, channel string, expireAt time.Time) (*Prepared, error) {
+	var privateCoupons int64
+	if err := r.db.WithContext(ctx).Table("order.order_items").Where("order_id=? AND module_type='promo_coupon'", orderID).Count(&privateCoupons).Error; err != nil {
+		return nil, err
+	}
+	if privateCoupons > 0 {
+		return nil, errors.New("推广发券订单仅支持原资产支付")
+	}
 	var marketCount int64
 	if err := r.db.WithContext(ctx).Table("order.order_items").Where("order_id=? AND module_type='marketplace'", orderID).Count(&marketCount).Error; err != nil {
 		return nil, err

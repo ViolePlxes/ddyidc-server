@@ -38,6 +38,12 @@ func (s *Service) PayBalance(ctx context.Context, customerID, orderID int64) (*O
 		return nil, errors.New("订单明细不支持余额支付")
 	}
 	item := items[0]
+	if payer := s.moduleBalance[item.ModuleType]; payer != nil {
+		if err := payer(ctx, customerID, orderID); err != nil {
+			return nil, err
+		}
+		return s.GetOrder(ctx, customerID, orderID)
+	}
 	if item.ModuleType == "instance_upgrade" {
 		payer, ok := s.renewalBalance.(interface {
 			PayUpgradeBalance(context.Context, int64, int64, int64, string) error

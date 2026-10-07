@@ -51,6 +51,13 @@ func SubmitOrder(ctx context.Context, db *gorm.DB, customer, orderID int64, reas
 		if o.CustomerID != customer || (o.Status != order.OrderStatusPaid && o.Status != order.OrderStatusCompleted && o.Status != order.OrderStatusPartialRefund) || o.PayAmount <= 0 || o.PayAmount > int64(balance.MaxMoney) {
 			return ErrConflict
 		}
+		var fundedCoupons int64
+		if err := tx.Table("order.order_items").Where("order_id=? AND module_type='promo_coupon'", orderID).Count(&fundedCoupons).Error; err != nil {
+			return err
+		}
+		if fundedCoupons > 0 {
+			return errors.New("推广券请在我发出的券中回收，按原出资退还")
+		}
 		var owner int64
 		if err := tx.Table("customer.customers").Where("id=? AND status=1 AND deleted_at IS NULL", customer).Count(&owner).Error; err != nil {
 			return err

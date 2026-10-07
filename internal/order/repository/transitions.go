@@ -2,6 +2,7 @@ package order
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -109,4 +110,37 @@ func transitionPaidTx(tx *gorm.DB, id, customerID int64, next uint8, at time.Tim
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=?", id, customerID, dom.OrderStatusPaid).
 		Updates(map[string]any{"status": next, "updated_at": at})
 	return r.RowsAffected == 1, r.Error
+}
+
+// ApplyFundedCouponTx owns the payable-amount update after the module atomically
+// locks its funded unit and the ordinary coupon engine locks the user's coupon.
+func ApplyFundedCouponTx(tx *gorm.DB, id, user, coupon, discount int64, at time.Time) (bool, error) {
+	if tx == nil || id <= 0 || user <= 0 || coupon <= 0 || discount <= 0 || at.IsZero() {
+		return false, errors.New("invalid funded coupon transition")
+	}
+	var proof int64
+	if e := tx.Table("marketing.promo_coupon_units u").Joins("JOIN marketing.user_coupons c ON c.id=u.user_coupon_id").Where("u.user_coupon_id=? AND u.recipient_id=? AND u.order_id=? AND u.status='locked' AND u.discount_amount=? AND c.user_id=? AND c.order_id=? AND c.status=1", coupon, user, id, fmt.Sprintf("%d.%02d", discount/100, discount%100), user, id).Count(&proof).Error; e != nil {
+		return false, e
+	}
+	if proof != 1 {
+		return false, errors.New("funded coupon proof missing")
+	}
+	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=1 AND coupon_id IS NULL AND discount_amount=0 AND pay_amount>?", id, user, discount).Updates(map[string]any{"coupon_id": coupon, "coupon_amount": discount, "discount_amount": discount, "pay_amount": gorm.Expr("pay_amount-?", discount), "updated_at": at})
+	return r.RowsAffected == 1, r.Error
+}
+
+// UpdateUnpaidRenewalAmountTx follows the matching order coupon transition in
+// the same transaction; renewal stores yuan while platform orders use cents.
+func UpdateUnpaidRenewalAmountTx(tx *gorm.DB, id, user, cents int64) error {
+	if tx == nil || id <= 0 || user <= 0 || cents <= 0 {
+		return errors.New("invalid renewal amount transition")
+	}
+	r := tx.Table("instance.instance_renewals").Where("order_id=? AND customer_id=? AND state='unpaid'", id, user).Update("amount", fmt.Sprintf("%d.%02d", cents/100, cents%100))
+	if r.Error != nil {
+		return r.Error
+	}
+	if r.RowsAffected != 1 {
+		return errors.New("renewal state changed")
+	}
+	return nil
 }

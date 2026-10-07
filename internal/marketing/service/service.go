@@ -78,8 +78,19 @@ var configDefaults = []struct {
 
 // Service 营销域应用服务。
 type Service struct {
-	repo repo.Repository
-	db   *gorm.DB
+	repo           repo.Repository
+	db             *gorm.DB
+	couponGuard    func(context.Context, *gorm.DB, int64, int64, int64) error
+	couponCharged  func(*gorm.DB, int64, int64) error
+	couponReleased func(*gorm.DB, int64) error
+}
+
+func (s *Service) SetFundedCouponHooks(guard func(context.Context, *gorm.DB, int64, int64, int64) error, charged func(*gorm.DB, int64, int64) error) {
+	s.couponGuard = guard
+	s.couponCharged = charged
+}
+func (s *Service) SetFundedCouponRelease(release func(*gorm.DB, int64) error) {
+	s.couponReleased = release
 }
 
 func NewService(database *gorm.DB, repository repo.Repository) *Service {
