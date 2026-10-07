@@ -53,7 +53,7 @@ class TestAdminSecurityNginx(unittest.TestCase):
     time.sleep(.3)
     for route,want in [('/admin',404),('/admin/login',404),('/backend',404),('/manage',404),('/admin.html',404),('/dd-admin-'+'b'*24+'/login',404),(correct+'/login',200),(correct+'/todos/refunds',200),('/',200)]:
      client=http.client.HTTPConnection('127.0.0.1',number,timeout=5);client.request('GET',route);response=client.getresponse();body=response.read();self.assertEqual(response.status,want,route)
-     if want==200 and route!='/':self.assertEqual(body,b'secure-admin-probe');self.assertIn('entry-probe',response.getheader('Set-Cookie',''))
+     if want==200 and route!='/':self.assertEqual(body,b'secure-admin-probe');self.assertIn('entry-probe',response.getheader('Set-Cookie',''));self.assertEqual(response.getheader('Content-Type'),'text/html')
      client.close()
    finally:process.terminate();process.wait(timeout=10);server.shutdown();server.server_close()
 if __name__=='__main__':unittest.main()

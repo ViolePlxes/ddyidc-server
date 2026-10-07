@@ -11,7 +11,8 @@ def transform(source: str) -> str:
     source = source.replace('forgot-password|console|admin|sales|cart',
                             'forgot-password|console|sales|cart')
     if 'location = /_ddyidc_admin_entry_check' in source:
-        return source
+        return re.sub(r'(location\s+~\s+"\^/dd-admin-\[a-z0-9\]\{24,64\}\(\?:/\|\$\)"\s*\{)(?!\s*default_type\s+text/html;)',
+                      r'\1\n        default_type text/html;', source)
     old = re.search(r'location\s+~\s+\^/admin\(\?:/\|\$\)\s*\{', source)
     if not old:
         raise ValueError('Existing admin SPA location not found; preserve configuration for review')
