@@ -29,6 +29,7 @@ func (OSRunner) Run(ctx context.Context, directory, executable string, args []st
 		return "", errors.New("命令路径为空")
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
+	configureProcessCancellation(cmd)
 	cmd.Dir = directory
 	if len(env) > 0 {
 		cmd.Env = append(cmd.Environ(), env...)

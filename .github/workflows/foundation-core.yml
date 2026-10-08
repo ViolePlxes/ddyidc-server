@@ -1,5 +1,8 @@
 name: Foundation core checks
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
 permissions:
   contents: read
@@ -17,6 +20,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y redis-server nginx openssl mysql-server python3-yaml
       - name: Build, race and protocol regression
         run: |
+          go run ./cmd/releasecheck
           go test -json ./... > go-test.jsonl
           python3 tools/security/check_go_tests.py go-test.jsonl tools/security/integration-skips.json --output go-test-summary.json
           go test -race -count=3 ./pkg/auth ./pkg/clientip ./pkg/db ./internal/shared/middleware ./internal/shared/distsync

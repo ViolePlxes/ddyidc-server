@@ -58,21 +58,18 @@ func (ops OSFileOps) CopyDirectory(source, destination string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("release tree contains symbolic link: %s", relative)
+		}
 		return ops.CopyFile(path, target)
 	})
 }
 
 func (ops OSFileOps) ReplaceDirectory(source, destination string) error {
-	if err := os.RemoveAll(destination); err != nil {
-		return err
+	if _, err := os.Lstat(destination); os.IsNotExist(err) {
+		return os.Rename(source, destination)
 	}
-	if err := os.Rename(source, destination); err == nil {
-		return nil
-	}
-	if err := ops.CopyDirectory(source, destination); err != nil {
-		return err
-	}
-	return os.RemoveAll(source)
+	return exchangeDirectories(source, destination)
 }
 
 func normalizeStaticTree(root string) error {
@@ -81,7 +78,7 @@ func normalizeStaticTree(root string) error {
 			return walkErr
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return nil
+			return fmt.Errorf("static tree contains symbolic link: %s", path)
 		}
 		mode := os.FileMode(0o644)
 		if entry.IsDir() {
@@ -103,9 +100,18 @@ func (OSFileOps) WriteJSON(path string, value any) error {
 	if err = os.WriteFile(temporary, data, 0o600); err != nil {
 		return err
 	}
+	file, err := os.OpenFile(temporary, os.O_RDWR, 0)
+	if err != nil {
+		return err
+	}
+	err = file.Sync()
+	_ = file.Close()
+	if err != nil {
+		return err
+	}
 	if err = os.Rename(temporary, path); err != nil {
 		_ = os.Remove(temporary)
 		return fmt.Errorf("publish json: %w", err)
 	}
-	return nil
+	return syncDirectory(filepath.Dir(path))
 }

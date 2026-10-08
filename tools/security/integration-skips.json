@@ -154,5 +154,9 @@
   "ddyidc/internal/socialauth/TestSocialOAuthMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_social_login.sh with disposable FOUNDATION_MYSQL_SOCKET; OAuth state, uniqueness, mobile verification and session invalidation require isolated MySQL and Redis. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestAccountReadOnlyMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_schema_migrations.sh with disposable FOUNDATION_MYSQL_SOCKET; verifies SELECT-only account reads, expiry projection and no account/ledger writes. A normal-suite skip is not a pass."
   }
 }

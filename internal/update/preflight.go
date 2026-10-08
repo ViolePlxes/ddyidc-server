@@ -34,6 +34,9 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		}
 		checks = append(checks, CheckResult{Name: label, OK: true, Message: sanitizeOutput(message)})
 	}
+	run("受限构建基础设施", func() (string, error) {
+		return "构建启动器及部署模板哈希一致", verifyBuildInfrastructure()
+	})
 	run("Git 工具", func() (string, error) {
 		return m.runner.Run(ctx, target.Workspace, m.config.GitPath, []string{"--version"}, nil)
 	})
@@ -74,6 +77,9 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		toolLabel, toolPath = "Go 工具链", m.config.GoPath
 	}
 	run(toolLabel, func() (string, error) {
+		if name == TargetBackend {
+			return m.runner.Run(ctx, "/", toolPath, toolArgs, []string{"GOTOOLCHAIN=local", "GOWORK=off"})
+		}
 		return m.runner.Run(ctx, target.Workspace, toolPath, toolArgs, nil)
 	})
 	run("磁盘空间", func() (string, error) {

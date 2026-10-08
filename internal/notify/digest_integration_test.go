@@ -62,7 +62,7 @@ func TestDigestQueueMySQL(t *testing.T) {
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	mail := &digestMailProbe{}
-	repo := &fakeNotifyRepository{values: map[string]string{"notify.digest.dispatch_enabled": "true", "notify.digest.all_customers": "true"}, templates: map[string]*NotificationTemplate{"expiry_digest": {Enabled: true, Channel: ChannelBoth, Content: "您有{{server_count}}台服务器即将到期"}}, contact: Contact{Email: "isolated@example.test", Phone: "18631428991"}}
+	repo := &fakeNotifyRepository{values: map[string]string{"notify.digest.enabled": "true", "notify.digest.dispatch_enabled": "true", "notify.digest.all_customers": "true"}, templates: map[string]*NotificationTemplate{"expiry_digest": {Enabled: true, Channel: ChannelBoth, Content: "您有{{server_count}}台服务器即将到期"}}, contact: Contact{Email: "isolated@example.test", Phone: "19900000000"}}
 	manager := testManager(repo, mail)
 	manager.now = func() time.Time { return now }
 	d := &DigestService{db: db, manager: manager}
@@ -75,7 +75,7 @@ func TestDigestQueueMySQL(t *testing.T) {
 		}
 		return item
 	}
-	first, second, other := insert(1001, 900759908147), insert(1002, 900759908147), insert(1003, 900759908149)
+	first, second, other := insert(1001, 990000101), insert(1002, 990000101), insert(1003, 990000103)
 	for _, item := range []ExpiringInstance{first, second, other, first} {
 		if _, e := d.collect(context.Background(), item, now); e != nil {
 			t.Fatal(e)

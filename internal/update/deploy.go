@@ -54,11 +54,7 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		return
 	}
 
-	m.progress(ctx, task, 20, logValue, "拉取后端 main 分支更新")
-	if output, pullErr := m.pull(ctx, target); pullErr != nil {
-		m.fail(context.Background(), task, logValue, fmt.Errorf("拉取代码失败: %w (%s)", pullErr, output), "not_required")
-		return
-	}
+	m.progress(ctx, task, 20, logValue, "导出后端候选提交，当前源码与服务保持不变")
 	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "*.sql"); diffErr == nil && strings.TrimSpace(output) != "" {
 		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；切换前须完成保留现有数据的离线增量迁移，更新不会自动改库")
 	}
@@ -68,23 +64,36 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		return
 	}
 	rollbackBeforeSwitch := func(cause error) {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		_ = m.files.RemoveAll(newExecutable)
 		rollback := "success"
-		if resetErr := m.resetWorktree(context.Background(), target, task.BeforeCommit); resetErr != nil {
+		if resetErr := m.resetWorktree(cleanup, target, task.BeforeCommit); resetErr != nil {
 			rollback = "failed: " + sanitizeOutput(resetErr.Error())
 		}
 		m.fail(context.Background(), task, logValue, cause, rollback)
 	}
 
 	_ = m.files.RemoveAll(newExecutable)
-	buildTime := time.Now().UTC().Format(time.RFC3339)
-	ldflags := fmt.Sprintf("-X main.version=%s -X main.commit=%s -X main.branch=%s -X main.buildTime=%s", safeBuildValue(info.Remote), safeBuildValue(info.RemoteCommit), safeBuildValue(target.Branch), safeBuildValue(buildTime))
-	m.progress(ctx, task, 42, logValue, "构建后端新版本")
-	buildEnv := []string{"CGO_ENABLED=0", "GOOS=linux", "GOARCH=amd64", "GOPROXY=https://goproxy.cn,direct"}
-	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.GoPath, []string{"build", "-trimpath", "-ldflags", ldflags, "-o", newExecutable, "."}, buildEnv); buildErr != nil {
-		rollbackBeforeSwitch(fmt.Errorf("后端构建失败: %w (%s)", buildErr, output))
+	job, prepareErr := m.prepareBuild(ctx, task, target, info)
+	if prepareErr != nil {
+		rollbackBeforeSwitch(prepareErr)
 		return
 	}
+	m.progress(ctx, task, 42, logValue, "使用独立隔离账号构建后端")
+	if output, buildErr := m.isolatedBuild(ctx, task, "backend"); buildErr != nil {
+		rollbackBeforeSwitch(fmt.Errorf("后端隔离构建失败: %w (%s)", buildErr, output))
+		return
+	}
+	if err = m.files.CopyFile(filepath.Join(job, "candidate-server"), newExecutable); err != nil {
+		rollbackBeforeSwitch(err)
+		return
+	}
+	if err = os.Chmod(newExecutable, 0755); err != nil {
+		rollbackBeforeSwitch(err)
+		return
+	}
+
 	// This executes as the existing unprivileged API identity. The candidate's
 	// verification mode reads migration history only; it cannot run DBA migrations.
 	m.progress(ctx, task, 60, logValue, "只读核验数据库迁移版本，旧服务保持运行")
@@ -108,7 +117,7 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		helperTimeout = max(1, int(time.Until(deadline).Seconds()))
 	}
 	plan := HelperPlan{
-		TaskID: taskID, ParentPID: m.pid, NewExecutable: newExecutable,
+		TaskID: taskID, ParentPID: m.pid, ParentIdentity: processIdentity(m.pid), NewExecutable: newExecutable,
 		CurrentExecutable: target.Executable, BackupExecutable: backup,
 		Workspace: target.Workspace, BeforeCommit: task.BeforeCommit, GitPath: m.config.GitPath,
 		ServerDirectory: filepath.Dir(target.Executable), ConfigFile: target.ConfigFile,
@@ -118,6 +127,11 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	}
 	if err = m.files.WriteJSON(planFile, plan); err != nil {
 		rollbackBeforeSwitch(fmt.Errorf("写入更新计划失败: %w", err))
+		return
+	}
+	if output, pullErr := m.pull(ctx, target); pullErr != nil {
+		_ = m.files.RemoveAll(planFile)
+		rollbackBeforeSwitch(fmt.Errorf("更新候选源码失败: %w (%s)", pullErr, output))
 		return
 	}
 	m.progress(ctx, task, 85, logValue, "更新助手已就绪，即将安全切换后端")
@@ -152,83 +166,16 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		m.succeed(context.Background(), task, logValue)
 		return
 	}
-	dist := filepath.Join(target.Workspace, "dist")
-	backup := filepath.Join(target.Workspace, "dist.old")
-	stage := filepath.Join(m.config.ResultDir, formatID(task.ID)+".dist.backup")
-	m.progress(ctx, task, 18, logValue, "备份当前前端产物")
-	if err = m.files.CopyDirectory(dist, stage); err != nil {
-		m.fail(context.Background(), task, logValue, fmt.Errorf("备份前端产物失败: %w", err), "not_required")
+	if err = m.frontendRelease(ctx, task, target, info, logValue); err != nil {
+		m.fail(context.Background(), task, logValue, err, m.frontendRollbackStatus(task.ID))
 		return
 	}
-	if err = normalizeStaticTree(stage); err != nil {
-		_ = m.files.RemoveAll(stage)
-		m.fail(context.Background(), task, logValue, fmt.Errorf("规范前端备份权限失败: %w", err), "not_required")
-		return
-	}
-	rolledBack := false
-	rollback := func(cause error) {
-		if rolledBack {
-			return
-		}
-		rolledBack = true
-		status := "success"
-		if resetErr := m.resetWorktree(context.Background(), target, task.BeforeCommit); resetErr != nil {
-			status = "failed: git " + sanitizeOutput(resetErr.Error())
-		}
-		if restoreErr := replaceStaticDirectory(m.files, stage, dist); restoreErr != nil {
-			status = "failed: dist " + sanitizeOutput(restoreErr.Error())
-		}
-		m.fail(context.Background(), task, logValue, cause, status)
-	}
-
-	m.progress(ctx, task, 28, logValue, "拉取前端 main 分支更新")
-	if output, pullErr := m.pull(ctx, target); pullErr != nil {
-		rollback(fmt.Errorf("拉取前端失败: %w (%s)", pullErr, output))
-		return
-	}
-	m.progress(ctx, task, 40, logValue, "执行 npm ci 安装锁定依赖")
-	if output, installErr := m.runner.Run(ctx, target.Workspace, m.config.NPMPath, frontendInstallArgs(), nil); installErr != nil {
-		rollback(fmt.Errorf("前端依赖安装失败: %w (%s)", installErr, output))
-		return
-	}
-	m.progress(ctx, task, 58, logValue, "构建前端新版本")
-	env := []string{"DDYIDC_VERSION=" + info.Remote, "DDYIDC_COMMIT=" + info.RemoteCommit, "DDYIDC_BRANCH=" + target.Branch, "DDYIDC_BUILD_TIME=" + time.Now().UTC().Format(time.RFC3339)}
-	if output, buildErr := m.runner.Run(ctx, target.Workspace, m.config.NPMPath, []string{"run", "build"}, env); buildErr != nil {
-		rollback(fmt.Errorf("前端构建失败: %w (%s)", buildErr, output))
-		return
-	}
-	if err = normalizeStaticTree(dist); err != nil {
-		rollback(fmt.Errorf("规范前端产物权限失败: %w", err))
-		return
-	}
-	m.progress(ctx, task, 78, logValue, "执行前端版本与页面后置检查")
-	if err = verifyFrontendVersion(filepath.Join(dist, "version.json"), info.RemoteCommit); err != nil {
-		rollback(err)
-		return
-	}
-	if err = m.verifyHTTP(ctx, target.StaticURL, "前端首页"); err != nil {
-		rollback(err)
-		return
-	}
-	if err = m.verifyHTTP(ctx, m.config.HealthURL, "后端及 DB/Redis 健康状态"); err != nil {
-		rollback(err)
-		return
-	}
-	if err = m.verifyHTTP(ctx, m.config.SmokeURL, "关键接口"); err != nil {
-		rollback(err)
-		return
-	}
-	_ = m.files.RemoveAll(backup)
-	if err = replaceStaticDirectory(m.files, stage, backup); err != nil {
-		rollback(fmt.Errorf("保留 dist.old 失败: %w", err))
-		return
-	}
-	m.progress(ctx, task, 95, logValue, "前端更新后检查通过，旧产物已保留为 dist.old")
+	m.progress(ctx, task, 95, logValue, "前端原子切换与检查通过，旧版本和资源已保留")
 	m.succeed(context.Background(), task, logValue)
 }
 
 func frontendInstallArgs() []string {
-	return []string{"ci", "--no-audit", "--no-fund"}
+	return []string{"ci", "--ignore-scripts", "--no-audit", "--no-fund"}
 }
 
 func replaceStaticDirectory(files FileOps, source, destination string) error {

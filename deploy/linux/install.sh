@@ -105,6 +105,7 @@ if [[ ! -e /etc/ddyidc/backup.env ]]; then
   install -m 0600 /opt/ddyidc/deploy/backup.env.example /etc/ddyidc/backup.env
 fi
 
+python3 /opt/ddyidc/deploy/install-build-isolation.py /opt/ddyidc/deploy
 systemctl daemon-reload
 systemctl enable ddyidc.service ddyidc-backup.timer ddyidc-disk-monitor.timer
 systemctl start ddyidc-backup.timer ddyidc-disk-monitor.timer

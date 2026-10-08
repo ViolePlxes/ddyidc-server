@@ -22,3 +22,4 @@ export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
 go test -race -v . -run '^TestOfflineMigrationMySQL$' -count=1
 go test -race -v ./internal/shared/snowflake -run '^TestDurableIDsMySQL$' -count=1
 go test -race -v ./internal/billing/balance -run '^TestBalanceGuardMySQL$' -count=1
+go test -race -v ./internal/points -run '^TestAccountReadOnlyMySQL$' -count=1

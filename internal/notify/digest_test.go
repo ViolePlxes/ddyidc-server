@@ -24,6 +24,24 @@ func TestDigestSceneAndTestChannelApproval(t *testing.T) {
 	}
 }
 
+func TestDigestScopeRequiresExplicitConfiguration(t *testing.T) {
+	for _, values := range []map[string]string{{}, {"notify.digest.enabled": "true"}, {"notify.digest.enabled": "true", "notify.digest.customer_id": "invalid"}} {
+		repo := &fakeNotifyRepository{values: values}
+		manager := testManager(repo, &fakeMailChannel{})
+		d := &DigestService{manager: manager}
+		settings, err := d.Settings(context.Background())
+		if err != nil || settings.Enabled || settings.CustomerID != 0 {
+			t.Fatalf("unsafe implicit pilot: %+v %v", settings, err)
+		}
+	}
+	repo := &fakeNotifyRepository{values: map[string]string{"notify.digest.enabled": "true", "notify.digest.all_customers": "true"}}
+	manager := testManager(repo, &fakeMailChannel{})
+	settings, err := (&DigestService{manager: manager}).Settings(context.Background())
+	if err != nil || !settings.Enabled || !settings.AllCustomers {
+		t.Fatal("configured production scope changed")
+	}
+}
+
 func TestDigestScheduleShanghaiAndUrgency(t *testing.T) {
 	cases := []struct{ now, expiry, want string }{
 		{"2026-10-06T00:30:00Z", "2026-10-09T00:30:00Z", "2026-10-06T01:00:00Z"},

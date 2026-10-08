@@ -37,7 +37,7 @@ func (m *Manager) ReminderUsesDigest(ctx context.Context, id int64) (bool, error
 
 func (d *DigestService) Settings(ctx context.Context) (DigestSettings, error) {
 	v, e := d.manager.repo.ConfigValues(ctx)
-	s := DigestSettings{Enabled: true, CustomerID: 900759908147}
+	s := DigestSettings{}
 	if e != nil {
 		return s, e
 	}
@@ -46,6 +46,10 @@ func (d *DigestService) Settings(ctx context.Context) (DigestSettings, error) {
 	}
 	s.DispatchEnabled = v["notify.digest.dispatch_enabled"] == "true"
 	s.AllCustomers = v["notify.digest.all_customers"] == "true"
+	s.CustomerID, _ = strconv.ParseInt(v["notify.digest.customer_id"], 10, 64)
+	if !s.AllCustomers && s.CustomerID <= 0 {
+		s.Enabled = false
+	}
 	return s, nil
 }
 

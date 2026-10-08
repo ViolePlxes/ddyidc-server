@@ -50,6 +50,14 @@ func NewManager(database *gorm.DB, redisClient *redis.Client, config Config) (*M
 	if err := manager.files.MkdirAll(config.ResultDir); err != nil {
 		return nil, fmt.Errorf("创建更新结果目录: %w", err)
 	}
+	recoveryCtx, recoveryCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer recoveryCancel()
+	if err := manager.recoverFrontend(recoveryCtx); err != nil {
+		return nil, fmt.Errorf("recover interrupted frontend: %w", err)
+	}
+	if err := manager.recoverBackendPlan(recoveryCtx); err != nil {
+		return nil, fmt.Errorf("recover interrupted backend: %w", err)
+	}
 	return manager, nil
 }
 
@@ -142,7 +150,7 @@ func firstFeature(changes []Change) string {
 func (m *Manager) runTask(task *Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.timeout())
 	defer cancel()
-	_ = workgate.Run(ctx, func(ctx context.Context) error {
+	err := workgate.Run(ctx, func(ctx context.Context) error {
 		if task.Target == TargetBackend {
 			m.runBackend(ctx, task)
 			return nil
@@ -150,6 +158,9 @@ func (m *Manager) runTask(task *Task) {
 		m.runFrontend(ctx, task)
 		return nil
 	})
+	if err != nil {
+		m.fail(context.Background(), task, &taskLog{}, err, "not_required")
+	}
 }
 
 func (m *Manager) progress(ctx context.Context, task *Task, progress int, logValue *taskLog, message string) {
@@ -158,15 +169,29 @@ func (m *Manager) progress(ctx context.Context, task *Task, progress int, logVal
 }
 
 func (m *Manager) fail(ctx context.Context, task *Task, logValue *taskLog, err error, rollback string) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	logValue.add("失败: " + err.Error())
-	_ = m.repo.Finish(ctx, task.ID, StatusFailed, sanitizeOutput(err.Error()), rollback, logValue.String())
-	_ = m.locker.Release(context.Background(), formatID(task.ID))
+	finishErr := m.repo.Finish(ctx, task.ID, StatusFailed, sanitizeOutput(err.Error()), rollback, logValue.String())
+	releaseErr := m.locker.Release(ctx, formatID(task.ID))
+	if finishErr == nil && releaseErr == nil {
+		_ = m.archiveFrontendJournal(task.ID)
+	} else {
+		_ = m.retireFrontendJournal(task.ID)
+	}
 }
 
 func (m *Manager) succeed(ctx context.Context, task *Task, logValue *taskLog) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	logValue.add("更新完成")
-	_ = m.repo.Finish(ctx, task.ID, StatusSuccess, "", "", logValue.String())
-	_ = m.locker.Release(context.Background(), formatID(task.ID))
+	finishErr := m.repo.Finish(ctx, task.ID, StatusSuccess, "", "", logValue.String())
+	releaseErr := m.locker.Release(ctx, formatID(task.ID))
+	if finishErr == nil && releaseErr == nil {
+		_ = m.archiveFrontendJournal(task.ID)
+	} else {
+		_ = m.retireFrontendJournal(task.ID)
+	}
 }
 
 func (m *Manager) StartResultWatcher(ctx context.Context) {
@@ -175,7 +200,12 @@ func (m *Manager) StartResultWatcher(ctx context.Context) {
 		defer ticker.Stop()
 		for {
 			if distsync.IsLeader(ctx) {
-				_ = distsync.Work(ctx, func(ctx context.Context) error { m.processHelperResults(ctx); return nil })
+				_ = distsync.Work(ctx, func(ctx context.Context) error {
+					bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+					defer cancel()
+					m.processHelperResults(bounded)
+					return m.recoverFrontend(bounded)
+				})
 			}
 			select {
 			case <-ctx.Done():
@@ -205,8 +235,12 @@ func (m *Manager) processHelperResults(ctx context.Context) {
 			continue
 		}
 		existing, _ := m.repo.Get(ctx, id)
-		_ = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, mergeTaskLogs(existing, result.Log))
-		_ = m.locker.Release(context.Background(), result.TaskID)
+		if err = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, mergeTaskLogs(existing, result.Log)); err != nil {
+			continue
+		}
+		if err = m.locker.Release(ctx, result.TaskID); err != nil {
+			continue
+		}
 		_ = archiveHelperResult(path, result.FinishedAt)
 		_ = os.Remove(m.config.helperPlanPath())
 	}

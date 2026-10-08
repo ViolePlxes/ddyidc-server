@@ -375,17 +375,30 @@ func (s *Service) debitTx(ctx context.Context, tx *gorm.DB, userID, points int64
 }
 
 func (s *Service) Account(ctx context.Context, userID int64) (*Account, error) {
-	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := s.ensureAccountTx(ctx, tx, userID); err != nil {
-			return err
-		}
-		return s.expireUserTx(ctx, tx, userID)
-	}); err != nil {
-		return nil, err
-	}
 	var v Account
 	e := s.db.WithContext(ctx).Table(accountsTable).Where("user_id=?", userID).Take(&v).Error
-	return &v, e
+	if errors.Is(e, gorm.ErrRecordNotFound) {
+		return &Account{UserID: userID, Status: true}, nil
+	}
+	if e != nil {
+		return nil, e
+	}
+	if !v.Status {
+		return &v, nil
+	}
+	// Reads project expired, unused points without changing the account or ledger.
+	// Scheduled maintenance and transactional spending perform the actual expiry.
+	var records []Record
+	if e = s.db.WithContext(ctx).Table(recordsTable).Where("user_id=?", userID).Order("created_at,ledger_seq").Find(&records).Error; e != nil {
+		return nil, e
+	}
+	remaining := remainingBatches(records, v.Frozen)
+	for _, record := range records {
+		if record.Change > 0 && record.ExpireAt != nil && !record.ExpireAt.After(s.now()) {
+			v.Balance = max(v.Frozen, v.Balance-remaining[record.ID])
+		}
+	}
+	return &v, nil
 }
 func (s *Service) Records(ctx context.Context, userID int64, typ, source, keyword, from, to string, p, z int) ([]Record, int64, error) {
 	p, z = page(p, z)

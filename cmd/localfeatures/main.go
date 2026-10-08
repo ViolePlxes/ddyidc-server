@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 	"os"
 	"strings"
+	"syscall"
 )
 
 func main() {
@@ -20,8 +21,32 @@ func main() {
 		fmt.Fprintln(os.Stderr, "local VM opt-in and configuration are required")
 		os.Exit(1)
 	}
-	var c struct{ MySQL db.Config }
+	hostname, _ := os.Hostname()
+	if hostname != "ddyidc-dev-ubuntu-new" && hostname != "ddyidc-dev" {
+		fmt.Fprintln(os.Stderr, "local feature policy requires the isolated VM identity")
+		os.Exit(1)
+	}
+	identity, identityErr := os.ReadFile("/etc/ddyidc/local-vm.identity")
+	machine, machineErr := os.ReadFile("/etc/machine-id")
+	identityStat, statErr := os.Lstat("/etc/ddyidc/local-vm.identity")
+	validIdentity := identityErr == nil && machineErr == nil && statErr == nil && strings.TrimSpace(string(identity)) != "" && strings.TrimSpace(string(identity)) == strings.TrimSpace(string(machine))
+	if validIdentity {
+		owner, ok := identityStat.Sys().(*syscall.Stat_t)
+		validIdentity = ok && owner.Uid == 0 && identityStat.Mode().IsRegular() && identityStat.Mode().Perm()&022 == 0
+	}
+	if !validIdentity {
+		fmt.Fprintln(os.Stderr, "root-managed isolated VM identity is required")
+		os.Exit(1)
+	}
+	var c struct {
+		MySQL                 db.Config
+		DeploymentEnvironment string `json:",optional"`
+	}
 	conf.MustLoad(*path, &c)
+	if c.DeploymentEnvironment != "local-vm" {
+		fmt.Fprintln(os.Stderr, "local-vm deployment environment is required")
+		os.Exit(1)
+	}
 	if c.MySQL.Host != "127.0.0.1" && c.MySQL.Host != "localhost" && c.MySQL.Host != "::1" {
 		fmt.Fprintln(os.Stderr, "only a loopback test database is allowed")
 		os.Exit(1)

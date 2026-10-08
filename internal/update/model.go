@@ -86,6 +86,7 @@ type HelperResult struct {
 type HelperPlan struct {
 	TaskID            string `json:"taskId"`
 	ParentPID         int    `json:"parentPid"`
+	ParentIdentity    string `json:"parentIdentity,omitempty"`
 	NewExecutable     string `json:"newExecutable"`
 	CurrentExecutable string `json:"currentExecutable"`
 	BackupExecutable  string `json:"backupExecutable"`

@@ -176,7 +176,7 @@ func TestReplaceStaticDirectoryNormalizesPublishedTree(t *testing.T) {
 
 func TestFrontendInstallUsesCleanLockfile(t *testing.T) {
 	args := strings.Join(frontendInstallArgs(), " ")
-	if args != "ci --no-audit --no-fund" {
+	if args != "ci --ignore-scripts --no-audit --no-fund" {
 		t.Fatalf("unexpected frontend install args: %s", args)
 	}
 }
@@ -184,9 +184,13 @@ func TestFrontendInstallUsesCleanLockfile(t *testing.T) {
 func TestRunnerHonorsTimeoutAndSanitizesCredentials(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
+	started := time.Now()
 	_, err := (OSRunner{}).Run(ctx, t.TempDir(), "/bin/sh", []string{"-c", "sleep 5"}, nil)
 	if err == nil || !errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		t.Fatalf("expected context timeout, got %v", err)
+	}
+	if time.Since(started) > 3*time.Second {
+		t.Fatal("descendant escaped command timeout")
 	}
 	output := sanitizeOutput("fetch https://user:secret@example.com/repo.git")
 	if strings.Contains(output, "secret") || !strings.Contains(output, "***@") {

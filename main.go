@@ -78,6 +78,7 @@ import (
 )
 
 var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
+var installBuildIsolation = flag.Bool("install-build-isolation", false, "root安装受限构建基础设施，不读取业务配置、不执行数据库迁移")
 var cronOnly = flag.String("cron-only", "", "仅运行指定模块任务，支持 promo_coupon；与 -no-cron 互斥")
 var promoMaintenance func(context.Context)
 var draining atomic.Bool
@@ -228,6 +229,10 @@ func (c paymentCoordinator) AfterMarketplacePayment(ctx context.Context, orderID
 
 func main() {
 	flag.Parse()
+	if *installBuildIsolation {
+		if err := installReleaseInfrastructure(); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+		return
+	}
 
 	var c struct {
 		rest.RestConf

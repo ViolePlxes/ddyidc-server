@@ -11,7 +11,7 @@ import (
 )
 
 func (m *Manager) git(ctx context.Context, workspace string, args ...string) (string, error) {
-	return m.runner.Run(ctx, workspace, m.config.GitPath, args, nil)
+	return m.runner.Run(ctx, workspace, m.config.GitPath, append([]string{"-c", "core.hooksPath=/dev/null"}, args...), nil)
 }
 
 func (m *Manager) fetch(ctx context.Context, target TargetConfig) (string, error) {
