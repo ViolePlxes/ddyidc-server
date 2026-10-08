@@ -156,6 +156,8 @@ func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		TodayOrders          int64 `json:"todayOrders"`
 		TodayRevenueCents    int64 `json:"todayRevenueCents"`
 		TodayPaidOrders      int64 `json:"todayPaidOrders"`
+		TodayRechargeCents   int64 `json:"todayRechargeCents"`
+		TodayPaidRecharges   int64 `json:"todayPaidRecharges"`
 		TotalCustomers       int64 `json:"totalCustomers"`
 		NewCustomersThisWeek int64 `json:"newCustomersThisWeek"`
 		TotalInstances       int64 `json:"totalInstances"`
@@ -197,6 +199,20 @@ func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	counts.TodayRevenueCents = todayPaid.Revenue
 	counts.TodayPaidOrders = todayPaid.Count
+
+	var todayRecharged struct {
+		Amount int64 `gorm:"column:amount"`
+		Count  int64 `gorm:"column:count"`
+	}
+	if err := h.db.WithContext(ctx).Table("payment.recharge_orders").
+		Select("COALESCE(SUM(amount), 0) AS amount, COUNT(*) AS count").
+		Where("status = ? AND paid_at >= CURRENT_DATE() AND paid_at < CURRENT_DATE() + INTERVAL 1 DAY", 2).
+		Scan(&todayRecharged).Error; err != nil {
+		writeError(w, http.StatusInternalServerError, "读取当日充值失败")
+		return
+	}
+	counts.TodayRechargeCents = todayRecharged.Amount
+	counts.TodayPaidRecharges = todayRecharged.Count
 
 	var rawTrend []trendPoint
 	if err := h.db.WithContext(ctx).Raw(
