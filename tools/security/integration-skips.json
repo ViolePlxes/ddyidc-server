@@ -158,5 +158,225 @@
   "ddyidc/internal/points/TestAccountReadOnlyMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_schema_migrations.sh with disposable FOUNDATION_MYSQL_SOCKET; verifies SELECT-only account reads, expiry projection and no account/ledger writes. A normal-suite skip is not a pass."
+  },
+  "ddyidc/TestV10SupplementHistoryMySQL": {
+    "disposition": "private_offline_fixture_required",
+    "verification": "Requires explicitly authorized offline v10 source/target fixtures and test-specific V10 environment; never access the retired production site from CI. Skip is not a pass."
+  },
+  "ddyidc/TestV10CandidateRehearsalMySQL": {
+    "disposition": "private_offline_fixture_required",
+    "verification": "Requires explicitly authorized offline v10 source/target fixtures and test-specific V10 environment; never access the retired production site from CI. Skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestRefundApplicationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestExpiryAdmissionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestExpiryWindowMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestRegistrationInviteTodoMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestSixManualActionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestManualProductMarkAndReadOnlyRefreshMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestManualProductCompleteRenewalMatchMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestPaidDeliveryBeforeInstanceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestManualReceiptRefundMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestTodoMetadataMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestOfflineReceiptLifecycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestTodoHTTPPermissionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestProductProblemsMixedCollationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestTodoQueriesMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestCountsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestTicketCloseReopenRestoresTodoWithoutReplayingLaterCloseMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestUnboundDeliveryRejectsOtherItemMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestWithdrawalLifecycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestReviewedRefundRequiresApprovalAndFrozenCalculationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/captcha/TestLiveInvalidProofRejected": {
+    "disposition": "explicit_private_configuration_required",
+    "verification": "Run only in isolated VM with explicitly provided private vendor configuration; no secrets or live CAPTCHA proof in CI. Skip is not a pass."
+  },
+  "ddyidc/internal/captcha/TestIsolatedMySQLRedisLifecycle": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_captcha.sh with disposable MySQL/Redis; skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestDetailPrivacyMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestV10HistoryReadAPI": {
+    "disposition": "private_offline_fixture_required",
+    "verification": "Requires explicitly authorized offline v10 source/target fixtures and test-specific V10 environment; never access the retired production site from CI. Skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestV10HTTPLoginUpgradeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET and synthetic v10 password fixtures; skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestV10RealCustomerLoginMySQL": {
+    "disposition": "private_offline_fixture_required",
+    "verification": "Requires explicitly authorized offline v10 source/target fixtures and test-specific V10 environment; never access the retired production site from CI. Skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestV10BrowserRehearsal": {
+    "disposition": "private_offline_fixture_required",
+    "verification": "Requires explicitly authorized offline v10 source/target fixtures and test-specific V10 environment; never access the retired production site from CI. Skip is not a pass."
+  },
+  "ddyidc/internal/customer/repository/TestV10PasswordUpgradeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET and synthetic v10 password fixtures; skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestAdminListMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestFinalizedLegacyDetailMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestMachineRefundDecisionsAndSupplierConfirmationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestSecurityOwnershipAndIdempotencyMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestUpgradePaidDeliveryAndUnknownOutcomeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/navigation/TestTodoNavigationConfigurationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/notify/TestDigestGroupsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/notify/TestDigestQueueMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/notify/TestLegacyExpiryCycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestOrderBalanceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/refundworkflow/TestExtraReceiptQueuesThenReviewedBalanceRefundMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/refundworkflow/TestRefundUsesPurchasedPeriodDespiteLaterRenewalMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestAdminTriggerMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestCheckoutCouponIntegration": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestExpiryBeforeScannerMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestExpiryMixedCollationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestMallCouponIntegration": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestOperatingLimitsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestAuditedRetryMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestPhysicalRefundAndReceiptMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestProductionRewardOutboxMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/points/TestRewardsIdempotencyIntegration": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
+  },
+  "ddyidc/internal/portal/TestInstalledThemeStaticDocument": {
+    "disposition": "built_frontend_fixture_required",
+    "verification": "Run with DDYIDC_PORTAL_ASSETS pointing at the VM-built frontend dist; skip is not a pass."
+  },
+  "ddyidc/internal/promocoupon/TestPromoCouponsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_promo_coupons.sh with disposable MySQL; skip is not a pass."
+  },
+  "ddyidc/internal/security/TestMFAAtomicLifecycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_mfa.sh with disposable MySQL/Redis; skip is not a pass."
+  },
+  "ddyidc/pkg/auth/TestPersistentDeviceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_persistent_login.sh with disposable MySQL/Redis; skip is not a pass."
   }
 }
