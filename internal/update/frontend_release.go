@@ -23,6 +23,11 @@ type frontendJournal struct {
 }
 
 func (m *Manager) frontendRelease(ctx context.Context, task *Task, target TargetConfig, info VersionInfo, logValue *taskLog) error {
+	// A legacy revision may not yet ignore .releases. Keep rollback/retry clean
+	// independently of the version of its tracked .gitignore.
+	if err := m.ignoreFrontendCandidates(ctx, target); err != nil {
+		return err
+	}
 	candidate := filepath.Join(target.Workspace, ".releases", formatID(task.ID))
 	j := frontendJournal{TaskID: task.ID, OwnerPID: m.pid, OwnerIdentity: processIdentity(m.pid), Candidate: candidate, Commit: info.RemoteCommit, BeforeCommit: task.BeforeCommit, Phase: "building"}
 	journal := filepath.Join(m.config.ResultDir, formatID(task.ID)+".frontend.json")
@@ -109,6 +114,35 @@ func (m *Manager) frontendRelease(ctx context.Context, task *Task, target Target
 		return rollback(err)
 	}
 	return nil
+}
+
+func (m *Manager) ignoreFrontendCandidates(ctx context.Context, target TargetConfig) error {
+	path, err := m.git(ctx, target.Workspace, "rev-parse", "--git-path", "info/exclude")
+	if err != nil {
+		return err
+	}
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(target.Workspace, path)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "/.releases/" {
+			return nil
+		}
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err = file.WriteString("\n/.releases/\n"); err != nil {
+		return err
+	}
+	return file.Sync()
 }
 
 func (m *Manager) frontendRollbackStatus(taskID int64) string {

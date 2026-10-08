@@ -7,6 +7,7 @@ import subprocess
 import sys
 import pwd
 import ipaddress
+import hashlib
 
 ROOT = pathlib.Path('/var/lib/ddyidc-build/jobs')
 
@@ -17,6 +18,14 @@ def main():
     if not job_id.isascii() or not job_id.isdecimal() or len(job_id) > 20:
         raise ValueError('invalid build ID')
     unit = 'ddyidc-build-' + job_id
+    if action == 'verify':
+        manifest=json.loads(pathlib.Path('/opt/ddyidc/deploy/release-infrastructure.json').read_text())
+        sudoers=pathlib.Path('/etc/sudoers.d/ddyidc-isolated-build')
+        actual=hashlib.sha256(sudoers.read_bytes()).hexdigest()
+        if actual != manifest.get('installed_sudoers'):
+            raise ValueError('isolated build privilege rule drift')
+        print('Fixed isolated build privilege rule verified')
+        return 0
     if action == 'stop':
         state=subprocess.run(['/usr/bin/systemctl','show',unit+'.service','-p','ActiveState','--value'],capture_output=True,text=True)
         if state.returncode==0 and state.stdout.strip() in ('inactive','failed',''):

@@ -35,7 +35,7 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		checks = append(checks, CheckResult{Name: label, OK: true, Message: sanitizeOutput(message)})
 	}
 	run("受限构建基础设施", func() (string, error) {
-		return "构建启动器及部署模板哈希一致", verifyBuildInfrastructure()
+		return "构建启动器及部署模板哈希一致", verifyBuildInfrastructure(ctx, m.config.SudoPath)
 	})
 	run("Git 工具", func() (string, error) {
 		return m.runner.Run(ctx, target.Workspace, m.config.GitPath, []string{"--version"}, nil)
