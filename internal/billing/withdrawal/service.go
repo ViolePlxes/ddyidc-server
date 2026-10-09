@@ -101,7 +101,7 @@ func SubmitFrom(ctx context.Context, db *gorm.DB, key []byte, customer int64, re
 		if e := tx.Table("system.system_configs").Select("value").Where("`key`=?", "todos.withdrawals.fee_policy").Scan(&policy).Error; e != nil {
 			return e
 		}
-		if policy != "free" {
+		if !ValidFeePolicy(policy) {
 			return ErrConflict
 		}
 		// Serialize eligibility reads with every balance mutation, including
@@ -123,7 +123,7 @@ func SubmitFrom(ctx context.Context, db *gorm.DB, key []byte, customer int64, re
 		if err != nil {
 			return err
 		}
-		if err = tx.Table("payment.withdrawal_snapshots").Create(map[string]any{"withdrawal_id": out.ID, "customer_id": customer, "source_module": source, "source_business_id": business, "fee": "0.00", "net_amount": money.String(), "policy_json": string(snapshot), "created_at": now}).Error; err != nil {
+		if err = tx.Table("payment.withdrawal_snapshots").Create(map[string]any{"withdrawal_id": out.ID, "customer_id": customer, "source_module": source, "source_business_id": business, "fee": quote.Fee.String(), "net_amount": quote.Net.String(), "policy_json": string(snapshot), "created_at": now}).Error; err != nil {
 			return err
 		}
 		_, e := billing.New(tx).Change(ctx, billing.ChangeRequest{CustomerID: customer, Type: "withdrawal_hold", Amount: (-money).String(), RefType: "balance_withdrawal", RefID: out.ID, Channel: "withdrawal", RequestID: fmt.Sprintf("BWH%d", out.ID), Notes: "余额提现申请冻结"})

@@ -34,18 +34,37 @@ func TestWithdrawalPolicyAndNotificationMySQL(t *testing.T) {
 		must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)", snowflake.GenID(), "todos.withdrawals."+k, v).Error)
 	}
 	config("enabled", "1")
-	config("fee_policy", "free")
+	config("fee_policy", "percent_2")
 	config("allowed_sources", "[\"manual_credit\"]")
 	config("daily_count", "1")
 	config("daily_amount", "100.00")
 	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("POLICYCREDIT%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated policy test"})
 	must(err)
+	quote, err := GetQuote(ctx, db, id, "10.00")
+	must(err)
+	if quote.Fee != 20 || quote.Net != 980 || quote.MaximumWithdrawable != 10000 {
+		t.Fatalf("invalid fee quote: %+v", quote)
+	}
+	config("maximum", "20.00")
+	config("daily_amount", "15.00")
+	capped, err := GetQuote(ctx, db, id, "")
+	must(err)
+	if capped.MaximumWithdrawable != 1500 {
+		t.Fatalf("all withdrawal ignored caps: %+v", capped)
+	}
+	config("maximum", "50000.00")
+	config("daily_amount", "100.00")
 	request := fmt.Sprintf("POLICY%d", id)
 	row, err := SubmitFrom(ctx, db, key, id, request, "10.00", "isolated account", "test_module", fmt.Sprint(id))
 	must(err)
+	fee, net, err := SavedAmounts(ctx, db, row.ID, row.Amount)
+	must(err)
+	if fee != "0.20" || net != "9.80" {
+		t.Fatalf("snapshot fee %s net %s", fee, net)
+	}
 	q, err := GetQuote(ctx, db, id, "")
 	must(err)
-	if q.WithdrawalFrozen != 1000 || q.Eligible != 9000 {
+	if q.WithdrawalFrozen != 1000 || q.Eligible != 9000 || q.MaximumWithdrawable != 0 {
 		t.Fatalf("invalid quote: %+v", q)
 	}
 	if _, err := SubmitWithdrawal(ctx, db, key, id, fmt.Sprintf("LIMIT%d", id), "1.00", "isolated account"); err == nil {
@@ -55,8 +74,14 @@ func TestWithdrawalPolicyAndNotificationMySQL(t *testing.T) {
 		t.Fatal("module replay accepted")
 	}
 	config("enabled", "0")
+	config("fee_policy", "free")
 	replay, err := SubmitFrom(ctx, db, key, id, request, "10.00", "isolated account", "test_module", fmt.Sprint(id))
 	must(err)
+	fee, net, err = SavedAmounts(ctx, db, replay.ID, replay.Amount)
+	must(err)
+	if fee != "0.20" || net != "9.80" {
+		t.Fatal("historical fees changed")
+	}
 	if replay.ID != row.ID {
 		t.Fatal("disabled replay duplicated application")
 	}
@@ -70,7 +95,7 @@ func TestWithdrawalPolicyAndNotificationMySQL(t *testing.T) {
 	must(err)
 	q, err = GetQuote(ctx, db, id, "")
 	must(err)
-	if q.WithdrawalFrozen != 0 || q.Eligible != 10000 {
+	if q.WithdrawalFrozen != 0 || q.Eligible != 10000 || q.MaximumWithdrawable != 0 {
 		t.Fatalf("rejection failed to restore eligibility: %+v", q)
 	}
 	var count int64

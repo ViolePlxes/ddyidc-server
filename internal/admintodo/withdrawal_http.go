@@ -154,7 +154,12 @@ func registerWithdrawals(server *rest.Server, db *gorm.DB, manager *auth.Manager
 				}
 			}
 		}
-		reply(w, 200, map[string]any{"accountMasked": accountMasked, "record": record, "direction": "out", "businessType": "balance_withdrawal", "billId": strconv.FormatInt(id, 10), "flows": flows}, "")
+		fee, net, err := withdrawal.SavedAmounts(r.Context(), db, id, record.Amount)
+		if err != nil {
+			reply(w, 503, nil, "费用快照暂不可用")
+			return
+		}
+		reply(w, 200, map[string]any{"fee": fee, "net": net, "accountMasked": accountMasked, "record": record, "direction": "out", "businessType": "balance_withdrawal", "billId": strconv.FormatInt(id, 10), "flows": flows}, "")
 	}})
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/api/v1/finance/withdrawals", Handler: customer})
 	server.AddRoute(rest.Route{Method: http.MethodPost, Path: "/api/v1/finance/withdrawals", Handler: customer})
@@ -179,6 +184,11 @@ func registerWithdrawals(server *rest.Server, db *gorm.DB, manager *auth.Manager
 				reply(w, 404, nil, "记录不存在")
 				return
 			}
+			fee, net, err := withdrawal.SavedAmounts(r.Context(), db, id, out.Amount)
+			if err != nil {
+				reply(w, 503, nil, "费用快照暂不可用")
+				return
+			}
 			var notice struct{ Status string }
 			ne := db.WithContext(r.Context()).Table("payment.withdrawal_notifications").Where("withdrawal_id=?", id).Take(&notice).Error
 			if ne != nil && ne != gorm.ErrRecordNotFound {
@@ -188,7 +198,7 @@ func registerWithdrawals(server *rest.Server, db *gorm.DB, manager *auth.Manager
 			canReview := withdrawal.HasPermission(r.Context(), db, c.UserID, "review")
 			canRemit := withdrawal.HasPermission(r.Context(), db, c.UserID, "remit")
 			if !withdrawal.HasPermission(r.Context(), db, c.UserID, "account") {
-				reply(w, 200, map[string]any{"record": out, "account": "无收款信息查看权限", "canReview": canReview, "canRemit": canRemit, "notificationStatus": notice.Status}, "")
+				reply(w, 200, map[string]any{"fee": fee, "net": net, "record": out, "account": "无收款信息查看权限", "canReview": canReview, "canRemit": canRemit, "notificationStatus": notice.Status}, "")
 				return
 			}
 			account, e := crypto.Decrypt(out.AccountNote, key)
@@ -200,7 +210,7 @@ func registerWithdrawals(server *rest.Server, db *gorm.DB, manager *auth.Manager
 				reply(w, 503, nil, "审计未保存")
 				return
 			}
-			reply(w, 200, map[string]any{"record": out, "account": account, "canReview": canReview, "canRemit": canRemit, "notificationStatus": notice.Status}, "")
+			reply(w, 200, map[string]any{"fee": fee, "net": net, "record": out, "account": account, "canReview": canReview, "canRemit": canRemit, "notificationStatus": notice.Status}, "")
 			return
 		}
 		var in struct {

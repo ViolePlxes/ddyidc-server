@@ -2,6 +2,7 @@ package admintodo
 
 import (
 	billing "ddyidc/internal/billing/balance"
+	withdrawal "ddyidc/internal/billing/withdrawal"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/clientip"
@@ -29,7 +30,7 @@ type Settings struct {
 }
 
 func loadSettings(db *gorm.DB) (Settings, error) {
-	out := Settings{ExpiringDays: 7, WithdrawalSources: []string{}, WithdrawalDailyCount: 3, WithdrawalDailyAmount: "50000.00", WithdrawalMinimum: "1.00", WithdrawalMaximum: "50000.00"}
+	out := Settings{ExpiringDays: 7, WithdrawalSources: []string{}, WithdrawalDailyCount: 1, WithdrawalDailyAmount: "50000.00", WithdrawalMinimum: "1.00", WithdrawalMaximum: "50000.00"}
 	var rows []struct{ Key, Value string }
 	if e := db.Table("system.system_configs").Where("`key` LIKE 'todos.%' OR `key`='notify.expiry.days_before'").Find(&rows).Error; e != nil {
 		return out, e
@@ -106,7 +107,7 @@ func registerSettings(server *rest.Server, db *gorm.DB, manager *auth.Manager) {
 		}
 		d := json.NewDecoder(strings.NewReader(string(raw)))
 		d.DisallowUnknownFields()
-		if d.Decode(&in) != nil || (in.WithdrawalFeePolicy != "" && in.WithdrawalFeePolicy != "free") || in.ExpiringDays < 1 || in.ExpiringDays > 90 || len([]rune(in.OfflineInstructions)) > 1000 {
+		if d.Decode(&in) != nil || (in.WithdrawalFeePolicy != "" && !withdrawal.ValidFeePolicy(in.WithdrawalFeePolicy)) || in.ExpiringDays < 1 || in.ExpiringDays > 90 || len([]rune(in.OfflineInstructions)) > 1000 {
 			reply(w, 400, nil, "请填写有效的窗口天数与线下收款说明")
 			return
 		}
@@ -137,7 +138,7 @@ func registerSettings(server *rest.Server, db *gorm.DB, manager *auth.Manager) {
 			in.WithdrawalMaximum = "50000.00"
 		}
 		if in.WithdrawalDailyCount == 0 {
-			in.WithdrawalDailyCount = 3
+			in.WithdrawalDailyCount = 1
 		}
 		if in.WithdrawalDailyAmount == "" {
 			in.WithdrawalDailyAmount = "50000.00"

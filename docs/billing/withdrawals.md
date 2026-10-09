@@ -33,3 +33,8 @@ pending→approved→paid；pending/approved 可拒绝。审核不出款，已�
 
 
 申请在资格核算前锁定余额账户，与所有消费、退款、冻结变更串行；回归验证并发消费后不能把积分兑换余额作为现金提现。
+
+## 2026-10-09 手续费与全部提现补充
+新增手续费策略 percent_2：按申请金额2%计算，不足一分向上取整；费用从冻结总额内扣除，净汇款=申请额-费用，拒绝解冻完整申请额。旧free申请保持原快照，配置变化不重算历史。费率由服务端计算，后台详情展示申请额/费用/应汇款，用户账单详情展示净额；不新增外部出款API。
+报价新增maximumWithdrawable=min(可提现现金,单笔上限,每日剩余额度)，每日次数用北京时间自然日，包含拒绝申请。达到次数上限时返回0并说明；用户输入框旁Kumo按钮“全部提现”填服务端最大值，最终提交再次锁定账户核算。每日配置改为1次，原允许现金来源与其他财务设置保留。
+代码：internal/billing/withdrawal/{quote.go,fees.go,service.go}、internal/admintodo/{settings.go,withdrawal_http.go}；BalanceWithdrawals.tsx、TodoSettings.tsx、TodoWithdrawalReview.tsx。不改表，不需迁移；仅代码和授权政策变更。

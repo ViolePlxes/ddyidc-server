@@ -24,18 +24,19 @@ type Policy struct {
 	Reason      string   `json:"reason"`
 }
 type Quote struct {
-	Policy           Policy        `json:"policy"`
-	Available        billing.Money `json:"available"`
-	Frozen           billing.Money `json:"frozen"`
-	WithdrawalFrozen billing.Money `json:"withdrawalFrozen"`
-	Eligible         billing.Money `json:"eligible"`
-	Fee              billing.Money `json:"fee"`
-	Net              billing.Money `json:"net"`
+	Policy              Policy        `json:"policy"`
+	Available           billing.Money `json:"available"`
+	Frozen              billing.Money `json:"frozen"`
+	WithdrawalFrozen    billing.Money `json:"withdrawalFrozen"`
+	Eligible            billing.Money `json:"eligible"`
+	MaximumWithdrawable billing.Money `json:"maximumWithdrawable"`
+	Fee                 billing.Money `json:"fee"`
+	Net                 billing.Money `json:"net"`
 }
 
 func LoadPolicy(ctx context.Context, db *gorm.DB) (Policy, error) {
 	var rows []struct{ Key, Value string }
-	p := Policy{Minimum: "1.00", Maximum: "50000.00", Sources: []string{}, DailyCount: 3, DailyAmount: "50000.00"}
+	p := Policy{Minimum: "1.00", Maximum: "50000.00", Sources: []string{}, DailyCount: 1, DailyAmount: "50000.00"}
 	if err := db.WithContext(ctx).Table("system.system_configs").Where("`key` LIKE 'todos.withdrawals.%'").Find(&rows).Error; err != nil {
 		return p, err
 	}
@@ -79,7 +80,7 @@ func LoadPolicy(ctx context.Context, db *gorm.DB) (Policy, error) {
 	}
 	if !p.Enabled {
 		p.Reason = "提现暂未开放"
-	} else if p.FeePolicy != "free" || len(p.Sources) == 0 {
+	} else if !ValidFeePolicy(p.FeePolicy) || len(p.Sources) == 0 {
 		p.Reason = "提现规则配置后可用"
 	}
 	raw, _ := json.Marshal(p)
@@ -174,37 +175,62 @@ func GetQuote(ctx context.Context, db *gorm.DB, customer int64, amount string) (
 		return q, nil
 	}
 	q.Eligible = eligible
+	var count int64
+	start := time.Now().UTC().Add(8 * time.Hour)
+	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC).Add(-8 * time.Hour)
+	if e = db.WithContext(ctx).Model(&BalanceWithdrawal{}).Where("customer_id=? AND created_at>=?", customer, start).Count(&count).Error; e != nil {
+		return q, e
+	}
+	var pending []BalanceWithdrawal
+	if e = db.WithContext(ctx).Where("customer_id=? AND created_at>=? AND status!='rejected'", customer, start).Find(&pending).Error; e != nil {
+		return q, e
+	}
+	var total billing.Money
+	for _, row := range pending {
+		v, err := billing.ParseMoney(row.Amount)
+		if err != nil {
+			return q, err
+		}
+		total += v
+	}
+	cap, _ := billing.ParseMoney(p.DailyAmount)
+	max, _ := billing.ParseMoney(p.Maximum)
+	min, _ := billing.ParseMoney(p.Minimum)
+	q.MaximumWithdrawable = eligible
+	if q.MaximumWithdrawable > max {
+		q.MaximumWithdrawable = max
+	}
+	remaining := cap - total
+	if remaining < 0 {
+		remaining = 0
+	}
+	if q.MaximumWithdrawable > remaining {
+		q.MaximumWithdrawable = remaining
+	}
+	if count >= int64(p.DailyCount) {
+		q.MaximumWithdrawable = 0
+		if q.Policy.Reason == "" {
+			q.Policy.Reason = "今日提现申请次数已达上限"
+		}
+	}
+	if q.MaximumWithdrawable < min {
+		q.MaximumWithdrawable = 0
+	}
 	if amount != "" {
-		m, e := billing.ParseMoney(amount)
-		min, _ := billing.ParseMoney(p.Minimum)
-		max, _ := billing.ParseMoney(p.Maximum)
-		if e != nil || m < min || m > max || m > eligible || p.Reason != "" {
-			return q, ErrQuery
-		}
-		var count int64
-		start := time.Now().UTC().Add(8 * time.Hour)
-		start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, time.UTC).Add(-8 * time.Hour)
-		if e = db.WithContext(ctx).Model(&BalanceWithdrawal{}).Where("customer_id=? AND created_at>=?", customer, start).Count(&count).Error; e != nil {
-			return q, e
-		}
-		var pending []BalanceWithdrawal
-		if e = db.WithContext(ctx).Where("customer_id=? AND created_at>=? AND status!='rejected'", customer, start).Find(&pending).Error; e != nil {
-			return q, e
-		}
-		var total billing.Money
-		for _, row := range pending {
-			v, err := billing.ParseMoney(row.Amount)
-			if err != nil {
-				return q, err
-			}
-			total += v
-		}
-		cap, _ := billing.ParseMoney(p.DailyAmount)
-		if count >= int64(p.DailyCount) || total+m > cap {
+		m, err := billing.ParseMoney(amount)
+		if count >= int64(p.DailyCount) || (err == nil && total+m > cap) {
 			return q, ErrConflict
 		}
-		q.Net = m
+		if err != nil || m < min || m > max || m > eligible || q.Policy.Reason != "" {
+			return q, ErrQuery
+		}
+		q.Fee, err = CalculateFee(m, p.FeePolicy)
+		if err != nil {
+			return q, err
+		}
+		q.Net = m - q.Fee
 	}
+
 	return q, nil
 }
 
