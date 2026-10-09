@@ -6,6 +6,7 @@ import (
 	"ddyidc/internal/admintodo"
 	"ddyidc/internal/backup"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/billing/withdrawal"
 	"ddyidc/internal/captcha"
 	"ddyidc/internal/cdnsell"
 	"ddyidc/internal/certification"
@@ -230,7 +231,10 @@ func (c paymentCoordinator) AfterMarketplacePayment(ctx context.Context, orderID
 func main() {
 	flag.Parse()
 	if *installBuildIsolation {
-		if err := installReleaseInfrastructure(); err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+		if err := installReleaseInfrastructure(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -423,7 +427,10 @@ func main() {
 	proc.AddShutdownListener(func() { draining.Store(true) })
 	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
 	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, notifyManager.StartDigestWorker, balance.New(db.G).StartReconciliation,
-		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) }, updateManager.StartResultWatcher)
+		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) },
+		func(ctx context.Context) {
+			withdrawal.WithdrawalService{DB: db.G}.StartNotifications(ctx, notifyManager)
+		}, updateManager.StartResultWatcher)
 	if *cronOnly == "promo_coupon" {
 		cronStarts = []func(context.Context){promoMaintenance}
 	}

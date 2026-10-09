@@ -24,6 +24,7 @@ func TestWithdrawalLifecycleMySQL(t *testing.T) {
 	must(db.Table("customer.customers").Create(map[string]any{"id": customer, "tenant_id": 0, "username": fmt.Sprintf("todo-test-%d", customer), "password_hash": "isolated", "status": 1, "created_at": time.Now(), "updated_at": time.Now()}).Error)
 	must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,'todos.withdrawals.enabled','1') ON DUPLICATE KEY UPDATE value='1'", snowflake.GenID()).Error)
 	must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,'todos.withdrawals.fee_policy','free') ON DUPLICATE KEY UPDATE value='free'", snowflake.GenID()).Error)
+	must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,'todos.withdrawals.allowed_sources','[\"manual_credit\"]') ON DUPLICATE KEY UPDATE value='[\"manual_credit\"]'", snowflake.GenID()).Error)
 	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: customer, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: customer, Channel: "admin_manual", RequestID: fmt.Sprintf("SEED%d", customer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", Notes: "rollback-only funds"})
 	must(err)
 	key := []byte("0123456789abcdef0123456789abcdef")
@@ -44,9 +45,21 @@ func TestWithdrawalLifecycleMySQL(t *testing.T) {
 		}
 	}
 	assertFunds(9000, 1000)
+	for _, amount := range []string{"0", "-1", "1.001", "1e2", "999999999999.99"} {
+		if _, err := SubmitWithdrawal(ctx, db, key, customer, fmt.Sprintf("INVALID%s%d", amount, customer), amount, "isolated account"); err == nil {
+			t.Fatalf("accepted invalid %s", amount)
+		}
+	}
+	if _, err := SubmitWithdrawal(ctx, db, key, customer, request, "11.00", "isolated account"); err == nil {
+		t.Fatal("changed replay amount accepted")
+	}
+	if _, err := SubmitWithdrawal(ctx, db, key, customer, request, "10.00", "different account"); err == nil {
+		t.Fatal("changed replay recipient accepted")
+	}
+	assertFunds(9000, 1000)
 	_, err = ReviewWithdrawal(ctx, db, row.ID, 1, 1, "integration", "127.0.0.1", "verified", "approve", fmt.Sprintf("APPROVE%d", row.ID), "", "", false)
 	must(err)
-	assertFunds(9000, 1000)
+
 	_, err = ReviewWithdrawal(ctx, db, row.ID, 1, 1, "integration", "127.0.0.1", "verified", "approve", fmt.Sprintf("APPROVE%d", row.ID), "", "", false)
 	must(err)
 	_, err = ReviewWithdrawal(ctx, db, row.ID, 1, 1, "integration", "127.0.0.1", "stale", "reject", fmt.Sprintf("STALE%d", row.ID), "", "", false)
