@@ -155,12 +155,8 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 			respond(w, http.StatusTooManyRequests, 429, nil, "验证码发送过于频繁或已达当日限额，请稍后重试")
 			return
 		}
-	} else if _, ok := s.get(base + ":cooldown"); ok {
-		respond(w, http.StatusTooManyRequests, 429, nil, "验证码已发送，请 60 秒后重试")
-		return
-	}
-	if cache.RDB == nil && s.increment(base+":daily", 24*time.Hour) > maxDailySends {
-		respond(w, http.StatusTooManyRequests, 429, nil, "今日验证码发送次数已达上限")
+	} else if s.reserveMemorySend(channel, target, clientip.FromRequest(r)) != 0 {
+		respond(w, http.StatusTooManyRequests, 429, nil, "验证码发送过于频繁或已达当日限额，请稍后重试")
 		return
 	}
 	config, err := s.manager.loadConfig(r.Context())
@@ -168,14 +164,15 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 		respond(w, http.StatusInternalServerError, 500, nil, "读取通知配置失败")
 		return
 	}
-	mock := s.manager.mockMode(config, channel, scene)
-	code := "123456"
-	if !mock {
-		code, err = randomCode()
-		if err != nil {
-			respond(w, http.StatusInternalServerError, 500, nil, "验证码生成失败")
-			return
-		}
+	if s.manager.mockMode(config, channel, scene) {
+		s.del(base + ":code")
+		respond(w, http.StatusServiceUnavailable, 503, nil, "验证码渠道尚未配置，请联系管理员")
+		return
+	}
+	code, err := randomCode()
+	if err != nil {
+		respond(w, http.StatusInternalServerError, 500, nil, "验证码生成失败")
+		return
 	}
 	ttl := 5 * time.Minute
 	if channel == ChannelEmail {
@@ -196,25 +193,25 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 		}
 	} else {
 		s.set(base+":code", string(encoded), ttl)
-		s.set(base+":cooldown", "1", time.Minute)
+
 		s.del(base + ":consumed")
 	}
-	if !mock {
+	{
 		template, templateErr := s.manager.repo.TemplateByScene(r.Context(), scene)
 		if templateErr != nil || template == nil || !template.Enabled {
-			s.del(base+":code", base+":cooldown")
+			s.del(base + ":code")
 			respond(w, http.StatusBadGateway, 502, nil, "验证码模板不可用")
 			return
 		}
 		params := map[string]string{"code": code, "minutes": strconvMinutes(ttl), "scene": scene}
 		if err = s.manager.sendChannel(r.Context(), template, channel, target, params, ""); err != nil {
-			s.del(base+":code", base+":cooldown")
-			respond(w, http.StatusBadGateway, 502, nil, "验证码发送失败："+safeProviderError(err))
+			s.del(base + ":code")
+			respond(w, http.StatusBadGateway, 502, nil, "验证码发送失败，请稍后重试")
 			return
 		}
 	}
 	s.set(base+":sent", "1", 10*time.Minute)
-	respond(w, http.StatusOK, 0, map[string]interface{}{"expiresIn": int(ttl.Seconds()), "mock": mock}, "验证码已发送")
+	respond(w, http.StatusOK, 0, map[string]interface{}{"expiresIn": int(ttl.Seconds()), "mock": false}, "验证码已发送")
 }
 
 func (s *VerificationService) verify(w http.ResponseWriter, r *http.Request, channel string) {
@@ -229,6 +226,10 @@ func (s *VerificationService) verify(w http.ResponseWriter, r *http.Request, cha
 	}
 	if (channel == ChannelSMS && !validMobile(target)) || (channel == ChannelEmail && !validEmail(target)) || !validVerificationScene(req.Scene) {
 		respond(w, http.StatusBadRequest, 400, nil, "请求参数错误")
+		return
+	}
+	if err := s.verificationChannelReady(r.Context(), channel, req.Scene); err != nil {
+		respond(w, http.StatusServiceUnavailable, 503, nil, err.Error())
 		return
 	}
 	if cache.RDB != nil {
@@ -289,6 +290,9 @@ func (s *VerificationService) ConsumeSMSCode(ctx context.Context, mobile, scene,
 	if !validMobile(mobile) || !validVerificationScene(scene) || strings.TrimSpace(code) == "" {
 		return errors.New("验证码参数错误")
 	}
+	if err := s.verificationChannelReady(ctx, ChannelSMS, scene); err != nil {
+		return err
+	}
 	if cache.RDB != nil {
 		return s.consumeRedisCode(ctx, ChannelSMS, mobile, scene, code)
 	}
@@ -331,7 +335,8 @@ func (s *VerificationService) ConsumeSMSCode(ctx context.Context, mobile, scene,
 }
 
 func (s *VerificationService) key(channel, target, scene string) string {
-	return "notify:" + channel + ":" + scene + ":" + target
+	// Invalidate codes and proof tokens issued by the former implicit mock path.
+	return "notify:v2:" + channel + ":" + scene + ":" + target
 }
 func validScene(v string) bool {
 	switch v {
@@ -457,4 +462,61 @@ func (s *VerificationService) increment(key string, ttl time.Duration) int {
 	n++
 	s.memory[key] = memoryEntry{Value: fmt.Sprint(n), Expires: time.Now().Add(ttl)}
 	return n
+}
+
+// Sending admission is shared across verification scenes and retained on failure.
+func (s *VerificationService) sendKey(channel, target string) string {
+	return "notify:" + channel + ":send:" + target
+}
+func (s *VerificationService) reserveMemorySend(channel, target, ip string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.memory == nil {
+		s.memory = make(map[string]memoryEntry)
+	}
+	now := time.Now()
+	base := s.sendKey(channel, target)
+	read := func(key string) int {
+		entry := s.memory[key]
+		if !now.Before(entry.Expires) {
+			delete(s.memory, key)
+			return 0
+		}
+		var n int
+		_, _ = fmt.Sscan(entry.Value, &n)
+		return n
+	}
+	if read(base+":cooldown") > 0 {
+		return 1
+	}
+	daily, ipDaily := read(base+":daily"), read("notify:send-ip:"+ip)
+	if daily >= maxDailySends {
+		return 2
+	}
+	if ipDaily >= 100 {
+		return 3
+	}
+	s.memory[base+":cooldown"] = memoryEntry{Value: "1", Expires: now.Add(time.Minute)}
+	for key, n := range map[string]int{base + ":daily": daily, "notify:send-ip:" + ip: ipDaily} {
+		expires := s.memory[key].Expires
+		if n == 0 {
+			expires = now.Add(24 * time.Hour)
+		}
+		s.memory[key] = memoryEntry{Value: fmt.Sprint(n + 1), Expires: expires}
+	}
+	return 0
+}
+
+func (s *VerificationService) verificationChannelReady(ctx context.Context, channel, scene string) error {
+	if s.manager == nil {
+		return errors.New("验证码服务暂时不可用，请稍后重试")
+	}
+	config, err := s.manager.loadConfig(ctx)
+	if err != nil {
+		return errors.New("验证码服务暂时不可用，请稍后重试")
+	}
+	if s.manager.mockMode(config, channel, scene) {
+		return errors.New("验证码渠道尚未配置，请联系管理员")
+	}
+	return nil
 }

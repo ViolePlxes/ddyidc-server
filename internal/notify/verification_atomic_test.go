@@ -19,7 +19,7 @@ func TestVerificationSharedConsumption(t *testing.T) {
 	previous := cache.RDB
 	cache.RDB = client
 	t.Cleanup(func() { cache.RDB = previous })
-	a, b := &VerificationService{}, &VerificationService{}
+	a, b := &VerificationService{manager: testManager(&fakeNotifyRepository{}, &fakeMailChannel{})}, &VerificationService{manager: testManager(&fakeNotifyRepository{}, &fakeMailChannel{})}
 	ctx := context.Background()
 	seed := func(mobile string) {
 		t.Helper()
@@ -87,7 +87,7 @@ func TestVerificationSharedSendAdmission(t *testing.T) {
 	previous := cache.RDB
 	cache.RDB = client
 	t.Cleanup(func() { cache.RDB = previous })
-	a, b := &VerificationService{}, &VerificationService{}
+	a, b := &VerificationService{manager: testManager(&fakeNotifyRepository{}, &fakeMailChannel{})}, &VerificationService{manager: testManager(&fakeNotifyRepository{}, &fakeMailChannel{})}
 	var accepted atomic.Int32
 	var wg sync.WaitGroup
 	start := make(chan struct{})
@@ -115,7 +115,7 @@ func TestVerificationSharedSendAdmission(t *testing.T) {
 	if accepted.Load() != 1 {
 		t.Fatalf("send admission accepted %d requests", accepted.Load())
 	}
-	base := a.key(ChannelSMS, "13900001050", "register")
+	base := a.sendKey(ChannelSMS, "13900001050")
 	for i := 1; i < maxDailySends; i++ {
 		if err := client.Del(ctx, base+":cooldown").Err(); err != nil {
 			t.Fatal(err)

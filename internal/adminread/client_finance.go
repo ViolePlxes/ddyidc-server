@@ -85,6 +85,10 @@ func (h *handler) credit(w http.ResponseWriter, r *http.Request) {
 		action = "unfreeze"
 		command.Type = "unfreeze"
 	}
+	if !hasBalancePermission(r.Context(), h.db, actor, action) {
+		writeError(w, 403, "没有该余额操作权限")
+		return
+	}
 	if action == "adjust" && in.Type != "manual_credit" && in.Type != "manual_debit" {
 		writeError(w, 400, "请选择调增或调减")
 		return

@@ -97,7 +97,9 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		// though cart/set_config is authoritative and complete. Use the existing
 		// cloud-to-legacy fallback to classify and expose the real purchase form.
 		if page, pageErr := h.upstream.GetOrderPage(product.SupplierID, product.UpstreamProductID); pageErr == nil && page != nil {
-			if len(configOptions) == 0 { configOptions = page.ConfigOptions }
+			if len(configOptions) == 0 {
+				configOptions = page.ConfigOptions
+			}
 			if pageMode := productConfigMode(page.ConfigOptions); len(page.ConfigOptions) > 0 {
 				configMode = pageMode
 			}
@@ -116,12 +118,10 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		"infoSource": infoSource, "warning": warning, "readOnly": outbound.DetailReadOnly(),
 		"groupName": product.GroupName, "sort": product.Sort,
 		"name": product.Name, "summary": product.Summary, "description": product.Description,
-		"moduleType": product.ModuleType, "price": product.Price, "cycle": cycle, "stock": stock, "config": config,
-		"configMode": configMode, "configOptions": configOptions, "specs": specs,
-		"catalogSpec": view.Spec, "upstreamStock": view.UpstreamStock,
-		// These identifiers are deliberately exposed to the catalogue client so
-		// it can request the provider's order-page configuration for this mapping.
-		"supplierId": product.SupplierID, "upstreamProductId": strconv.Itoa(product.UpstreamProductID),
+		"moduleType": "实例", "price": product.Price, "cycle": cycle, "stock": stock, "config": config,
+		"configMode": configMode, "configOptions": configOptions, "specs": publicSpecs(specs),
+		"catalogSpec": publicSpec(view.Spec), "upstreamStock": view.UpstreamStock,
+		"configurable": product.SupplierID != "" && product.SupplierID != "0" && product.UpstreamProductID > 0,
 	})
 }
 
@@ -276,7 +276,7 @@ func (h *publicHandler) list(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "读取商品分组失败")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "groups": groups, "total": total, "page": page, "pageSize": limit})
+	writeJSON(w, http.StatusOK, map[string]any{"items": publicProducts(items), "groups": groups, "total": total, "page": page, "pageSize": limit})
 }
 
 func positiveInt(raw string, fallback int) int {
@@ -297,4 +297,28 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
+}
+
+func publicSpec(v domain.ProductSpec) map[string]any {
+	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
+}
+func publicSpecs(values []*domain.ProductSpec) []map[string]any {
+	out := make([]map[string]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, publicSpec(*v))
+	}
+	return out
+}
+func publicProducts(values []*repository.PublicProduct) []map[string]any {
+	out := make([]map[string]any, 0, len(values))
+	for _, v := range values {
+		item := map[string]any{"id": v.ID, "groupId": v.GroupID, "parentGroupId": v.ParentGroupID, "groupName": v.GroupName, "name": v.Name, "moduleType": "实例", "stock": v.Stock, "summary": v.Summary, "description": v.Description, "price": v.Price, "cycle": v.Cycle, "sort": v.Sort, "configurable": v.SupplierID != "" && v.SupplierID != "0" && v.UpstreamProductID > 0}
+		if v.CatalogSpec != nil {
+			item["catalogSpec"] = publicSpec(*v.CatalogSpec)
+		}
+		// Stock is part of the existing storefront availability contract.
+		item["upstreamStock"] = v.UpstreamStock
+		out = append(out, item)
+	}
+	return out
 }

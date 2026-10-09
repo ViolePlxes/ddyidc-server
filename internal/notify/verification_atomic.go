@@ -24,7 +24,7 @@ return 0
 func (s *VerificationService) reserveRedisSend(ctx context.Context, channel, target, scene, ip string) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	base := s.key(channel, target, scene)
+	base := s.sendKey(channel, target)
 	ipKey := fmt.Sprintf("notify:send-ip:%x", sha256.Sum256([]byte(ip)))
 	return cache.RDB.Eval(ctx, reserveVerificationLua, []string{base + ":cooldown", base + ":daily", ipKey}, maxDailySends).Int()
 }

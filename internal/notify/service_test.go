@@ -105,6 +105,24 @@ func testManager(repo *fakeNotifyRepository, mail mailChannel) *Manager {
 	}
 }
 
+func TestUnconfiguredNotificationDoesNotWaitForRetry(t *testing.T) {
+	repo := &fakeNotifyRepository{}
+	mail := &fakeMailChannel{}
+	manager := testManager(repo, mail)
+	manager.yaml.Mail = MailConfig{}
+	manager.retryDelay = time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	template := &NotificationTemplate{Scene: "order", Content: "订单已创建", Title: "订单通知"}
+	err := manager.sendChannelWithRetry(ctx, template, ChannelEmail, "audit@example.invalid", nil, "audit-order", true)
+	if err == nil || ctx.Err() != nil || mail.calls != 0 {
+		t.Fatalf("unconfigured channel retried or invoked provider: err=%v context=%v calls=%d", err, ctx.Err(), mail.calls)
+	}
+	if len(repo.logs) != 1 || repo.logs[0].Status != StatusFailed || strings.Contains(repo.logs[0].Error, "超时") {
+		t.Fatalf("configuration failure audit lost: %+v", repo.logs)
+	}
+}
+
 func TestRenderTemplate(t *testing.T) {
 	rendered, err := RenderTemplate("你好 {{name}}，验证码 {{code}}", map[string]string{"name": "张三", "code": "123456"}, false)
 	if err != nil || rendered != "你好 张三，验证码 123456" {
@@ -232,7 +250,7 @@ func TestVerificationProviderFailureReturnsBadGateway(t *testing.T) {
 }
 
 func TestConsumeSMSCodeRejectsReplayAndReportsStates(t *testing.T) {
-	service := &VerificationService{memory: map[string]memoryEntry{}}
+	service := &VerificationService{manager: testManager(&fakeNotifyRepository{}, &fakeMailChannel{}), memory: map[string]memoryEntry{}}
 	mobile := "13900001047"
 	base := service.key(ChannelSMS, mobile, "register")
 	encoded, _ := json.Marshal(record{Code: "654321", Expires: time.Now().Add(5 * time.Minute)})

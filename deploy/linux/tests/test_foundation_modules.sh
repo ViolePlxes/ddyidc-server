@@ -32,3 +32,7 @@ go test -race -v ./internal/certification -run '^TestAlipayLocalDatabase$' -coun
 go test -race -v ./internal/upstream/service -run '^(TestCatalogReplacementMySQL|TestCatalogMultiNodeMySQL)$' -count=1
 
 go test -race -v ./internal/cdnsell -run '^TestPaidFulfillmentMySQL$' -count=1
+
+go test -race -v ./internal/adminread -run "^TestBalancePermissionsMySQL$" -count=1
+go test -race -v ./internal/billing/withdrawal -count=1
+go test -race -v ./internal/billing/balance -run "^TestReviewedRefundRequiresApprovalAndFrozenCalculationMySQL$" -count=1

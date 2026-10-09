@@ -314,8 +314,9 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 	}
 	masked := maskTarget(target)
 	var requestID string
+	configured := !m.mockMode(config, channel, template.Scene)
 	send := func() error {
-		if m.mockMode(config, channel, template.Scene) {
+		if !configured {
 			return fmt.Errorf("%s 通道凭据或模板配置不完整", channel)
 		}
 		if channel == ChannelSMS {
@@ -333,7 +334,8 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 		return m.mail.Send(ctx, config.Mail, target, title, body)
 	}
 	err = send()
-	if err != nil && retry {
+	// Missing credentials/templates are deterministic; retrying only stalls callers.
+	if err != nil && retry && configured {
 		if m.retryDelay > 0 {
 			timer := time.NewTimer(m.retryDelay)
 			select {
