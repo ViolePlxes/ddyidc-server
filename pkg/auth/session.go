@@ -354,19 +354,28 @@ func (m *Manager) RecordLoginFailure(ctx context.Context, key string) (bool, err
 	if cache.RDB == nil {
 		return true, errors.New("redis is not initialized")
 	}
-	redisKey := loginRateKey(key)
-	count, err := cache.RDB.Incr(ctx, redisKey).Result()
+	const failureScript = `
+local count = redis.call('INCR', KEYS[1])
+if count >= tonumber(ARGV[1]) then
+ redis.call('EXPIRE', KEYS[1], ARGV[3])
+elseif count == 1 then
+ redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+return count
+`
+	window := int64(m.security.LoginWindow / time.Second)
+	lockout := int64(m.security.LoginLockout / time.Second)
+	if window < 1 {
+		window = 1
+	}
+	if lockout < 1 {
+		lockout = 1
+	}
+	count, err := cache.RDB.Eval(ctx, failureScript, []string{loginRateKey(key)}, m.security.LoginRateLimit, window, lockout).Int64()
 	if err != nil {
 		return true, err
 	}
-	if count == 1 {
-		_ = cache.RDB.Expire(ctx, redisKey, m.security.LoginWindow).Err()
-	}
-	if count >= m.security.LoginRateLimit {
-		_ = cache.RDB.Expire(ctx, redisKey, m.security.LoginLockout).Err()
-		return true, nil
-	}
-	return false, nil
+	return count >= m.security.LoginRateLimit, nil
 }
 
 func (m *Manager) ClearLoginFailures(ctx context.Context, key string) error {
