@@ -2,8 +2,12 @@ package admintodo
 
 import (
 	"context"
+	dom "ddyidc/internal/instance/domain"
+	workflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/shared/testenv"
+	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestTodoQueriesMySQL(t *testing.T) {
@@ -61,4 +65,55 @@ func TestTodoQueriesMySQL(t *testing.T) {
 			t.Fatalf("financial filter %s: %v", kind, e)
 		}
 	}
+	t.Run("refund display uses original machines without changing business data", func(t *testing.T) {
+		tx := db.Begin()
+		defer tx.Rollback()
+		now := time.Now().UTC()
+		customer := int64(880011001)
+		for _, h := range []dom.Host{
+			{ID: 880011011, CustomerID: customer, OrderID: 880011021, InstanceNo: "DISPLAY-A", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.11", CreatedAt: now, UpdatedAt: now},
+			{ID: 880011012, CustomerID: customer, OrderID: 880011021, InstanceNo: "DISPLAY-B", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.12", CreatedAt: now, UpdatedAt: now},
+			{ID: 880011013, CustomerID: customer + 1, OrderID: 880011021, InstanceNo: "DISPLAY-OTHER", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.13", CreatedAt: now, UpdatedAt: now},
+		} {
+			if err := tx.Create(&h).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		snapshot, _ := json.Marshal(workflow.Snapshot{Periods: []workflow.Period{{InstanceID: 880011012}, {InstanceID: 880011011}, {InstanceID: 880011011}, {InstanceID: 880011013}, {InstanceID: 880011014}}})
+		for _, r := range []workflow.Request{{ApplicationID: 880011031, CustomerID: customer, Source: "order", ObjectID: 880011021, RequestID: "display-one", Snapshot: snapshot, CreatedAt: now}, {ApplicationID: 880011032, CustomerID: customer, Source: "order", ObjectID: 880011021, RequestID: "display-empty", Snapshot: json.RawMessage(`{"periods":[]}`), CreatedAt: now}} {
+			if err := tx.Create(&r).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, sql := range []string{
+			"INSERT INTO customer.customer_realname(id,customer_id,name,status) VALUES(880011041,880011001,'Isolated Verified Name',2)",
+			"INSERT INTO payment.payment_refunds(id,refund_no,payment_id,order_id,user_id,refund_amount) VALUES(880011031,'TODODISPLAYONE',0,880011021,880011001,20.00),(880011032,'TODODISPLAYTWO',0,880011021,880011001,20.00)",
+		} {
+			if err := tx.Exec(sql).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		page, err := List(ctx, tx, "refunds", Filter{Page: 1, PageSize: 20, CustomerID: "880011001"})
+		if err != nil || len(page.Items) != 2 || page.Items[0].CustomerRealName != "Isolated Verified Name" {
+			t.Fatalf("verified real name projection failed: %v %+v", err, page.Items)
+		}
+		if err := tx.Exec("UPDATE customer.customer_realname SET status=1 WHERE id=880011041").Error; err != nil {
+			t.Fatal(err)
+		}
+		page, err = List(ctx, tx, "refunds", Filter{Page: 1, PageSize: 20, CustomerID: "880011001"})
+		if err != nil || len(page.Items) != 2 || page.Items[0].CustomerRealName != "" {
+			t.Fatal("unverified name exposed", err)
+		}
+		entries := []Entry{{ID: "880011031", Source: "application", CustomerID: "880011001", OrderID: "880011021"}, {ID: "880011032", Source: "application", CustomerID: "880011001", OrderID: "880011021"}, {ID: "880011033", Source: "application", CustomerID: "880011001", OrderID: "880011021"}}
+		if err := enrichRefundMachines(ctx, tx, entries); err != nil {
+			t.Fatal(err)
+		}
+		if len(entries[0].Machines) != 4 || entries[0].Machines[0].IPAddress != "192.0.2.11" || entries[0].Machines[1].IPAddress != "192.0.2.12" || entries[0].Machines[2].IPAddress != "" || entries[0].Machines[3].IPAddress != "" {
+			t.Fatalf("snapshot association or ownership failed: %+v", entries[0].Machines)
+		}
+		if len(entries[1].Machines) != 0 || len(entries[2].Machines) != 2 {
+			t.Fatal("empty snapshot guessed a machine or legacy fallback lost association")
+		}
+	})
+
 }
