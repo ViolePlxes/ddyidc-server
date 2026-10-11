@@ -49,7 +49,7 @@ type Product struct {
 	Name          string          `json:"name"`
 	CapacityBytes int64           `json:"capacityBytes"`
 	ValidDays     int             `json:"validDays"`
-	Price         int64           `json:"price"`
+	Price         Yuan            `json:"price"`
 	TierPrices    json.RawMessage `json:"tierPrices"`
 	MinQty        int             `json:"minQty"`
 	MaxQty        int             `json:"maxQty"`
@@ -97,7 +97,7 @@ type Capability struct {
 type PurchaseResult struct {
 	OrderID int64  `json:"orderId,string"`
 	OrderNo string `json:"orderNo"`
-	Amount  int64  `json:"amount"`
+	Amount  Yuan   `json:"amount"`
 }
 type Overview struct {
 	RemainingBytes int64        `json:"remainingBytes"`

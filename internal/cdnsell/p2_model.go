@@ -16,6 +16,9 @@ const (
 )
 
 type DomainRecord struct {
+	AutoSuspended    bool       `json:"autoSuspended"`
+	ManualDisabled   bool       `json:"manualDisabled"`
+	AutoTaskID       int64      `json:"-"`
 	ID               int64      `json:"id,string"`
 	UserID           int64      `json:"userId,string"`
 	AccountID        int64      `json:"accountId,string"`
@@ -71,6 +74,7 @@ type DomainConfigRecord struct {
 	LocalVersion int64           `json:"localVersion"`
 	CloudVersion int64           `json:"cloudVersion"`
 	LocalConfig  json.RawMessage `json:"localConfig"`
+	LocalPayload string          `json:"-"`
 	CloudConfig  json.RawMessage `json:"cloudConfig"`
 	DiffFields   json.RawMessage `json:"diffFields"`
 	UpdatedAt    time.Time       `json:"updatedAt"`

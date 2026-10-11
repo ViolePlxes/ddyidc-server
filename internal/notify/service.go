@@ -430,6 +430,39 @@ func (m *Manager) NotifyCustomer(ctx context.Context, scene string, customerID i
 	return m.notifyContact(ctx, scene, contact, businessID, params)
 }
 
+// NotifyCustomerChannel sends only the requested channel, without a background
+// retry. Callers own their persisted attempt and must not treat skipped sends as success.
+func (m *Manager) NotifyCustomerChannel(ctx context.Context, scene string, customerID int64, businessID, channel string, params map[string]string) error {
+	if channel != ChannelEmail && channel != ChannelSMS {
+		return errors.New("通知渠道无效")
+	}
+	contact, err := m.repo.CustomerContact(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	template, err := m.repo.TemplateByScene(ctx, scene)
+	if err != nil {
+		return err
+	}
+	if template == nil || !template.Enabled {
+		return errors.New("通知模板未启用")
+	}
+	if template.Channel != channel && template.Channel != ChannelBoth {
+		return errors.New("通知模板未启用此渠道")
+	}
+	target := ""
+	if channel == ChannelEmail && !contact.SkipEmail && validEmail(contact.Email) {
+		target = strings.ToLower(contact.Email)
+	}
+	if channel == ChannelSMS && !contact.SkipSMS && validMobile(contact.Phone) {
+		target = contact.Phone
+	}
+	if target == "" {
+		return errUnavailableContact
+	}
+	return m.sendChannelWithRetry(ctx, template, channel, target, params, businessID, false)
+}
+
 func (m *Manager) NotifyAdmins(ctx context.Context, scene string, adminIDs []int64, businessID string, params map[string]string) error {
 	var failures []string
 	for _, adminID := range adminIDs {

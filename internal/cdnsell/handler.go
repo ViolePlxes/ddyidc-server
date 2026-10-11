@@ -27,8 +27,12 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/api/v1/cdnsell/products/:id/purchase", Handler: h.purchase},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/batches", Handler: h.batches},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/usage", Handler: h.usage},
+		{Method: http.MethodGet, Path: "/api/v1/cdnsell/overage-bills", Handler: h.overageBills},
+		{Method: http.MethodPost, Path: "/api/v1/cdnsell/overage-bills/:id/purchase", Handler: h.purchaseOverage},
 		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/status", Handler: h.adminStatus},
 		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/overview", Handler: h.adminOverview},
+		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/overage-bills", Handler: h.adminOverageBills},
+		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/overage-bills/:id/review", Handler: h.reviewOverage},
 		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/accounts", Handler: h.accounts},
 		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/accounts", Handler: h.saveAccount},
 		{Method: http.MethodPut, Path: "/admin/v1/cdnsell/accounts/:id", Handler: h.saveAccount},
@@ -49,6 +53,8 @@ func RegisterHandlers(server *rest.Server, service *Service, jwt *auth.Manager) 
 		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/customers/:id/resume", Handler: h.resumeCustomer},
 	})
 	server.AddRoutes(p2Routes(h))
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/cdnsell/settings", Handler: h.cdnSettings})
+	server.AddRoute(rest.Route{Method: http.MethodPut, Path: "/admin/v1/cdnsell/settings", Handler: h.cdnSettings})
 }
 func (h *Handler) claims(w http.ResponseWriter, r *http.Request, role string) (int64, bool) {
 	head := r.Header.Get("Authorization")
@@ -82,26 +88,17 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.user(w, r); !ok {
 		return
 	}
-	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
-	var accounts int64
-	if e := h.service.db.WithContext(r.Context()).Table(accountsTable).Where("status=1").Count(&accounts).Error; e != nil {
-		result(w, nil, e)
-		return
-	}
-	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes, "ready": accounts > 0})
+	value, e := h.service.Readiness(r.Context())
+	result(w, value, e)
 }
 func (h *Handler) adminStatus(w http.ResponseWriter, r *http.Request) {
 	if !h.admin(w, r) {
 		return
 	}
-	writes, _ := h.service.P2CloudWritesEnabled(r.Context())
-	var accounts int64
-	if e := h.service.db.WithContext(r.Context()).Table(accountsTable).Where("status=1").Count(&accounts).Error; e != nil {
-		result(w, nil, e)
-		return
-	}
-	ok(w, map[string]any{"enabled": true, "phase": "P2", "cloudWritesEnabled": writes, "ready": accounts > 0})
+	value, e := h.service.Readiness(r.Context())
+	result(w, value, e)
 }
+
 func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
 	id, yes := h.user(w, r)
 	if !yes {
@@ -358,4 +355,25 @@ func message(w http.ResponseWriter, status int, text string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": text})
+}
+
+func (h *Handler) overageBills(w http.ResponseWriter, r *http.Request) {
+	user, yes := h.user(w, r)
+	if !yes {
+		return
+	}
+	rows, err := h.service.OverageBills(r.Context(), user)
+	result(w, rows, err)
+}
+func (h *Handler) purchaseOverage(w http.ResponseWriter, r *http.Request) {
+	user, yes := h.user(w, r)
+	if !yes {
+		return
+	}
+	id, yes := pathID(w, r)
+	if !yes {
+		return
+	}
+	value, err := h.service.PurchaseOverage(r.Context(), user, id)
+	result(w, value, err)
 }

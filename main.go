@@ -86,6 +86,7 @@ var draining atomic.Bool
 
 var configFile = flag.String("f", "etc/config.yaml", "配置文件路径")
 var migrate = flag.Bool("migrate", false, "执行离线版本迁移后退出；使用独立迁移账号配置")
+var rollbackContractOnly = flag.Bool("rollback-contract", false, "仅输出当前二进制的数据兼容契约，不读取配置或访问数据库")
 var verifyMigrationsOnly = flag.Bool("verify-migrations", false, "只读验证当前数据库迁移版本后退出，不启动业务服务")
 var migrationSocket = flag.String("migration-socket", "", "仅root离线迁移使用本地MySQL socket；不改变运行账户权限")
 var retryDirty = flag.Bool("retry-dirty-migration", false, "检查失败迁移的部分结果后显式重试")
@@ -230,6 +231,10 @@ func (c paymentCoordinator) AfterMarketplacePayment(ctx context.Context, orderID
 
 func main() {
 	flag.Parse()
+	if *rollbackContractOnly {
+		fmt.Println(update.BackendRollbackContract)
+		return
+	}
 	if *installBuildIsolation {
 		if err := installReleaseInfrastructure(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -320,6 +325,23 @@ func main() {
 		if err := migrations.Verify(ctx, db.DB, migrationSteps); err != nil {
 			fmt.Fprintln(os.Stderr, "Database migration preflight failed:", err)
 			os.Exit(2)
+		}
+		// The candidate is invoked by old and new online update managers alike.
+		// Refuse an unsafe backup before switching, without changing business data.
+		if current := c.Update.Backend.Executable; current != "" {
+			self, err := os.Executable()
+			if err != nil {
+				panic("candidate executable unavailable")
+			}
+			if current != self {
+				if err := update.VerifyBackendRollbackContract(ctx, update.OSRunner{}, current); err != nil {
+					if bootstrapErr := update.VerifyPristineCDNBootstrap(ctx, db.DB); bootstrapErr != nil {
+						fmt.Fprintln(os.Stderr, "Rollback compatibility preflight failed:", bootstrapErr)
+						os.Exit(2)
+					}
+					fmt.Println("Pristine disabled CDN bootstrap verified; concurrent inserts and enabling are guarded")
+				}
+			}
 		}
 		fmt.Println("Read-only database migration preflight complete; no service or scheduled task started")
 		return
@@ -537,14 +559,11 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := cdnsellSvc.EnsureSchema(context.Background()); err != nil {
 		panic("cdnsell schema initialization failed: " + err.Error())
 	}
-	cdnsellEnabled, err := cdnsellSvc.Enabled(context.Background())
+	_, err := cdnsellSvc.Enabled(context.Background())
 	if err != nil {
 		panic("cdnsell configuration failed: " + err.Error())
 	}
-	var cdnsellPaymentSvc *cdnsell.Service
-	if cdnsellEnabled {
-		cdnsellPaymentSvc = cdnsellSvc
-	}
+	cdnsellPaymentSvc := cdnsellSvc
 	groupbuySvc := groupbuy.NewService(db.G, orderSvc, notifyManager)
 	if err := groupbuySvc.EnsureSchema(context.Background()); err != nil {
 		panic("groupbuy schema initialization failed: " + err.Error())
@@ -591,9 +610,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
-	if cdnsellEnabled {
-		*cronStarts = append(*cronStarts, cdnsellSvc.Start)
-	}
+	*cronStarts = append(*cronStarts, cdnsellSvc.Start)
 	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
 	*cronStarts = append(*cronStarts, marketplaceSvc.StartMaintenance)
 	marketplaceSvc.SetRefunder(paymentSvc)

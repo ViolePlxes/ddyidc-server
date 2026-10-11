@@ -26,7 +26,11 @@ func MySQL(t testing.TB) *gorm.DB {
 	if !strings.HasPrefix(socket, "/tmp/ddyidc-foundation-") || !strings.HasSuffix(socket, "/mysql.sock") || filepath.Clean(socket) != socket {
 		t.Fatal("refusing non-isolated database")
 	}
-	database, err := gorm.Open(mysql.Open("root@unix("+socket+")/?parseTime=true"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	location := "UTC"
+	if os.Getenv("FOUNDATION_MYSQL_LOCAL_TIME") == "1" {
+		location = "Local"
+	}
+	database, err := gorm.Open(mysql.Open("root@unix("+socket+")/?parseTime=true&loc="+location), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatal("isolated database unavailable")
 	}

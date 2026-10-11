@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS `system`.`cdnsell_domains` (
 
 CREATE TABLE IF NOT EXISTS `system`.`cdnsell_domain_configs` (
   `id` bigint unsigned NOT NULL, `domain_id` bigint unsigned NOT NULL, `config_module` varchar(40) NOT NULL, `local_version` bigint unsigned NOT NULL DEFAULT 0,
-  `cloud_version` bigint unsigned NOT NULL DEFAULT 0, `local_config` json NOT NULL, `cloud_config` json NOT NULL, `diff_fields` json NOT NULL,
+  `cloud_version` bigint unsigned NOT NULL DEFAULT 0, `local_config` json NOT NULL, `local_payload` longtext DEFAULT NULL, `cloud_config` json NOT NULL, `diff_fields` json NOT NULL,
   `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY (`id`), UNIQUE KEY `uk_cdnsell_domain_config` (`domain_id`,`config_module`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

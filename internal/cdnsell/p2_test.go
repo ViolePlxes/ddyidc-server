@@ -43,7 +43,7 @@ func TestPublicIPGuard(t *testing.T) {
 }
 
 func TestValidateSensitiveConfig(t *testing.T) {
-	valid := map[string]any{"enabled": true, "authType": "1", "primaryKey": "secret-123", "backupKey": "backup-456", "expireSeconds": float64(300)}
+	valid := map[string]any{"enabled": true, "authType": "1", "primaryKey": "secret123", "backupKey": "backup456", "expireSeconds": float64(300)}
 	if err := validateConfig("request_auth", valid); err != nil {
 		t.Fatalf("valid auth config rejected: %v", err)
 	}
@@ -57,10 +57,10 @@ func TestValidateSensitiveConfig(t *testing.T) {
 	}
 }
 
-func TestConfigDiffIgnoresUnavailableCloudFields(t *testing.T) {
+func TestConfigDiffDoesNotAcceptMissingCloudFields(t *testing.T) {
 	local := map[string]any{"enabled": true, "nested": map[string]any{"mode": "strict"}, "localOnly": "value"}
 	cloud := map[string]any{"enabled": false, "payload": map[string]any{"mode": "strict"}}
-	want := []string{"enabled"}
+	want := []string{"enabled", "localonly", "nested.mode"}
 	if got := configDiff(local, cloud); !reflect.DeepEqual(got, want) {
 		t.Fatalf("configDiff() = %#v, want %#v", got, want)
 	}
@@ -76,5 +76,48 @@ func TestP2DefinesExactlyEighteenModules(t *testing.T) {
 			t.Fatalf("duplicate module key %q", definition.Key)
 		}
 		seen[definition.Key] = true
+	}
+}
+
+func TestCompressionRangeValidation(t *testing.T) {
+	for _, value := range []string{"1024", "1024-1", "-1-1024", "0-31457281", "bad"} {
+		if validateConfig("performance", map[string]any{"gzip": true, "br": false, "fileSize": value}) == nil {
+			t.Fatal("invalid range accepted", value)
+		}
+	}
+	if err := validateConfig("performance", map[string]any{"gzip": true, "br": false, "fileSize": "1024-31457280"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCacheRuleValidation(t *testing.T) {
+	row := map[string]any{"type": "directory", "value": "/", "seconds": float64(60), "enabled": true, "respectOrigin": false}
+	if err := validateConfig("cache_rules", map[string]any{"rules": []any{row}}); err != nil {
+		t.Fatal(err)
+	}
+	row["type"] = "global"
+	if validateConfig("cache_rules", map[string]any{"rules": []any{row}}) == nil {
+		t.Fatal("unsupported write enum accepted")
+	}
+	row["type"] = "directory"
+	row["seconds"] = float64(1.5)
+	if validateConfig("cache_rules", map[string]any{"rules": []any{row}}) == nil {
+		t.Fatal("fractional seconds accepted")
+	}
+	if validateConfig("http_headers", map[string]any{"name": "X-Test", "value": "safe\r\nInjected: yes"}) == nil {
+		t.Fatal("header injection accepted")
+	}
+}
+
+func TestCloudDefaultCacheComparison(t *testing.T) {
+	rule := map[string]any{"type": "directory", "value": "/", "seconds": float64(60), "enabled": true, "respectOrigin": false}
+	local := map[string]any{"rules": []any{rule}}
+	cloud := map[string]any{"rules": []any{map[string]any{"type": "global", "seconds": float64(2592000)}, rule}}
+	if diff := moduleConfigDiff("cache_rules", local, cloud); len(diff) != 0 {
+		t.Fatal("read-only default prevents writable rule proof", diff)
+	}
+	cloud["rules"] = append(cloud["rules"].([]any), map[string]any{"type": "exact", "value": "/other"})
+	if len(moduleConfigDiff("cache_rules", local, cloud)) == 0 {
+		t.Fatal("unexpected writable cloud rule ignored")
 	}
 }

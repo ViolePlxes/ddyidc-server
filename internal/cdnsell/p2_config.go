@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +19,8 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+var authKeyPattern = regexp.MustCompile(`^[A-Za-z0-9]{6,128}$`)
 
 func emptyJSON() json.RawMessage { return json.RawMessage(`{}`) }
 
@@ -74,6 +78,73 @@ func validateConfig(module string, config map[string]any) error {
 		return provider.ErrCapabilityNotOpen
 	}
 	switch module {
+	case "cache_rules":
+		rows, ok := config["rules"].([]any)
+		if !ok || len(rows) == 0 || len(rows) > 100 {
+			return errors.New("请填写1–100条缓存规则")
+		}
+		for _, raw := range rows {
+			row, ok := raw.(map[string]any)
+			if !ok {
+				return errors.New("缓存规则格式无效")
+			}
+			kind, _ := row["type"].(string)
+			value, _ := row["value"].(string)
+			if value == "" || strings.ContainsAny(value, "\r\n") {
+				return errors.New("缓存匹配值不能为空或包含换行")
+			}
+			switch kind {
+			case "directory":
+				if !strings.HasPrefix(value, "/") || !strings.HasSuffix(value, "/") {
+					return errors.New("目录缓存路径必须以/开头和结尾")
+				}
+			case "exact":
+				if !strings.HasPrefix(value, "/") {
+					return errors.New("精确缓存路径必须以/开头")
+				}
+			case "file_suffix":
+			default:
+				return errors.New("缓存类型只能为directory、exact或file_suffix")
+			}
+			enabled, ok := row["enabled"].(bool)
+			if !ok {
+				return errors.New("缓存开关格式无效")
+			}
+			if enabled {
+				seconds, ok := row["seconds"].(float64)
+				if !ok || math.IsNaN(seconds) || math.IsInf(seconds, 0) || math.Trunc(seconds) != seconds || seconds < 0 || seconds > 31536000 {
+					return errors.New("缓存秒数必须为0–31536000的整数")
+				}
+			}
+			if _, ok := row["respectOrigin"].(bool); !ok {
+				return errors.New("遵循源站开关格式无效")
+			}
+		}
+	case "http_headers":
+		name, _ := config["name"].(string)
+		value, _ := config["value"].(string)
+		if !regexp.MustCompile(`^[!#$%&'*+.^_`+"`"+`|~0-9A-Za-z-]+$`).MatchString(name) || strings.ContainsAny(value, "\r\n") {
+			return errors.New("HTTP头名称或值无效")
+		}
+	case "performance":
+		for _, key := range []string{"gzip", "br"} {
+			if _, ok := config[key].(bool); !ok {
+				return errors.New("压缩开关必须为布尔值")
+			}
+		}
+		value, _ := config["fileSize"].(string)
+		if value == "" {
+			return errors.New("请填写压缩文件大小范围，例如1024-31457280")
+		}
+		parts := strings.Split(value, "-")
+		if len(parts) != 2 {
+			return errors.New("压缩大小范围格式无效")
+		}
+		low, e1 := strconv.ParseInt(parts[0], 10, 64)
+		high, e2 := strconv.ParseInt(parts[1], 10, 64)
+		if e1 != nil || e2 != nil || low < 0 || high < low || high > 31457280 {
+			return errors.New("压缩大小范围必须为1024–31457280字节且起点不大于终点")
+		}
 	case "request_auth":
 		enabled, _ := config["enabled"].(bool)
 		if enabled {
@@ -83,11 +154,14 @@ func validateConfig(module string, config map[string]any) error {
 			}
 			primary, _ := config["primaryKey"].(string)
 			backup, _ := config["backupKey"].(string)
-			if len(primary) < 6 || len(primary) > 128 {
-				return errors.New("主密钥长度必须为 6–128 位")
+			if !authKeyPattern.MatchString(primary) {
+				return errors.New("主密钥必须为6–128位英文字母或数字")
 			}
-			if backup != "" && (len(backup) < 6 || len(backup) > 128) {
-				return errors.New("备用密钥长度必须为 6–128 位")
+			if backup != "" && (!authKeyPattern.MatchString(backup)) {
+				return errors.New("备用密钥必须为6–128位英文字母或数字")
+			}
+			if value, ok := config["expireSeconds"].(float64); ok && math.Trunc(value) != value {
+				return errors.New("鉴权过期秒数必须为整数")
 			}
 			expire := numeric(config["expireSeconds"])
 			if expire < 1 || expire > 31536000 {
@@ -148,7 +222,7 @@ func validateURLStrings(value any) error {
 
 func sensitiveKey(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(key, "_", ""))
-	return strings.Contains(key, "privatekey") || strings.Contains(key, "primarykey") || strings.Contains(key, "backupkey") || strings.Contains(key, "secret")
+	return key == "key1" || key == "key2" || strings.Contains(key, "accesskey") || strings.Contains(key, "token") || strings.Contains(key, "privatekey") || strings.Contains(key, "primarykey") || strings.Contains(key, "backupkey") || strings.Contains(key, "secret")
 }
 func sanitizeConfig(value any) any {
 	switch item := value.(type) {
@@ -178,6 +252,9 @@ func sanitizeConfig(value any) any {
 }
 
 func (s *Service) SaveDomainConfig(ctx context.Context, userID, domainID int64, module, operator string, config map[string]any, admin bool) (*ConfigTaskRecord, error) {
+	if (admin && operator != "admin") || (!admin && operator != "member") {
+		return nil, errors.New("配置操作人类型无效")
+	}
 	domain, err := s.domain(ctx, domainID)
 	if err != nil {
 		return nil, err
@@ -218,12 +295,12 @@ func (s *Service) SaveDomainConfig(ctx context.Context, userID, domainID int64, 
 			version = 1
 		}
 		if errors.Is(e, gorm.ErrRecordNotFound) {
-			record := DomainConfigRecord{ID: snowflake.GenID(), DomainID: domainID, ConfigModule: module, LocalVersion: version, CloudVersion: 0, LocalConfig: safe, CloudConfig: emptyJSON(), DiffFields: json.RawMessage(`[]`)}
+			record := DomainConfigRecord{ID: snowflake.GenID(), DomainID: domainID, ConfigModule: module, LocalVersion: version, CloudVersion: 0, LocalConfig: safe, LocalPayload: encrypted, CloudConfig: emptyJSON(), DiffFields: json.RawMessage(`[]`)}
 			if e = tx.Table(domainConfigsTable).Create(&record).Error; e != nil {
 				return e
 			}
 		} else {
-			if e = tx.Table(domainConfigsTable).Where("id=?", current.ID).Updates(map[string]any{"local_version": version, "local_config": safe}).Error; e != nil {
+			if e = tx.Table(domainConfigsTable).Where("id=?", current.ID).Updates(map[string]any{"local_version": version, "local_config": safe, "local_payload": encrypted}).Error; e != nil {
 				return e
 			}
 		}
@@ -273,24 +350,39 @@ func configDiff(local, cloud map[string]any) []string {
 	localFlat, cloudFlat := map[string]any{}, map[string]any{}
 	flattenConfig("", local, localFlat)
 	flattenConfig("", cloud, cloudFlat)
-	cloudByLeaf := map[string]any{}
-	for key, val := range cloudFlat {
-		parts := strings.Split(key, ".")
-		cloudByLeaf[parts[len(parts)-1]] = val
-	}
 	fields := make([]string, 0)
 	for key, expected := range localFlat {
 		actual, ok := cloudFlat[key]
-		if !ok {
-			parts := strings.Split(key, ".")
-			actual, ok = cloudByLeaf[parts[len(parts)-1]]
-		}
-		if ok && !reflect.DeepEqual(expected, actual) {
+		if !ok || !reflect.DeepEqual(expected, actual) {
 			fields = append(fields, key)
 		}
 	}
 	sort.Strings(fields)
 	return fields
+}
+
+// The cloud appends a read-only global cache default. Verify all writable rules
+// in their returned order, while keeping the unfiltered readback for audit.
+func moduleConfigDiff(module string, local, cloud map[string]any) []string {
+	if module == "cache_rules" {
+		if rules, ok := cloud["rules"].([]any); ok {
+			filtered := []any{}
+			for _, raw := range rules {
+				row, ok := raw.(map[string]any)
+				if ok && row["type"] == "global" {
+					continue
+				}
+				filtered = append(filtered, raw)
+			}
+			copy := map[string]any{}
+			for key, value := range cloud {
+				copy[key] = value
+			}
+			copy["rules"] = filtered
+			return configDiff(local, copy)
+		}
+	}
+	return configDiff(local, cloud)
 }
 
 func (s *Service) syncDomainConfig(ctx context.Context, domain DomainRecord, module string, version int64) error {
@@ -305,20 +397,56 @@ func (s *Service) syncDomainConfig(ctx context.Context, domain DomainRecord, mod
 	if err != nil {
 		return err
 	}
-	cloud = sanitizeConfig(cloud).(map[string]any)
+	// Compare the actual cloud values first; persist only redacted content.
 	var record DomainConfigRecord
 	if err = s.db.WithContext(ctx).Table(domainConfigsTable).Where("domain_id=? AND config_module=?", domain.ID, module).Take(&record).Error; err != nil {
 		return err
 	}
-	var local map[string]any
-	if err = json.Unmarshal(record.LocalConfig, &local); err != nil {
-		return err
+	if version != 0 && version != record.LocalVersion {
+		return errors.New("已有更新配置，旧版本未确认")
 	}
-	diff := configDiff(local, cloud)
-	cloudJSON, _ := json.Marshal(cloud)
+	payload := record.LocalPayload
+	if payload == "" {
+		var task ConfigTaskRecord
+		if e := s.db.WithContext(ctx).Table(configTasksTable).Where("domain_id=? AND config_module=? AND version=?", domain.ID, module, record.LocalVersion).Order("id DESC").Take(&task).Error; e != nil {
+			return errors.New("配置核验载荷不可用，请重新保存配置")
+		}
+		payload = task.Payload
+	}
+	plain, e := cryptoutil.Decrypt(payload, s.key)
+	if e != nil {
+		return errors.New("配置核验载荷不可用")
+	}
+	var local map[string]any
+	if json.Unmarshal([]byte(plain), &local) != nil {
+		return errors.New("配置核验载荷无效")
+	}
+	plain = ""
+	diff := moduleConfigDiff(module, local, cloud)
+	cloudJSON, _ := json.Marshal(sanitizeConfig(cloud))
 	diffJSON, _ := json.Marshal(diff)
 	if version == 0 {
 		version = record.LocalVersion
 	}
-	return s.db.WithContext(ctx).Table(domainConfigsTable).Where("id=?", record.ID).Updates(map[string]any{"cloud_version": version, "cloud_config": cloudJSON, "diff_fields": diffJSON}).Error
+	updates := map[string]any{"cloud_config": cloudJSON, "diff_fields": diffJSON}
+	if len(diff) == 0 {
+		updates["cloud_version"] = version
+	}
+	update := s.db.WithContext(ctx).Table(domainConfigsTable).Where("id=? AND local_version=?", record.ID, record.LocalVersion).Updates(updates)
+	if update.Error != nil {
+		return update.Error
+	}
+	if update.RowsAffected == 0 {
+		var count int64
+		if e := s.db.WithContext(ctx).Table(domainConfigsTable).Where("id=? AND local_version=?", record.ID, record.LocalVersion).Count(&count).Error; e != nil {
+			return e
+		}
+		if count != 1 {
+			return errors.New("配置版本已更新，请重新核验")
+		}
+	}
+	if len(diff) > 0 {
+		return errors.New("配置回读存在差异或缺失字段，请核查后同步，未标记成功")
+	}
+	return nil
 }

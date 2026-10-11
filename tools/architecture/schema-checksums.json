@@ -37,5 +37,11 @@
   "036_unified_withdrawals.sql": "f1ba0b537f754b3966b55221d6a1028b5c8b7c0ad8a54401c4579a83cda4ba5a",
   "037_balance_permissions.sql": "534dcdc61d4e16c4872c9cbef5df40acb4ee238e85e45918b6f2811059638199",
   "038_customer_list_indexes.sql": "a434e54b2d884e7ffc69465d44e3949f363154eae49eea404499797e1fea312c",
-  "039_customer_status_list_index.sql": "ce1817b5ce6bb9259ba45bfa6cd6f253a9abd0a5eefc9be418948a07a23facc0"
+  "039_customer_status_list_index.sql": "ce1817b5ce6bb9259ba45bfa6cd6f253a9abd0a5eefc9be418948a07a23facc0",
+  "040_cdn_usage_recovery.sql": "c739d9e57e98040a3dd5299a2e1f9cd721d04d971a7abbcfd930c39781fe0f07",
+  "041_cdn_config_payload.sql": "8beedc824bde81bbb10f780a3309fc0f4e80d42a3b011fcdeb42db29f7904154",
+  "042_cdn_service_policy.sql": "bf71745275e388e08ed6ba7514ebc5ed5434ba2c5425c6798d5d70ab901c473f",
+  "043_cdn_yuan.sql": "53b23690f4d395119e7eaaf200b99165e8cdd3684eb776bcf4b23936ded88e2f",
+  "044_cdn_overage_order.sql": "d3bacdc8cc09da8a20eef0d5eb6787c0692c97990e2e22f12d38ddc171e0c93c",
+  "045_cdn_bootstrap_guard.sql": "b553165fd3aedf7bd2ce7fb8088b0f35b38e180aa1866cc2fdd861b228e80377"
 }

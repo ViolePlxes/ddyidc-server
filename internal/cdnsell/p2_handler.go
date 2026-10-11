@@ -19,7 +19,7 @@ func p2Routes(h *Handler) []rest.Route {
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains/:id/ownership-status", Handler: h.ownershipStatus},
 		{Method: http.MethodPost, Path: "/api/v1/cdnsell/domains/:id/enable", Handler: h.enableDomain},
 		{Method: http.MethodPost, Path: "/api/v1/cdnsell/domains/:id/disable", Handler: h.disableDomain},
-		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains/:id/sync", Handler: h.syncDomain},
+		{Method: http.MethodPost, Path: "/api/v1/cdnsell/domains/:id/sync", Handler: h.syncDomain},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains/:id/config", Handler: h.domainConfig},
 		{Method: http.MethodPost, Path: "/api/v1/cdnsell/domains/:id/config", Handler: h.saveDomainConfig},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains/:id/config-tasks", Handler: h.configTasks},

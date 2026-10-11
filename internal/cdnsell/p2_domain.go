@@ -17,6 +17,7 @@ import (
 	"ddyidc/internal/shared/snowflake"
 	cryptoutil "ddyidc/pkg/crypto"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -67,7 +68,16 @@ func validateDomainInput(input *DomainInput) error {
 }
 
 func isPublicIP(ip net.IP) bool {
-	return ip != nil && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsUnspecified() && !ip.IsLinkLocalUnicast() && !ip.IsLinkLocalMulticast() && !ip.IsMulticast()
+	if ip == nil || !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	for _, cidr := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "192.0.2.0/24", "198.18.0.0/15", "198.51.100.0/24", "203.0.113.0/24", "240.0.0.0/4", "2001:db8::/32"} {
+		_, network, _ := net.ParseCIDR(cidr)
+		if network.Contains(ip) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) CreateDomain(ctx context.Context, userID int64, input DomainInput) (*DomainRecord, error) {
@@ -140,7 +150,7 @@ func (s *Service) DomainDetail(ctx context.Context, userID, id int64, admin bool
 		return nil, err
 	}
 	var deployed int64
-	s.db.WithContext(ctx).Table(certsTable).Where("domain_id=? AND deploy_status='deployed'", row.ID).Count(&deployed)
+	s.db.WithContext(ctx).Table(certsTable).Where("domain_id=? AND deploy_status IN ('pending','deployed')", row.ID).Count(&deployed)
 	var configOK int64
 	s.db.WithContext(ctx).Table(configTasksTable).Where("domain_id=? AND status='success'", row.ID).Count(&configOK)
 	return &DomainDetail{DomainRecord: row, Configs: configs, Checklist: map[string]bool{"ownership": row.OwnershipStatus == "verified", "upstream": row.ServiceNo != "" && row.CNAME != "", "certificate": deployed > 0, "configuration": configOK > 0}}, nil
@@ -296,16 +306,34 @@ func truncate(value string, max int) string {
 }
 
 func (s *Service) enqueueDomainTask(ctx context.Context, kind string, domainID int64) (*DomainTaskRecord, error) {
-	var count int64
-	s.db.WithContext(ctx).Table(tasksTable).Where("task_type=? AND biz_type='domain' AND biz_id=? AND status IN ('pending','running')", kind, domainID).Count(&count)
-	if count > 0 {
-		return nil, errors.New("同类任务正在处理中")
-	}
-	id := snowflake.GenID()
-	task := &DomainTaskRecord{ID: id, TaskNo: fmt.Sprintf("CT%d", id), TaskType: kind, BizType: "domain", BizID: domainID, Status: "pending", MaxAttempts: 5, CreatedAt: s.now()}
-	return task, s.db.WithContext(ctx).Table(tasksTable).Create(task).Error
+	var task *DomainTaskRecord
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var domain DomainRecord
+		if err := tx.Table(domainsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", domainID).Take(&domain).Error; err != nil {
+			return err
+		}
+		var count int64
+		if err := tx.Table(tasksTable).Where("biz_type='domain' AND biz_id=? AND status IN ('pending','running')", domainID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			return errors.New("域名任务正在处理中，请稍后重试")
+		}
+		if domain.Deleted {
+			return errors.New("域名已删除或正在删除")
+		}
+		id := snowflake.GenID()
+		task = &DomainTaskRecord{ID: id, TaskNo: fmt.Sprintf("CT%d", id), TaskType: kind, BizType: "domain", BizID: domainID, Status: "pending", MaxAttempts: 5, CreatedAt: s.now()}
+		if err := tx.Table(tasksTable).Create(task).Error; err != nil {
+			return err
+		}
+		if kind == "domain_remove" {
+			return tx.Table(domainsTable).Where("id=?", domainID).Updates(map[string]any{"upstream_status": "removing"}).Error
+		}
+		return nil
+	})
+	return task, err
 }
-
 func (s *Service) DeleteDomain(ctx context.Context, userID, domainID int64) (*DomainTaskRecord, error) {
 	domain, err := s.userDomain(ctx, userID, domainID)
 	if err != nil {
@@ -315,8 +343,11 @@ func (s *Service) DeleteDomain(ctx context.Context, userID, domainID int64) (*Do
 		err = s.db.WithContext(ctx).Table(domainsTable).Where("id=?", domainID).Update("deleted", true).Error
 		return &DomainTaskRecord{BizID: domainID, TaskType: "domain_remove", Status: "success"}, err
 	}
-	if err = s.db.WithContext(ctx).Table(domainsTable).Where("id=?", domainID).Updates(map[string]any{"deleted": true, "upstream_status": "removing"}).Error; err != nil {
-		return nil, err
+	if domain.UpstreamStatus == "removing" {
+		return nil, errors.New("域名移除结果待核查，请先重新获取状态")
+	}
+	if domain.Enabled {
+		return nil, errors.New("请先停用域名，确认离线后再移除")
 	}
 	return s.enqueueDomainTask(ctx, "domain_remove", domainID)
 }

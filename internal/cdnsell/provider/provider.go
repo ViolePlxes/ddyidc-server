@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+var ErrDomainNotFound = errors.New("CDN domain not found")
+
 var ErrCapabilityNotOpen = errors.New("金山云当前账号未开放该 API 能力")
 
 type Account struct{ AccessKey, SecretKey string }

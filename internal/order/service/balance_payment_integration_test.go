@@ -71,7 +71,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 				must(tx.Create(&certification.Record{ID: snowflake.GenID(), CustomerID: cid, CertifyFeeOrder: oid, Type: 1}).Error)
 			}
 			if scenario == "cdnsell" {
-				must(tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status) VALUES(?,?,?,'traffic_pack',?,1,1024,100,?,'pending')", snowflake.GenID(), o.OrderNo, cid, oid, `{"validDays":30}`).Error)
+				must(tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status) VALUES(?,?,?,'traffic_pack',?,1,1024,1.00,?,'pending')", snowflake.GenID(), o.OrderNo, cid, oid, `{"validDays":30}`).Error)
 			}
 			if scenario == "online_pending" {
 				must(tx.Exec("INSERT INTO payment.payments(id,payment_no,biz_type,biz_id,order_id,customer_id,channel,out_trade_no,amount,amount_fen,status,expire_at) VALUES(?,?,'order',?,?,?,'alipay',?,1.00,100,'pending',DATE_ADD(NOW(),INTERVAL 1 HOUR))", snowflake.GenID(), fmt.Sprintf("ISO-P%d", oid), oid, oid, cid, fmt.Sprintf("ISO-T%d", oid)).Error)

@@ -18,12 +18,16 @@ import (
 	"ddyidc/internal/shared/snowflake"
 	cryptoutil "ddyidc/pkg/crypto"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *Service) UploadCertificate(ctx context.Context, userID, domainID int64, name, certPEM, keyPEM string) (*CertificateRecord, error) {
 	domain, err := s.userDomain(ctx, userID, domainID)
 	if err != nil {
 		return nil, err
+	}
+	if len(name) > 120 || len(certPEM) > 128*1024 || len(keyPEM) > 128*1024 {
+		return nil, errors.New("证书名称或内容超过允许长度")
 	}
 	if strings.TrimSpace(name) == "" {
 		return nil, errors.New("证书名称不能为空")
@@ -41,6 +45,9 @@ func (s *Service) UploadCertificate(ctx context.Context, userID, domainID int64,
 	}
 	if err = certificate.VerifyHostname(domain.Domain); err != nil {
 		return nil, errors.New("证书不适用于所选加速域名")
+	}
+	if s.now().Before(certificate.NotBefore) || !s.now().Before(certificate.NotAfter) {
+		return nil, errors.New("证书尚未生效或已经过期")
 	}
 	digest := sha256.Sum256(certificate.Raw)
 	certEncrypted, err := cryptoutil.Encrypt(certPEM, s.key)
@@ -73,32 +80,37 @@ func (s *Service) DeleteCertificate(ctx context.Context, userID, certID int64) e
 	}
 	return nil
 }
-func (s *Service) DeployCertificate(ctx context.Context, userID, certID int64) (*DomainTaskRecord, error) {
-	var cert CertificateRecord
-	err := s.db.WithContext(ctx).Table(certsTable).Where("id=? AND user_id=?", certID, userID).Take(&cert).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	domain, err := s.userDomain(ctx, userID, cert.DomainID)
-	if err != nil {
-		return nil, err
-	}
-	if domain.ServiceNo == "" || domain.UpstreamStatus != "active" {
-		return nil, errors.New("域名尚未完成上游接入")
-	}
-	task, err := s.enqueueTask(ctx, "cert_deploy", "certificate", certID)
-	if err == nil {
-		_ = s.db.WithContext(ctx).Table(certsTable).Where("id=?", certID).Update("deploy_status", "pending").Error
-	}
-	return task, err
+func (s *Service) DeployCertificate(ctx context.Context, userID, certID int64) (task *DomainTaskRecord, err error) {
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var cert CertificateRecord
+		if e := tx.Table(certsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND user_id=?", certID, userID).Take(&cert).Error; e != nil {
+			return e
+		}
+		if cert.DeployStatus == "pending" || cert.DeployStatus == "deployed" {
+			return errors.New("证书正在核验或已部署，请勿重复提交")
+		}
+		var domain DomainRecord
+		if e := tx.Table(domainsTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND user_id=? AND deleted=0", cert.DomainID, userID).Take(&domain).Error; e != nil {
+			return e
+		}
+		if domain.ServiceNo == "" || domain.UpstreamStatus != "active" {
+			return errors.New("域名尚未完成服务接入")
+		}
+		scoped := &Service{db: tx, now: s.now}
+		var e error
+		task, e = scoped.enqueueTask(ctx, "cert_deploy", "certificate", certID)
+		if e != nil {
+			return e
+		}
+		return tx.Table(certsTable).Where("id=?", certID).Update("deploy_status", "pending").Error
+	})
+	return
 }
-
 func (s *Service) enqueueTask(ctx context.Context, kind, bizType string, bizID int64) (*DomainTaskRecord, error) {
 	var count int64
-	s.db.WithContext(ctx).Table(tasksTable).Where("task_type=? AND biz_type=? AND biz_id=? AND status IN ('pending','running')", kind, bizType, bizID).Count(&count)
+	if e := s.db.WithContext(ctx).Table(tasksTable).Where("task_type=? AND biz_type=? AND biz_id=? AND status IN ('pending','running')", kind, bizType, bizID).Count(&count).Error; e != nil {
+		return nil, e
+	}
 	if count > 0 {
 		return nil, errors.New("同类任务正在处理中")
 	}
@@ -137,7 +149,7 @@ func (s *Service) SubmitRefresh(ctx context.Context, userID int64, kind string, 
 			return nil, errors.New("单个任务中的 URL 必须属于同一个加速域名")
 		}
 		if domain.ServiceNo == "" || domain.UpstreamStatus != "active" {
-			return nil, errors.New("资源地址所属域名尚未完成上游接入")
+			return nil, errors.New("资源地址所属域名尚未完成接入")
 		}
 		domainID = domain.ID
 		parsed.Fragment = ""
@@ -162,10 +174,10 @@ func (s *Service) LogDownloads(ctx context.Context, userID, domainID int64, star
 		return nil, err
 	}
 	if domain.ServiceNo == "" {
-		return nil, errors.New("域名尚未完成上游接入")
+		return nil, errors.New("域名尚未完成接入")
 	}
-	if !end.After(start) || end.Sub(start) > 7*24*time.Hour {
-		return nil, errors.New("日志查询时间范围必须在 7 天以内")
+	if end.Before(start) || end.Sub(start) > 33*24*time.Hour {
+		return nil, errors.New("日志查询时间范围必须在33天以内")
 	}
 	_, account, err := s.accountSecret(ctx, domain.AccountID)
 	if err != nil {
@@ -194,8 +206,8 @@ func (s *Service) LogDownloads(ctx context.Context, userID, domainID int64, star
 
 func parseCloudTime(value any) time.Time {
 	raw := stringValue(value)
-	for _, layout := range []string{"2006-01-02T15:04-0700", "2006-01-02 15:04:05", time.RFC3339} {
-		if parsed, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+	for _, layout := range []string{"2006-01-02T15:04-0700", "2006-01-02 15:04:05", "2006-01-02", time.RFC3339} {
+		if parsed, err := time.ParseInLocation(layout, raw, time.FixedZone("UTC+8", 8*60*60)); err == nil {
 			return parsed
 		}
 	}
@@ -245,34 +257,41 @@ func (s *Service) writeAPILog(ctx context.Context, accountID int64, api string, 
 }
 
 func (s *Service) RunCertificateExpiry(ctx context.Context) error {
-	var settings struct{ Days int }
-	if err := s.db.WithContext(ctx).Table(settingsTable).Select("cert_expire_days days").Where("id=1").Scan(&settings).Error; err != nil {
+	enabled, err := s.Enabled(ctx)
+	if err != nil || !enabled {
+		return err
+	}
+	var settings struct {
+		Days     int             `gorm:"column:cert_expire_days"`
+		Channels json.RawMessage `gorm:"column:notify_channels"`
+		Cooldown int             `gorm:"column:overage_notify_interval"`
+	}
+	if err := s.db.WithContext(ctx).Table(settingsTable).Where("id=1").Take(&settings).Error; err != nil {
 		return err
 	}
 	if settings.Days <= 0 {
 		settings.Days = 30
 	}
-	var rows []CertificateRecord
-	if err := s.db.WithContext(ctx).Table(certsTable).Where("not_after BETWEEN ? AND ?", s.now(), s.now().AddDate(0, 0, settings.Days)).Find(&rows).Error; err != nil {
+	var channels map[string]bool
+	if err := json.Unmarshal(settings.Channels, &channels); err != nil {
 		return err
 	}
-	for _, cert := range rows {
-		event := fmt.Sprintf("cert_expiry:%d:%s", cert.ID, s.now().Format("2006-01-02"))
-		var count int64
-		s.db.WithContext(ctx).Table("system.cdnsell_notify_records").Where("user_id=? AND event=?", cert.UserID, event).Count(&count)
-		if count > 0 {
-			continue
-		}
-		content := fmt.Sprintf("CDN 证书 %s 将于 %s 到期，请及时更新。", cert.Name, cert.NotAfter.Format("2006-01-02"))
-		status, errorText := "sent", ""
-		if s.notifier != nil {
-			if err := s.notifier.NotifyCustomer(ctx, "cdnsell_cert_expiry", cert.UserID, strconvID(cert.ID), map[string]string{"name": cert.Name, "expireAt": cert.NotAfter.Format("2006-01-02")}); err != nil {
-				status = "failed"
-				errorText = err.Error()
-			}
-		}
-		_ = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_notify_records(id,user_id,event,channel,template,content,status,error,created_at) VALUES(?,?,?,'site','cdnsell_cert_expiry',?,?,?,?)", snowflake.GenID(), cert.UserID, event, content, status, errorText, s.now()).Error
+	var rows []CertificateRecord
+	if err := s.db.WithContext(ctx).Table(certsTable).Where("not_after BETWEEN ? AND ?", s.now(), s.now().AddDate(0, 0, settings.Days)).Order("user_id,not_after,id").Find(&rows).Error; err != nil {
+		return err
 	}
-	return nil
+	groups := map[int64][]CertificateRecord{}
+	for _, cert := range rows {
+		groups[cert.UserID] = append(groups[cert.UserID], cert)
+	}
+	var failures []error
+	for user, certs := range groups {
+		first := certs[0]
+		content := fmt.Sprintf("您有 %d 个 CDN 证书即将到期，最早到期日期 %s，请及时更新。", len(certs), first.NotAfter.Format("2006-01-02"))
+		if err := s.sendCDNWarning(ctx, user, "certificate_expiry", "cdnsell_cert_expiry", content, map[string]string{"name": fmt.Sprintf("%d 个证书", len(certs)), "expireAt": first.NotAfter.Format("2006-01-02")}, channels, settings.Cooldown); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 func strconvID(id int64) string { return fmt.Sprintf("%d", id) }

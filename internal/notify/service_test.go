@@ -348,3 +348,27 @@ func TestExpiryFailureIsNotResent(t *testing.T) {
 		t.Fatal("manual trigger resent uncertain notification")
 	}
 }
+
+func TestExplicitCustomerNotificationChannel(t *testing.T) {
+	repo := &fakeNotifyRepository{contact: Contact{Email: "test@example.com", Phone: "13900001050"}, templates: map[string]*NotificationTemplate{"cdn": {Scene: "cdn", Enabled: true, Channel: ChannelBoth, Title: "CDN", Content: "CDN"}}}
+	mail := &fakeMailChannel{}
+	manager := testManager(repo, mail)
+	if err := manager.NotifyCustomerChannel(context.Background(), "cdn", 1, "once", ChannelEmail, nil); err != nil {
+		t.Fatal(err)
+	}
+	if mail.calls != 1 || len(repo.logs) != 1 || repo.logs[0].Channel != ChannelEmail {
+		t.Fatal("unexpected channels", repo.logs)
+	}
+	repo.templates["cdn"].Enabled = false
+	if err := manager.NotifyCustomerChannel(context.Background(), "cdn", 1, "disabled", ChannelEmail, nil); err == nil {
+		t.Fatal("disabled template treated as sent")
+	}
+	repo.templates["cdn"].Enabled = true
+	mail.err = errors.New("isolated failure")
+	if err := manager.NotifyCustomerChannel(context.Background(), "cdn", 1, "failed", ChannelEmail, nil); err == nil {
+		t.Fatal("delivery failure hidden")
+	}
+	if mail.calls != 2 {
+		t.Fatal("unexpected retries", mail.calls)
+	}
+}

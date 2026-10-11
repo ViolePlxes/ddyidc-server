@@ -97,7 +97,7 @@ func (s *Service) PayBalance(ctx context.Context, customerID, orderID int64) (*O
 			}
 		case "cdnsell":
 			var linked int64
-			if err := tx.Table("system.cdnsell_orders").Where("user_id=? AND ref_order_id=? AND status='pending' AND amount=?", customerID, orderID, locked.PayAmount).Count(&linked).Error; err != nil {
+			if err := tx.Table("system.cdnsell_orders").Where("user_id=? AND ref_order_id=? AND status='pending' AND amount=?", customerID, orderID, balance.Money(locked.TotalAmount).String()).Count(&linked).Error; err != nil {
 				return err
 			}
 			if linked != 1 {

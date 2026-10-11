@@ -62,9 +62,9 @@ def main():
                 continue
             if name in ("system.schema_migrations", "billing.balance_guard_audit"):
                 privileges = "SELECT"
-            elif name in ("marketing.promo_coupon_events", "marketing.promo_coupon_reconciliations", "billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations", "system.id_registry", "system.todo_audits", "system.todo_event_resolutions", "payment.todo_evidence_files", "payment.todo_withdrawal_accounts", "payment.manual_remittances", "payment.todo_refund_calculations", "payment.todo_refund_requests"):
+            elif name in ("marketing.promo_coupon_events", "marketing.promo_coupon_reconciliations", "billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations", "system.id_registry", "system.todo_audits", "system.todo_event_resolutions", "payment.todo_evidence_files", "payment.todo_withdrawal_accounts", "payment.manual_remittances", "payment.todo_refund_calculations", "payment.todo_refund_requests", "system.cdnsell_admin_audits"):
                 privileges = "SELECT,INSERT"
-            elif name in ("payment.offline_transfers", "payment.balance_withdrawals"):
+            elif name in ("payment.offline_transfers", "payment.balance_withdrawals", "system.cdnsell_usage_windows", "system.cdnsell_usage_allocations", "system.cdnsell_usage_cursors"):
                 privileges = "SELECT,INSERT,UPDATE"
             elif name == "billing.accounts":
                 privileges = "SELECT,INSERT,UPDATE(balance,frozen_balance,total_recharge,total_consume,total_refund,total_withdraw,version,updated_at)"

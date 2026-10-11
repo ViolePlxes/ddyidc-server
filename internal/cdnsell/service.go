@@ -133,6 +133,10 @@ func (s *Service) SaveAccount(ctx context.Context, v *UpstreamAccount) error {
 		}
 		data["sk_encrypted"] = enc
 	}
+	if v.AccessKey != "" || v.SecretKey != "" {
+		data["last_test_time"] = nil
+		data["last_test_result"] = nil
+	}
 	if v.ID != 0 {
 		var n int64
 		s.db.WithContext(ctx).Table(accountsTable).Where("id=?", v.ID).Count(&n)
@@ -144,6 +148,15 @@ func (s *Service) SaveAccount(ctx context.Context, v *UpstreamAccount) error {
 	return s.db.WithContext(ctx).Table(accountsTable).Create(data).Error
 }
 func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
+	for _, table := range []string{packagesTable, domainsTable} {
+		var count int64
+		if e := s.db.WithContext(ctx).Table(table).Where("account_id=?", id).Count(&count).Error; e != nil {
+			return e
+		}
+		if count > 0 {
+			return errors.New("账号仍有关联资源，不能删除，请保留账号记录")
+		}
+	}
 	return s.db.WithContext(ctx).Table(accountsTable).Where("id=?", id).Delete(nil).Error
 }
 func (s *Service) accountSecret(ctx context.Context, id int64) (UpstreamAccount, provider.Account, error) {
@@ -173,6 +186,7 @@ func (s *Service) TestAccount(ctx context.Context, id int64) error {
 	}
 	e = s.cloud.TestConnection(ctx, account)
 	success := e == nil
+	_ = s.updateCapability(ctx, "TestConnection", success, "账号真实连接测试")
 	result, _ := json.Marshal(map[string]any{"success": success, "message": map[bool]string{true: "连接成功", false: "连接失败"}[success]})
 	now := s.now()
 	_ = s.db.WithContext(ctx).Table(accountsTable).Where("id=?", id).Updates(map[string]any{"last_test_time": now, "last_test_result": result}).Error
@@ -190,14 +204,21 @@ func (s *Service) Packages(ctx context.Context) ([]UpstreamPackage, error) {
 	return rows, e
 }
 func (s *Service) SavePackage(ctx context.Context, v *UpstreamPackage) error {
-	if v.Name == "" || v.CapacityBytes <= 0 || !v.ExpireTime.After(v.EffectiveTime) {
+	if v.Name == "" || v.AccountID <= 0 || v.CapacityBytes <= 0 || v.UsedBytes < 0 || v.UsedBytes > v.CapacityBytes || (v.Status != "active" && v.Status != "expired") || !v.ExpireTime.After(v.EffectiveTime) {
 		return errors.New("资源包参数无效")
+	}
+	var n int64
+	if e := s.db.WithContext(ctx).Table(accountsTable).Where("id=?", v.AccountID).Count(&n).Error; e != nil {
+		return e
+	}
+	if n != 1 {
+		return ErrNotFound
 	}
 	if v.ID == 0 {
 		v.ID = snowflake.GenID()
 		return s.db.WithContext(ctx).Table(packagesTable).Create(v).Error
 	}
-	return s.db.WithContext(ctx).Table(packagesTable).Where("id=?", v.ID).Updates(v).Error
+	return s.db.WithContext(ctx).Table(packagesTable).Where("id=?", v.ID).Updates(map[string]any{"account_id": v.AccountID, "name": v.Name, "capacity_bytes": v.CapacityBytes, "used_bytes": v.UsedBytes, "effective_time": v.EffectiveTime, "expire_time": v.ExpireTime, "status": v.Status, "remark": v.Remark}).Error
 }
 func (s *Service) DeletePackage(ctx context.Context, id int64) error {
 	return s.db.WithContext(ctx).Table(packagesTable).Where("id=?", id).Delete(nil).Error
@@ -212,34 +233,74 @@ func (s *Service) Products(ctx context.Context, admin bool) ([]Product, error) {
 	return rows, e
 }
 func (s *Service) SaveProduct(ctx context.Context, v *Product) error {
-	if v.Name == "" || v.CapacityBytes <= 0 || v.ValidDays <= 0 || v.Price < 0 || v.MinQty < 1 || v.MaxQty < v.MinQty {
+	if v.Name == "" || v.CapacityBytes <= 0 || v.ValidDays <= 0 || v.ValidDays > 3650 || v.Price <= 0 || v.Price > 5000000 || v.MaxQty > 1000 || v.MinQty < 1 || v.MaxQty < v.MinQty {
 		return errors.New("产品参数无效")
 	}
 	if len(v.TierPrices) == 0 {
 		v.TierPrices = json.RawMessage(`{}`)
 	}
-	if !json.Valid(v.TierPrices) {
+	var tiers map[string]Yuan
+	if json.Unmarshal(v.TierPrices, &tiers) != nil {
 		return errors.New("会员价格 JSON 无效")
 	}
+	for key, price := range tiers {
+		if _, err := strconv.ParseUint(key, 10, 32); err != nil || price <= 0 {
+			return errors.New("会员价格等级或金额无效")
+		}
+	}
+	normalized, _ := json.Marshal(tiers)
+	v.TierPrices = normalized
 	if v.ID == 0 {
 		v.ID = snowflake.GenID()
 		return s.db.WithContext(ctx).Table(productsTable).Create(v).Error
 	}
-	return s.db.WithContext(ctx).Table(productsTable).Where("id=?", v.ID).Updates(v).Error
+	updated := s.db.WithContext(ctx).Table(productsTable).Where("id=?", v.ID).Updates(map[string]any{"name": v.Name, "capacity_bytes": v.CapacityBytes, "valid_days": v.ValidDays, "price": v.Price, "tier_prices": v.TierPrices, "min_qty": v.MinQty, "max_qty": v.MaxQty, "description": v.Description, "is_hot": v.IsHot, "status": v.Status, "sort": v.Sort})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected == 0 {
+		var count int64
+		if err := s.db.WithContext(ctx).Table(productsTable).Where("id=?", v.ID).Count(&count).Error; err != nil {
+			return err
+		}
+		if count != 1 {
+			return ErrNotFound
+		}
+	}
+	return nil
 }
 func (s *Service) DeleteProduct(ctx context.Context, id int64) error {
+	for _, table := range []string{ordersTable, batchesTable} {
+		var count int64
+		if e := s.db.WithContext(ctx).Table(table).Where("product_id=?", id).Count(&count).Error; e != nil {
+			return e
+		}
+		if count > 0 {
+			return errors.New("商品已有订单或流量批次，请下架并保留记录")
+		}
+	}
 	return s.db.WithContext(ctx).Table(productsTable).Where("id=?", id).Delete(nil).Error
 }
 func priceFor(p Product, level int) int64 {
-	var tiers map[string]int64
+	var tiers map[string]Yuan
 	if json.Unmarshal(p.TierPrices, &tiers) == nil {
 		if v, ok := tiers[strconv.Itoa(level)]; ok {
-			return v
+			return int64(v)
 		}
 	}
-	return p.Price
+	return int64(p.Price)
 }
 func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int) (*PurchaseResult, error) {
+	enabled, err := s.Enabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, errors.New("CDN服务暂未开放")
+	}
+	if qty <= 0 {
+		return nil, errors.New("购买数量必须大于零")
+	}
 	var p Product
 	if e := s.db.WithContext(ctx).Table(productsTable).Where("id=? AND status=1", productID).Take(&p).Error; e != nil {
 		return nil, ErrNotFound
@@ -255,11 +316,14 @@ func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int
 		return nil, e
 	}
 	unit := priceFor(p, customer.Level)
+	if unit <= 0 || unit > 5000000/int64(qty) || p.CapacityBytes <= 0 || p.CapacityBytes > 9223372036854775807/int64(qty) {
+		return nil, errors.New("产品价格或流量总额超出范围")
+	}
 	amount := unit * int64(qty)
 	now := s.now()
 	mainID, bizID := snowflake.GenID(), snowflake.GenID()
 	no := fmt.Sprintf("CDN%d", bizID)
-	snap, _ := json.Marshal(map[string]any{"productName": p.Name, "capacityBytes": p.CapacityBytes, "unitPrice": unit, "customerLevel": customer.Level, "quantity": qty, "validDays": p.ValidDays})
+	snap, _ := json.Marshal(map[string]any{"productName": p.Name, "capacityBytes": p.CapacityBytes, "unitPrice": Yuan(unit), "customerLevel": customer.Level, "quantity": qty, "validDays": p.ValidDays})
 	e := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		order := orderdom.Order{ID: mainID, OrderNo: no, TenantID: customer.TenantID, CustomerID: userID, TotalAmount: amount, PayAmount: amount, Status: orderdom.OrderStatusPending, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&order).Error; e != nil {
@@ -269,12 +333,12 @@ func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int
 		if e := tx.Create(&item).Error; e != nil {
 			return e
 		}
-		return tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status,created_at) VALUES(?,?,?,'traffic_pack',?,?,?,?,?,'pending',?)", bizID, no, userID, mainID, p.ID, p.CapacityBytes*int64(qty), amount, string(snap), now).Error
+		return tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status,created_at) VALUES(?,?,?,'traffic_pack',?,?,?,?,?,'pending',?)", bizID, no, userID, mainID, p.ID, p.CapacityBytes*int64(qty), Yuan(amount), string(snap), now).Error
 	})
 	if e != nil {
 		return nil, e
 	}
-	return &PurchaseResult{OrderID: mainID, OrderNo: no, Amount: amount}, nil
+	return &PurchaseResult{OrderID: mainID, OrderNo: no, Amount: Yuan(amount)}, nil
 }
 
 // ProvisionPlatformOrder is the idempotent bridge called by the existing payment dispatcher.
@@ -300,6 +364,9 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 		}
 		var row struct {
 			ID, UserID, ProductID, TrafficBytes int64
+			BillID                              *int64
+			OrderType                           string
+			Amount                              Yuan
 			Status                              string
 			BatchID                             *int64
 			Snapshot                            json.RawMessage
@@ -314,6 +381,18 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 		matched = true
 		if row.UserID != userID {
 			return errors.New("CDN 订单归属不匹配")
+		}
+		if row.Amount <= 0 || int64(row.Amount) != platform.TotalAmount {
+			return errors.New("CDN 订单金额与平台订单不一致，请核对")
+		}
+		if row.OrderType == "overage" {
+			if row.Status != "pending" && row.Status != "paid" {
+				return errors.New("超额订单已取消或状态无效")
+			}
+			if row.BillID == nil {
+				return errors.New("超额订单缺少账单关联")
+			}
+			return s.provisionOverage(tx, userID, mainOrderID, row.ID, *row.BillID, row.Amount, row.Status == "paid", platform)
 		}
 		if row.Status == "paid" && row.BatchID != nil {
 			if platform.Status == orderdom.OrderStatusCompleted {
@@ -361,12 +440,28 @@ func (s *Service) ProvisionPlatformOrder(ctx context.Context, userID, mainOrderI
 
 func (s *Service) Overview(ctx context.Context, userID int64) (*Overview, error) {
 	var v Overview
-	s.db.WithContext(ctx).Table(batchesTable).Where("user_id=? AND status='running' AND expire_time>?", userID, s.now()).Select("COALESCE(SUM(remaining_bytes),0) remaining_bytes,COALESCE(SUM(consumed_bytes),0) used_bytes,COUNT(*) active_batches,MIN(expire_time) expiring_at").Scan(&v)
-	s.db.WithContext(ctx).Table("system.cdnsell_domains").Where("user_id=? AND enabled=1 AND deleted=0", userID).Count(&v.ActiveDomains)
-	day := s.now().Truncate(24 * time.Hour)
-	s.db.WithContext(ctx).Table(meterTable).Where("user_id=? AND status='confirmed' AND window_start>=?", userID, day).Select("COALESCE(SUM(confirmed_bytes),0)").Scan(&v.TodayBytes)
+	db := s.db.WithContext(ctx)
+	if e := db.Table(batchesTable).Where("user_id=? AND status='running' AND expire_time>?", userID, s.now()).Select("COALESCE(SUM(remaining_bytes),0) remaining_bytes,COUNT(*) active_batches,MIN(expire_time) expiring_at").Scan(&v).Error; e != nil {
+		return nil, e
+	}
+	if e := db.Table(batchesTable).Where("user_id=?", userID).Select("COALESCE(SUM(consumed_bytes),0)").Scan(&v.UsedBytes).Error; e != nil {
+		return nil, e
+	}
+	if e := db.Table("system.cdnsell_domains").Where("user_id=? AND enabled=1 AND deleted=0", userID).Count(&v.ActiveDomains).Error; e != nil {
+		return nil, e
+	}
+	now := s.now().In(time.FixedZone("Asia/Shanghai", 8*3600))
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	if e := db.Table(meterTable).Where("user_id=? AND status='confirmed' AND window_start>=?", userID, day).Select("COALESCE(SUM(confirmed_bytes),0)").Scan(&v.TodayBytes).Error; e != nil {
+		return nil, e
+	}
+	if e := db.Table(usageWindowsTable).Where("user_id=?", userID).Select("COALESCE(SUM(overage_bytes),0)").Scan(&v.OverageBytes).Error; e != nil {
+		return nil, e
+	}
 	trend := make([]TrendPoint, 0)
-	s.db.WithContext(ctx).Table(meterTable).Where("user_id=? AND status='confirmed'", userID).Select("window_start time,SUM(confirmed_bytes) bytes").Group("window_start").Order("window_start DESC").Limit(288).Scan(&trend)
+	if e := db.Table(meterTable).Where("user_id=? AND status='confirmed'", userID).Select("window_start time,SUM(confirmed_bytes) bytes").Group("window_start").Order("window_start DESC").Limit(288).Scan(&trend).Error; e != nil {
+		return nil, e
+	}
 	sort.Slice(trend, func(i, j int) bool { return trend[i].Time.Before(trend[j].Time) })
 	v.Trend = trend
 	return &v, nil
@@ -432,7 +527,16 @@ func (s *Service) AdjustTraffic(ctx context.Context, userID, bytes int64, days i
 	})
 }
 func (s *Service) SetCustomerService(ctx context.Context, userID int64, enabled bool) error {
-	return s.db.WithContext(ctx).Table("system.cdnsell_domains").Where("user_id=? AND deleted=0", userID).Update("enabled", enabled).Error
+	var domains []DomainRecord
+	if err := s.db.WithContext(ctx).Table(domainsTable).Where("user_id=? AND deleted=0 AND service_no<>''", userID).Find(&domains).Error; err != nil {
+		return err
+	}
+	for _, d := range domains {
+		if _, err := s.SetDomainState(ctx, userID, d.ID, enabled); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func allocateFIFO(batches []Batch, bytes int64) (int64, []Batch) {
@@ -460,149 +564,125 @@ func allocateFIFO(batches []Batch, bytes int64) (int64, []Batch) {
 	}
 	return left, batches
 }
-func (s *Service) ApplyUsage(ctx context.Context, userID, domainID int64, p provider.UsagePoint) error {
-	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var old MeterRecord
-		e := tx.Table(meterTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=? AND domain_id=? AND window_start=? AND status='confirmed'", userID, domainID, p.Start).Order("id DESC").Take(&old).Error
-		delta := p.Bytes
-		if e == nil {
-			if old.ConfirmedBytes == p.Bytes {
-				return nil
-			}
-			delta = p.Bytes - old.ConfirmedBytes
-			if e := tx.Table(meterTable).Where("id=?", old.ID).Updates(map[string]any{"status": "revised", "revised_bytes": p.Bytes}).Error; e != nil {
-				return e
-			}
-		} else if !errors.Is(e, gorm.ErrRecordNotFound) {
-			return e
-		}
-		if e := tx.Exec("INSERT INTO system.cdnsell_meter_records(id,user_id,domain_id,window_start,window_end,confirmed_bytes,revised_bytes,status,source) VALUES(?,?,?,?,?,?,0,'confirmed','usage_sync')", snowflake.GenID(), userID, domainID, p.Start, p.End, p.Bytes).Error; e != nil {
-			return e
-		}
-		if delta <= 0 {
-			return nil
-		}
-		var batches []Batch
-		if e := tx.Table(batchesTable).Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id=? AND status='running' AND effective_time<=? AND expire_time>?", userID, p.End, p.Start).Order("expire_time,id").Find(&batches).Error; e != nil {
-			return e
-		}
-		_, updated := allocateFIFO(batches, delta)
-		for _, b := range updated {
-			if e := tx.Table(batchesTable).Where("id=?", b.ID).Updates(map[string]any{"remaining_bytes": b.RemainingBytes, "consumed_bytes": b.ConsumedBytes, "status": b.Status}).Error; e != nil {
-				return e
-			}
-		}
-		return nil
-	})
-	if err == nil {
-		s.warnCustomer(ctx, userID)
-	}
-	return err
-}
 
 func (s *Service) warnCustomer(ctx context.Context, userID int64) {
 	var totals struct{ Original, Remaining int64 }
-	if s.db.WithContext(ctx).Table(batchesTable).Where("user_id=? AND status='running'", userID).Select("COALESCE(SUM(original_bytes),0) original,COALESCE(SUM(remaining_bytes),0) remaining").Scan(&totals).Error != nil || totals.Original <= 0 {
+	now := s.now()
+	if s.db.WithContext(ctx).Table(batchesTable).Where("user_id=? AND status IN ('running','exhausted') AND effective_time<=? AND expire_time>?", userID, now, now).Select("COALESCE(SUM(original_bytes),0) original,COALESCE(SUM(remaining_bytes),0) remaining").Scan(&totals).Error != nil || totals.Original <= 0 {
 		return
 	}
 	var settings struct {
+		Enabled    bool
 		Thresholds json.RawMessage `gorm:"column:customer_warn_thresholds"`
 		Channels   json.RawMessage `gorm:"column:notify_channels"`
 		Cooldown   int             `gorm:"column:overage_notify_interval"`
 	}
-	if s.db.WithContext(ctx).Table(settingsTable).Where("id=1").Take(&settings).Error != nil {
+	if s.db.WithContext(ctx).Table(settingsTable).Where("id=1").Take(&settings).Error != nil || !settings.Enabled {
 		return
 	}
 	var thresholds []struct {
 		Value float64 `json:"value"`
 	}
-	_ = json.Unmarshal(settings.Thresholds, &thresholds)
+	if json.Unmarshal(settings.Thresholds, &thresholds) != nil {
+		return
+	}
 	percent := float64(totals.Remaining) * 100 / float64(totals.Original)
-	threshold := -1.0
+	matched := false
 	for _, v := range thresholds {
-		if percent <= v.Value && (threshold < 0 || v.Value < threshold) {
-			threshold = v.Value
+		if v.Value >= 0 && v.Value <= 100 && percent <= v.Value {
+			matched = true
 		}
 	}
-	if threshold < 0 {
+	if !matched {
 		return
-	}
-	event := fmt.Sprintf("customer_traffic_%.0f", threshold)
-	cool := settings.Cooldown
-	if cool <= 0 {
-		cool = 86400
-	}
-	var count int64
-	s.db.WithContext(ctx).Table("system.cdnsell_notify_records").Where("user_id=? AND event=? AND created_at>?", userID, event, s.now().Add(-time.Duration(cool)*time.Second)).Count(&count)
-	if count > 0 {
-		return
-	}
-	content := fmt.Sprintf("CDN 可用流量仅剩 %.2f%%（%s 字节），请及时购买流量包。", percent, strconv.FormatInt(totals.Remaining, 10))
-	now := s.now()
-	if s.db.WithContext(ctx).Exec("INSERT INTO common.notifications(id,customer_id,channel,template_code,params,subject,content,status,sent_at,created_at,updated_at) VALUES(?,?,'inapp','cdnsell_usage',JSON_OBJECT('percent',?),'CDN 流量预警',?,2,?,?,?)", snowflake.GenID(), userID, percent, content, now, now, now).Error == nil {
-		_ = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_notify_records(id,user_id,event,channel,template,content,status,created_at) VALUES(?,?,?,'site','cdnsell_usage',?,'sent',?)", snowflake.GenID(), userID, event, content, now).Error
 	}
 	var channels map[string]bool
-	_ = json.Unmarshal(settings.Channels, &channels)
-	if s.notifier != nil && (channels["email"] || channels["sms"]) {
-		notifyErr := s.notifier.NotifyCustomer(ctx, "cdnsell_usage", userID, strconv.FormatInt(snowflake.GenID(), 10), map[string]string{"remaining": strconv.FormatInt(totals.Remaining, 10), "percent": fmt.Sprintf("%.2f", percent)})
-		status, errText := "sent", ""
-		if notifyErr != nil {
-			status = "failed"
-			errText = notifyErr.Error()
-		}
-		for _, channel := range []string{"email", "sms"} {
-			if !channels[channel] {
-				continue
-			}
-			_ = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_notify_records(id,user_id,event,channel,template,content,status,error,created_at) VALUES(?,?,?,?, 'cdnsell_usage',?,?,?,?)", snowflake.GenID(), userID, event, channel, content, status, errText, now).Error
-		}
+	if json.Unmarshal(settings.Channels, &channels) != nil {
+		return
 	}
+	content := fmt.Sprintf("CDN 可用流量仅剩 %.2f%%（%d 字节），请及时购买流量包。", percent, totals.Remaining)
+	_ = s.sendCDNWarning(ctx, userID, "customer_traffic", "cdnsell_usage", content, map[string]string{"remaining": strconv.FormatInt(totals.Remaining, 10), "percent": fmt.Sprintf("%.2f", percent)}, channels, settings.Cooldown)
 }
 func (s *Service) RunExpiry(ctx context.Context) error {
+	enabled, err := s.Enabled(ctx)
+	if err != nil || !enabled {
+		return err
+	}
 	return s.db.WithContext(ctx).Table(batchesTable).Where("status='running' AND expire_time<=?", s.now()).Update("status", "expired").Error
 }
 func (s *Service) RunUsageSync(ctx context.Context) error {
+	enabled, err := s.Enabled(ctx)
+	if err != nil || !enabled {
+		return err
+	}
 	var domains []struct {
 		ID, UserID, AccountID   int64
 		ServiceNo, BusinessType string
 	}
-	if e := s.db.WithContext(ctx).Table("system.cdnsell_domains").Where("enabled=1 AND deleted=0 AND upstream_status='active' AND service_no<>''").Find(&domains).Error; e != nil {
-		return e
+	if err = s.db.WithContext(ctx).Table(domainsTable).Where("deleted=0 AND service_no<>''").Find(&domains).Error; err != nil {
+		return err
 	}
-	end := s.now().Truncate(5 * time.Minute)
-	start := end.Add(-10 * time.Minute)
-	for i, d := range domains {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(2 * time.Second):
-			}
+	// Leave a 15-minute settling delay, then revisit the last six hours for revisions.
+	end := s.now().UTC().Add(-15 * time.Minute).Truncate(5 * time.Minute)
+	var failures []error
+	for _, d := range domains {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		start := end.Add(-6 * time.Hour)
+		var cursor struct{ ConfirmedUntil time.Time }
+		e := s.db.WithContext(ctx).Table("system.cdnsell_usage_cursors").Where("domain_id=?", d.ID).Take(&cursor).Error
+		if e == nil && cursor.ConfirmedUntil.Before(start) {
+			start = cursor.ConfirmedUntil
+		}
+		if e != nil && !errors.Is(e, gorm.ErrRecordNotFound) {
+			failures = append(failures, e)
+			continue
+		}
+		// Bounded catch-up; cursor advances only after every returned point commits.
+		queryEnd := end
+		if queryEnd.Sub(start) > 24*time.Hour {
+			queryEnd = start.Add(24 * time.Hour)
 		}
 		_, account, e := s.accountSecret(ctx, d.AccountID)
 		if e != nil {
+			failures = append(failures, fmt.Errorf("CDN域名%d账号不可用", d.ID))
 			continue
 		}
-		calledAt := time.Now()
 		if e = s.waitCloudGap(ctx); e != nil {
 			return e
 		}
-		points, e := s.cloud.GetUsage(ctx, account, provider.Domain{ServiceNo: d.ServiceNo, BusinessType: d.BusinessType}, start, end)
-		errText := ""
+		points, e := s.cloud.GetUsage(ctx, account, provider.Domain{ServiceNo: d.ServiceNo, BusinessType: d.BusinessType}, start, queryEnd)
 		if e != nil {
-			errText = e.Error()
-		}
-		_ = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_api_logs(id,account_id,api_name,request,response,status_code,cost_ms,success,error) VALUES(?,?,'GetUsage',JSON_OBJECT('serviceNo',?,'start',?,'end',?),JSON_OBJECT('points',?),?,?,?,?)", snowflake.GenID(), d.AccountID, d.ServiceNo, start, end, len(points), map[bool]int{true: 200, false: 0}[e == nil], time.Since(calledAt).Milliseconds(), e == nil, errText).Error
-		if e != nil {
+			failures = append(failures, fmt.Errorf("CDN域名%d用量查询失败: %w", d.ID, e))
 			continue
 		}
-		for _, p := range points {
-			_ = s.ApplyUsage(ctx, d.UserID, d.ID, p)
+		if e = validateUsageSeries(points, start, queryEnd); e != nil {
+			failures = append(failures, fmt.Errorf("CDN域名%d用量不完整: %w", d.ID, e))
+			continue
+		}
+		complete := true
+		for _, point := range points {
+			if point.Start.Before(start) || point.End.After(queryEnd) {
+				complete = false
+				failures = append(failures, errors.New("供应商用量窗口越界"))
+				break
+			}
+			if e = s.ApplyUsage(ctx, d.UserID, d.ID, point); e != nil {
+				complete = false
+				failures = append(failures, e)
+				break
+			}
+		}
+		if complete {
+			if e = s.db.WithContext(ctx).Exec("INSERT INTO system.cdnsell_usage_cursors(domain_id,confirmed_until) VALUES(?,?) ON DUPLICATE KEY UPDATE confirmed_until=GREATEST(confirmed_until,VALUES(confirmed_until))", d.ID, queryEnd).Error; e != nil {
+				failures = append(failures, e)
+			}
 		}
 	}
-	return nil
+	return errors.Join(failures...)
 }
+
 func (s *Service) Start(ctx context.Context) {
 	s.startP2(ctx)
 	go func() {
@@ -615,8 +695,19 @@ func (s *Service) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-usage.C:
-				distsync.Task(ctx, "cdn_usage_sync", time.Minute, func(ctx context.Context) error { s.runTask(ctx, "usage_sync", s.RunUsageSync); return nil })
+				if enabled, err := s.Enabled(ctx); err != nil || !enabled {
+					continue
+				}
+				distsync.Task(ctx, "cdn_usage_sync", time.Minute, func(ctx context.Context) error {
+					s.runTask(ctx, "usage_sync", s.RunUsageSync)
+					s.runTask(ctx, "service_policy", s.RunServicePolicy)
+					s.runTask(ctx, "overage_billing", s.RunOverageBilling)
+					return nil
+				})
 			case <-expiry.C:
+				if enabled, err := s.Enabled(ctx); err != nil || !enabled {
+					continue
+				}
 				distsync.Task(ctx, "cdn_batch_expiry", time.Minute, func(ctx context.Context) error { s.runTask(ctx, "batch_expiry", s.RunExpiry); return nil })
 			}
 		}
@@ -634,4 +725,24 @@ func (s *Service) runTask(ctx context.Context, kind string, fn func(context.Cont
 		return
 	}
 	_ = s.db.WithContext(ctx).Table("system.cdnsell_tasks").Where("id=?", id).Updates(map[string]any{"status": "failed", "error": err.Error(), "next_run_at": s.now().Add(time.Minute)}).Error
+}
+
+// Do not advance the billing cursor over a missing, duplicate, or malformed
+// window. The provider must explicitly confirm zero traffic as well.
+func validateUsageSeries(points []provider.UsagePoint, start, end time.Time) error {
+	if !start.Equal(start.Truncate(5*time.Minute)) || !end.Equal(end.Truncate(5*time.Minute)) || !end.After(start) {
+		return errors.New("查询窗口无效")
+	}
+	if len(points) != int(end.Sub(start)/(5*time.Minute)) {
+		return errors.New("计量窗口缺失或重复")
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Start.Before(points[j].Start) })
+	expected := start
+	for _, p := range points {
+		if p.Bytes < 0 || !p.Start.Equal(expected) || !p.End.Equal(expected.Add(5*time.Minute)) {
+			return errors.New("计量窗口不连续或值无效")
+		}
+		expected = p.End
+	}
+	return nil
 }
