@@ -44,10 +44,11 @@ type AlipayConfig struct {
 }
 
 type Config struct {
-	Wechat        WechatConfig
-	Alipay        AlipayConfig
-	ExpireMinutes int
-	MockEnabled   bool
+	Wechat          WechatConfig
+	Alipay          AlipayConfig
+	ExpireMinutes   int
+	EnforceSwitches bool
+	MockEnabled     bool
 }
 
 type alipaySecretFile struct {
@@ -67,6 +68,15 @@ func LoadConfig(ctx context.Context, database *gorm.DB, secretPaths ...string) (
 	return LoadConfigWithKey(ctx, database, nil, secretPaths...)
 }
 func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secretPaths ...string) (Config, error) {
+	if saved, found, e := readStoredSettings(ctx, database, key); e != nil {
+		return Config{}, e
+	} else if found {
+		saved.EnforceSwitches = true
+		if e := validateSettings(ctx, saved); e != nil {
+			return Config{}, e
+		}
+		return saved, nil
+	}
 	var rows []configRow
 	if err := database.WithContext(ctx).Table("system.system_configs").Where("`key` LIKE ?", "payment.%").Find(&rows).Error; err != nil {
 		return Config{}, err
@@ -105,7 +115,7 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 			BaseURL:    strings.TrimRight(values["payment.wechat.base_url"], "/"),
 		},
 		Alipay: AlipayConfig{
-			Enabled:         secretFound,
+			Enabled:         secretFound && configBool(values["payment.alipay.enabled"]),
 			AppID:           secret.AppID,
 			AppPrivateKey:   secret.AppPrivateKey,
 			AlipayPublicKey: secret.AlipayPublicKey,
@@ -115,8 +125,9 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 			ReturnURL:       values["payment.alipay.return_url"],
 			QuitURL:         values["payment.alipay.quit_url"],
 		},
-		ExpireMinutes: expireMinutes,
-		MockEnabled:   configBool(values["payment.mock_enabled"]),
+		EnforceSwitches: true,
+		ExpireMinutes:   expireMinutes,
+		MockEnabled:     configBool(values["payment.mock_enabled"]),
 	}
 	if cfg.Wechat.BaseURL != "" {
 		cfg.Wechat.NotifyURL = cfg.Wechat.BaseURL + "/api/v1/payment/notify/wechat"
@@ -128,6 +139,11 @@ func LoadConfigWithKey(ctx context.Context, database *gorm.DB, key []byte, secre
 		}
 		if err := validateWechatConfig(cfg.Wechat); err != nil {
 			return Config{}, err
+		}
+	}
+	if cfg.Wechat.Enabled {
+		if e := validateWechatConfig(cfg.Wechat); e != nil {
+			return Config{}, e
 		}
 	}
 	if cfg.Alipay.Enabled {

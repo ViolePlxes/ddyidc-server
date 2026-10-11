@@ -39,3 +39,5 @@ go test -race -v ./internal/instance/service -run '^TestWebhookIsolationMySQL$' 
 go test -race -v ./internal/shared/workgate -run '^TestTwoPoolsDrainBeforePauseMySQL$' -count=1
 go test -race -v ./internal/shared/filebarrier -run '^TestSnapshotDefersDeletionMySQL$' -count=1
 go test -race -v ./internal/backup -run '^(TestRuntimeAccountFenceMySQL|TestRestoreReleaseAtomicMySQL)$' -count=1
+
+go test -race -v ./internal/payment/service -run "^TestAdminPaymentSettingsMySQL$" -count=1

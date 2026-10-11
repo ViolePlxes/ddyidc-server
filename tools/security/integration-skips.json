@@ -537,5 +537,9 @@
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/payment/service/TestAdminPaymentSettingsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run in test_finance_recovery.sh with disposable FOUNDATION_MYSQL_SOCKET; encrypted persistence, secret redaction, revision conflict, validation rollback and audit. A normal-suite skip is not a pass."
   }
 }

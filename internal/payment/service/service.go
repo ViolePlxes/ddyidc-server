@@ -141,14 +141,14 @@ func BuildChannels(ctx context.Context, config Config) (map[string]Channel, erro
 		return nil, errors.New("支付 Mock 已被生产构建禁用")
 	}
 	channels := make(map[string]Channel, 2)
-	if config.Wechat.Enabled {
+	if config.Wechat.Enabled || (config.EnforceSwitches && config.Wechat.PrivateKey != "" && config.Wechat.AppID != "") {
 		channel, err := newDeferredWechatChannel(config.Wechat)
 		if err != nil {
 			return nil, fmt.Errorf("初始化微信支付: %w", err)
 		}
 		channels["wechat"] = channel
 	}
-	if config.Alipay.Enabled {
+	if config.Alipay.Enabled || (config.EnforceSwitches && config.Alipay.AppPrivateKey != "" && config.Alipay.AppID != "") {
 		channel, err := newAlipayChannel(config.Alipay)
 		if err != nil {
 			return nil, fmt.Errorf("初始化支付宝: %w", err)
@@ -377,6 +377,9 @@ func (s *Service) channel(name string) (string, Channel, error) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name != "wechat" && name != "alipay" {
 		return "", nil, &BusinessError{Code: 40003, Message: "不支持的支付方式"}
+	}
+	if s.config.EnforceSwitches && ((name == "alipay" && !s.config.Alipay.Enabled) || (name == "wechat" && !s.config.Wechat.Enabled)) {
+		return "", nil, &BusinessError{Code: 40003, Message: "该支付通道已停用"}
 	}
 	channel := s.channels[name]
 	if channel == nil {

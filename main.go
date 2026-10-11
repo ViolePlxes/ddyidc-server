@@ -609,6 +609,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	admintodo.RegisterProductWorkflows(server, db.G, jwt, paymentSvc)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
+	paymenthandler.RegisterSettings(server, db.G, jwt, paymentservice.NewSettingsManager(db.G, snapshotKey, paymentConfig, alipaySecretFile))
 	cdnsell.RegisterHandlers(server, cdnsellSvc, jwt)
 	*cronStarts = append(*cronStarts, cdnsellSvc.Start)
 	marketplace.RegisterHandlers(server, marketplaceSvc, jwt, paymentSvc)
