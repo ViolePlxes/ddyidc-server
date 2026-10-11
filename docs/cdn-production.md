@@ -1,6 +1,6 @@
 # CDN production completion
 
-Release: server v0.1.100 / web v0.1.134.
+Release: server v0.1.101 / web v0.1.134.
 
 CDN purchase and overage bills reuse platform orders and BalanceService. CDN amounts are yuan decimal; platform order amounts remain integer cents. Delivery checks original totals, then uses the durable payment coordinator. Configuration and certificate tasks report success only after verified cloud readback. Domain removal requires offline state and explicit absence confirmation; uncertain requests are not repeated. Usage corrections are idempotent and allocate FIFO. Policy restoration applies only to pauses owned by this module. Notifications merge per customer/channel/day.
 
@@ -15,3 +15,4 @@ KS3 logging is optional and requires account configuration. Do not open KS3 auto
 ## Acceptance
 
 VM: Go build/vet/test; actual MySQL concurrency/rollback/permissions; real browser login, platform balance payment, durable delivery; desktop/mobile light/dark layout; legacy binary recovery with unchanged business fingerprint. Authorized cloud domain create/config/TLS/refresh/preload/start/stop/removal tested and resources cleaned. Live tests and browser fixtures are opt-in `_test.go` files, not application startup logic. No real customer data or secrets are included.
+Incremental socket migrations explicitly select system on the dedicated connection. TestIncrementalMigrationNoDefaultMySQL covers a fresh connection with no default database. Dirty money migrations require inspection before an explicit retry.

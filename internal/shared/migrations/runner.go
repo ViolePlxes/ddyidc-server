@@ -79,6 +79,11 @@ func Apply(ctx context.Context, database *sql.DB, steps []Step, retryDirty bool,
 	if _, err = conn.ExecContext(ctx, "CREATE DATABASE IF NOT EXISTS `system`"); err != nil {
 		return err
 	}
+	// Incremental socket connections have no default database. JSON_TABLE updates
+	// require one even when their target tables are fully qualified.
+	if _, err = conn.ExecContext(ctx, "USE `system`"); err != nil {
+		return err
+	}
 	if _, err = conn.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS system.schema_migrations (name VARCHAR(190) PRIMARY KEY, checksum CHAR(64) NOT NULL, state VARCHAR(16) NOT NULL, started_at DATETIME(6) NOT NULL, completed_at DATETIME(6) NULL)"); err != nil {
 		return err
 	}
