@@ -36,3 +36,4 @@ go test -race -v ./internal/cdnsell -run '^TestPaidFulfillmentMySQL$' -count=1
 go test -race -v ./internal/adminread -run "^TestBalancePermissionsMySQL$" -count=1
 go test -race -v ./internal/billing/withdrawal -count=1
 go test -race -v ./internal/billing/balance -run "^TestReviewedRefundRequiresApprovalAndFrozenCalculationMySQL$" -count=1
+go test -race -v ./internal/instance/service -run "^TestMachineRefund(DecisionsAndSupplierConfirmation|PendingDirectRace)MySQL$" -count=3

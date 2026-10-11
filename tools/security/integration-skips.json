@@ -283,6 +283,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."
   },
+  "ddyidc/internal/instance/service/TestMachineRefundPendingDirectRaceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET; race upstream confirmation against direct balance decisions and assert one refund ledger entry."
+  },
   "ddyidc/internal/instance/service/TestMachineRefundDecisionsAndSupplierConfirmationMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run this named test with a disposable FOUNDATION_MYSQL_SOCKET fixture and preserve independent evidence. Ordinary-suite skip is not a pass."

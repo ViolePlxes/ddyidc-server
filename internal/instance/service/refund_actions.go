@@ -95,14 +95,16 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 			return e
 		}
 		var prior MachineRefundAction
-		e = tx.First(&prior, "application_id=?", id).Error
+		// Read the current decision under the same order lock used by supplier completion.
+		e = tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&prior, "application_id=?", id).Error
 		if e == nil {
-			if prior.State == "rejected" && in.Action == "direct_balance" {
+			// A direct reimbursement may win during supplier review; completed decisions cannot switch.
+			if prior.Action == "upstream" && (prior.State == "waiting" || prior.State == "rejected") && in.Action == "direct_balance" {
 				var unsafe int64
 				if e = tx.Model(&MachineRefundLeg{}).Where("application_id=? AND state NOT IN ('prepared','rejected','refunded')", id).Count(&unsafe).Error; e != nil {
 					return e
 				}
-				if unsafe > 0 || prior.Amount != in.ExpectedAmount || !prior.ApplicationUpdatedAt.Equal(in.ExpectedUpdatedAt) || prior.RequestID == in.RequestID {
+				if (prior.State == "rejected" && unsafe > 0) || prior.Amount != in.ExpectedAmount || !prior.ApplicationUpdatedAt.Equal(in.ExpectedUpdatedAt) || prior.RequestID == in.RequestID {
 					return workflow.ErrConflict
 				}
 				var review workflow.ReviewInput
@@ -116,11 +118,12 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 				if !current.UpdatedAt.Equal(in.ExpectedUpdatedAt) || calc.Refund.String() != in.ExpectedAmount || calc.Paid > 5000000 && !in.ConfirmLarge {
 					return workflow.ErrConflict
 				}
+				previousState := prior.State
 				prior.Action, prior.State, prior.RequestID = "direct_balance", "prepared", in.RequestID
 				prior.AdminID, prior.AdminName, prior.OperatorIP, prior.Reason = actor.ID, actor.Name, actor.IP, in.Reason
 				review.RequestID, review.Reason, review.ConfirmLarge = in.RequestID, in.Reason, in.ConfirmLarge
 				prior.ReviewInput, _ = json.Marshal(review)
-				proof, _ := json.Marshal(map[string]any{"amount": prior.Amount, "previousAction": "upstream", "previousState": "rejected", "appliedAt": prior.CreatedAt})
+				proof, _ := json.Marshal(map[string]any{"amount": prior.Amount, "previousAction": "upstream", "previousState": previousState, "appliedAt": prior.CreatedAt})
 				if e = tx.Table("system.todo_audits").Create(map[string]any{"id": snowflake.GenID(), "request_id": "MRF:" + in.RequestID, "kind": "refunds", "source": "application", "object_id": id, "action": "machine_refund_direct_balance", "admin_id": actor.ID, "operator_ip": actor.IP, "notes": in.Reason, "evidence": string(proof), "created_at": time.Now().UTC()}).Error; e != nil {
 					return e
 				}
