@@ -172,6 +172,12 @@ func SubmitOrder(ctx context.Context, db *gorm.DB, customer, orderID int64, reas
 }
 
 func verifyOrderEntitlement(tx *gorm.DB, request Request, snapshot Snapshot) error {
+	return verifyOrderEntitlementPolicy(tx, request, snapshot, false)
+}
+
+// Manual balance refunds rely on the authenticated administrator confirmation,
+// while preserving source, ownership, payment and service-period checks.
+func verifyOrderEntitlementPolicy(tx *gorm.DB, request Request, snapshot Snapshot, manual bool) error {
 	var o order.Order
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&o, request.ObjectID).Error; err != nil {
 		return ErrConflict
@@ -226,7 +232,7 @@ func verifyOrderEntitlement(tx *gorm.DB, request Request, snapshot Snapshot) err
 		if end != nil && !host.ExpiresAt.Equal(*end) {
 			return ErrConflict
 		}
-		if host.Status != 6 {
+		if !manual && host.Status != 6 {
 			return ErrEntitlement
 		}
 	}
@@ -242,6 +248,19 @@ func verifyOrderEntitlement(tx *gorm.DB, request Request, snapshot Snapshot) err
 	}
 	if unsafe != expectedHosts-renewalHosts {
 		return ErrConflict
+	}
+	if manual {
+		// End local entitlement only; never send a supplier operation or rewrite
+		// the historical provider task/event evidence as successful.
+		for _, p := range snapshot.Periods {
+			if p.InstanceID == 0 {
+				continue
+			}
+			if err := tx.Unscoped().Model(&instance.Host{}).Where("id=? AND customer_id=? AND ownership_version=?", p.InstanceID, request.CustomerID, p.OwnershipVersion).Updates(map[string]any{"status": 6, "power_status": "deleted", "updated_at": time.Now().UTC()}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if err := tx.Table("`order`.delivery_units").Where("order_id=? AND status NOT IN ('pending','complete','cancelled')", o.ID).Count(&unsafe).Error; err != nil {
 		return err

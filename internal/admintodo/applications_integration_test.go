@@ -55,6 +55,9 @@ func TestRefundApplicationMySQL(t *testing.T) {
 	if _, e := workflow.Review(ctx, tx, application.ID, actor, input); e == nil {
 		t.Fatal("stale review accepted")
 	}
+	// An administrator-confirmed unopened refund is not blocked by legacy procurement uncertainty.
+	must(tx.Table("`order`.unit_procurements").Create(map[string]any{"id": snowflake.GenID(), "order_id": order, "supplier_id": 1, "upstream_product_id": 1, "upstream_order_id": "isolated-unknown", "status": "unknown", "created_at": now.Unix(), "updated_at": now.Unix()}).Error)
+	must(tx.Table("system.durable_tasks").Create(map[string]any{"id": snowflake.GenID(), "task_key": fmt.Sprintf("isolated-unopened-refund:%d", order), "kind": "order", "payload": fmt.Sprintf(`{"orderId":"%d"}`, order), "status": "unknown"}).Error)
 	input.ExpectedUpdatedAt = application.UpdatedAt
 	reviewed, e := workflow.Review(ctx, tx, application.ID, actor, input)
 	must(e)

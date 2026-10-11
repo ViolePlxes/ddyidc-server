@@ -48,6 +48,9 @@ func TestExtraReceiptQueuesThenReviewedBalanceRefundMySQL(t *testing.T) {
 	if quote.Refund.String() != "3.00" {
 		t.Fatal("fees not deducted")
 	}
+	// SubmitReceipt links payment_id in a second write; the database may update
+	// updated_at. Review the current stored version, as the admin detail page does.
+	must(tx.First(&app, app.ID).Error)
 	in := ReviewInput{Action: "approve", Reason: "核验多余收款及不可退费用", RequestID: fmt.Sprintf("EXTRA-REVIEW:%d", id), ExpectedUpdatedAt: app.UpdatedAt, ExpectedAmount: "3.00", Fees: fees}
 	actor := Actor{ID: 1, Name: "integration", IP: "127.0.0.1"}
 	done, err := Review(ctx, tx, app.ID, actor, in)

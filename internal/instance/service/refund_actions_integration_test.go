@@ -119,6 +119,12 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 			t.Fatal("tampered refund amount accepted")
 		}
 		in.ExpectedAmount = "87.00"
+		if action == "direct_balance" || action == "upstream_waiting_direct" {
+			// Reproduce legacy lifecycle uncertainty without altering the financial snapshot.
+			must(db.Table("`order`.delivery_units").Create(map[string]any{"id": snowflake.GenID(), "order_id": order, "order_item_id": item, "unit_no": 1, "customer_id": customer, "instance_id": host, "status": "unknown"}).Error)
+			must(db.Table("instance.instance_events").Create(map[string]any{"id": snowflake.GenID(), "instance_id": host, "event_type": "terminate", "operator_type": 2, "status": 3}).Error)
+			must(db.Table("system.durable_tasks").Create(map[string]any{"id": snowflake.GenID(), "task_key": fmt.Sprintf("isolated-refund-unknown:%d", order), "kind": "order", "payload": fmt.Sprintf(`{"orderId":"%d"}`, order), "status": "unknown"}).Error)
+		}
 		out, e := service.MachineRefundAction(ctx, application.ID, actor, in)
 		must(e)
 		if action == "direct_balance" {
@@ -142,13 +148,30 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 				t.Fatal("request replay submitted refund again")
 			}
 
+			if action == "upstream_waiting_direct" {
+				mu.Lock()
+				statuses[h.UpstreamInstanceID] = "Refunded"
+				mu.Unlock()
+				if e := service.ReconcileMachineRefund(ctx, application.ID); e == nil {
+					t.Fatal("automatic supplier completion bypassed unresolved service evidence")
+				}
+				must(db.Table("billing.transactions").Where("customer_id=?", customer).Count(&count).Error)
+				if count != 0 {
+					t.Fatal("blocked supplier completion credited money")
+				}
+				mu.Lock()
+				statuses[h.UpstreamInstanceID] = "Pending"
+				mu.Unlock()
+			}
 			if action == "upstream_rejected" || action == "upstream_waiting_direct" {
 				mu.Lock()
 				if action == "upstream_rejected" {
 					statuses[h.UpstreamInstanceID] = "Rejected"
 				}
 				mu.Unlock()
-				must(service.ReconcileMachineRefund(ctx, application.ID))
+				if action == "upstream_rejected" {
+					must(service.ReconcileMachineRefund(ctx, application.ID))
+				}
 				must(db.Table("billing.transactions").Where("customer_id=?", customer).Count(&count).Error)
 				if count != 0 {
 					t.Fatal("supplier rejection credited balance")
@@ -203,6 +226,18 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 			t.Fatal("unexpected final balance", credited)
 		}
 		t.Logf("EVIDENCE case=%s balance_before=0.00 balance_after=%s refund_rows=%d supplier_submit_calls=%d", action, credited, count, writes.Load())
+		if action == "direct_balance" || action == "upstream_waiting_direct" {
+			var retained int64
+			must(db.Table("`order`.delivery_units").Where("order_id=? AND status='unknown'", order).Count(&retained).Error)
+			if retained != 1 {
+				t.Fatal("manual refund rewrote historical delivery evidence")
+			}
+			must(db.Table("system.durable_tasks").Where("task_key=? AND status='unknown'", fmt.Sprintf("isolated-refund-unknown:%d", order)).Count(&retained).Error)
+			if retained != 1 {
+				t.Fatal("manual refund rewrote unknown task evidence")
+			}
+			t.Logf("EVIDENCE manual_confirmation=%s unknown_delivery_preserved=true unknown_task_preserved=true", action)
+		}
 		must(db.First(&h, host).Error)
 		if h.Status != 6 {
 			t.Fatal("refunded entitlement remains active")

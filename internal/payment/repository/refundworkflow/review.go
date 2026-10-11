@@ -175,7 +175,15 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 			if calc.Paid > 5000000 && !in.ConfirmLarge {
 				return ErrInput
 			}
-			if err := verifyEntitlement(tx, req, snapshot); err != nil {
+			// The policy is selected from a persisted, matched completing intent,
+			// never from a browser-controlled bypass flag. Ordinary order review
+			// is also an authenticated manual balance refund.
+			manualOrder := req.Source == "order" && (!machine || intent.Action == "direct_balance")
+			if manualOrder {
+				if err := verifyOrderEntitlementPolicy(tx, req, snapshot, true); err != nil {
+					return err
+				}
+			} else if err := verifyEntitlement(tx, req, snapshot); err != nil {
 				return err
 			}
 			body, err := json.Marshal(calc)
