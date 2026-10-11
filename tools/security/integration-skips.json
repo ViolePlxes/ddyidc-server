@@ -378,5 +378,160 @@
   "ddyidc/pkg/auth/TestPersistentDeviceMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_persistent_login.sh with disposable MySQL/Redis; skip is not a pass."
+  },
+  "ddyidc/TestCDNBrowserDispatcherMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需 CDN_BROWSER_DISPATCHER=1 与 /tmp/ddyidc-foundation-rollback-* 独立数据库，仅调度隔离测试订单；普通 CI 跳过不代表测试通过。"
+  },
+  "ddyidc/TestIncrementalMigrationNoDefaultMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/adminread/TestBalancePermissionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/billing/withdrawal/TestWithdrawalConcurrentMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/billing/withdrawal/TestWithdrawalConcurrentSpendCannotWithdrawPointsMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/billing/withdrawal/TestWithdrawalPolicyAndNotificationMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestPrepareRealBrowserFixtureMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需 CDN_BROWSER_FIXTURE=1 与 /tmp/ddyidc-foundation-rollback-* 独立数据库；测试夹具不得在生产或普通 CI 导入，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestCertificateProofAndQueueMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestSecretConfigProofMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestDomainRemovalConfirmationMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestFulfillmentAmountMismatchMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestCDNHTTPAuthorizationMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestYuanPurchaseMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestCDNNotificationReservationMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestOverageOrderMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestReadinessSnapshotMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestCDNRestrictedRuntimeMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestExternalManualPauseMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestServicePolicyMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestSettingsAuthorizationAndAuditMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestUsageLedgerMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestTaskRecoveryMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestDomainTaskAtomicityMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestProductZeroValueUpdateMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/TestReferencedProductCannotBeDeletedMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/provider/ksyun/TestLiveCleanupVerified": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需要显式授权的测试域名、私有凭据文件及 CDN_LIVE_* 或 CDN_EDGE_TUNNEL_TEST 开关；普通 CI 不启用真实云操作，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/provider/ksyun/TestLiveEdgeTLSViaAuthorizedTunnel": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需要显式授权的测试域名、私有凭据文件及 CDN_LIVE_* 或 CDN_EDGE_TUNNEL_TEST 开关；普通 CI 不启用真实云操作，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/provider/ksyun/TestLiveLogProtocolDiagnostic": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需要显式授权的测试域名、私有凭据文件及 CDN_LIVE_* 或 CDN_EDGE_TUNNEL_TEST 开关；普通 CI 不启用真实云操作，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/provider/ksyun/TestLiveReadOnlyConnection": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需要显式授权的测试域名、私有凭据文件及 CDN_LIVE_* 或 CDN_EDGE_TUNNEL_TEST 开关；普通 CI 不启用真实云操作，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/cdnsell/provider/ksyun/TestLiveTarget": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。需要显式授权的测试域名、私有凭据文件及 CDN_LIVE_* 或 CDN_EDGE_TUNNEL_TEST 开关；普通 CI 不启用真实云操作，跳过不代表测试通过。"
+  },
+  "ddyidc/internal/update/TestPristineCDNBootstrapMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离测试、本地联调用。使用临时 FOUNDATION_MYSQL_SOCKET 数据库及所需隔离 Redis/测试夹具，独立留存验收证据；普通 CI 中跳过不代表测试通过。"
   }
 }
