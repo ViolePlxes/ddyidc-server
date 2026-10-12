@@ -347,6 +347,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		in.PageSize, _ = strconv.Atoi(r.URL.Query().Get("pageSize"))
 		in.CustomerID = r.URL.Query().Get("customerId")
 		in.Keyword = r.URL.Query().Get("keyword")
+		in.Sort = r.URL.Query().Get("sort")
 		for _, part := range strings.Split(r.URL.Query().Get("status"), ",") {
 			if part != "" {
 				status, _ := strconv.Atoi(part)
@@ -387,9 +388,9 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "查询失败")
 		return
 	}
-	order := "id DESC"
+	order := "created_at DESC,id DESC"
 	if in.Sort == "oldest" {
-		order = "id ASC"
+		order = "created_at ASC,id ASC"
 	}
 	var rows []Record
 	if err := q.Order(order).Offset((in.Page - 1) * in.PageSize).Limit(in.PageSize).Find(&rows).Error; err != nil {

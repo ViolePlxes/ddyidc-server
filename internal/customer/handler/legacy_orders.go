@@ -54,6 +54,9 @@ func (h *authHandler) legacyOrders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for i := range rows {
+		rows[i].OrderNo = strconv.FormatInt(rows[i].ID, 10)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"list": rows, "total": total, "page": page, "pageSize": size, "readOnly": true})
 }

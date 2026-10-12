@@ -28,11 +28,19 @@ var historyPublicFields = map[string][]string{
 
 func publicHistoryRows(rows []legacyHistoryRow) {
 	for i := range rows {
+		rows[i].SourceID = rows[i].ID
 		var payload map[string]any
 		_ = json.Unmarshal([]byte(rows[i].Payload), &payload)
 		rows[i].Data = map[string]any{}
 		for _, key := range historyPublicFields[rows[i].Kind] {
 			rows[i].Data[key] = payload[key]
+		}
+		if rows[i].Kind == "ticket" {
+			rows[i].Data["ticket_num"] = strconv.FormatInt(rows[i].ID, 10)
+		}
+		if rows[i].Kind == "reply" {
+			delete(rows[i].Data, "ticket_id")
+			delete(rows[i].Data, "quote_reply_id")
 		}
 		if rows[i].Kind == "balance" || rows[i].Kind == "payment" {
 			rows[i].SourceID = rows[i].ID
