@@ -541,5 +541,9 @@
   "ddyidc/internal/payment/service/TestAdminPaymentSettingsMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run in test_finance_recovery.sh with disposable FOUNDATION_MYSQL_SOCKET; encrypted persistence, secret redaction, revision conflict, validation rollback and audit. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestPendingManualReviewMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable MySQL only: pending manual/alipay review, terminal status, audit and single concurrent winner. A normal skip is not a pass."
   }
 }

@@ -41,3 +41,4 @@ go test -race -v ./internal/shared/filebarrier -run '^TestSnapshotDefersDeletion
 go test -race -v ./internal/backup -run '^(TestRuntimeAccountFenceMySQL|TestRestoreReleaseAtomicMySQL)$' -count=1
 
 go test -race -v ./internal/payment/service -run "^TestAdminPaymentSettingsMySQL$" -count=1
+go test -race -v ./internal/certification -run "^TestPendingManualReviewMySQL$" -count=1

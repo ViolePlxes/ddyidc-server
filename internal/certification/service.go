@@ -331,8 +331,8 @@ func (s *Service) Review(ctx context.Context, id, actor int64, action, reason, i
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, id).Error; err != nil {
 			return errors.New("认证记录不存在")
 		}
-		if row.CertifyChannel == "alipay" {
-			return errors.New("支付宝认证由系统自动处理，不支持人工审核或解除限制")
+		if row.CertifyChannel == "alipay" && action == "unlock" {
+			return errors.New("支付宝认证不支持解除限制")
 		}
 		if action == "unlock" {
 			if row.Status != 3 {

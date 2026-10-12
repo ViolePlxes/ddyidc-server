@@ -197,7 +197,7 @@ func (s *Service) alipayStatus(ctx context.Context, customer int64, operatorIP s
 			return errors.New("尚未发起支付宝认证")
 		}
 		result.Status = row.Status
-		if row.Status == 2 {
+		if row.Status == 2 || row.Status == 3 {
 			return nil
 		}
 		if row.CertifyID == "" {
