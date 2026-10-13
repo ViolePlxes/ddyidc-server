@@ -555,5 +555,10 @@
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "隔离MySQL验证待手动处理产品到期时间、精确账单关联和跨客户隔离；普通CI跳过不代表通过。"
+  },
+  "ddyidc/internal/admintodo/TestExpiringDisplayMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离MySQL验证即将到期实例当前周期、到期时间、客户归属及不使用快照旧金额。"
   }
 }

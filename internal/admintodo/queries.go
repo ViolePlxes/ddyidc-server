@@ -40,6 +40,7 @@ type Entry struct {
 	LastAdminID        string          `json:"lastAdminId"`
 	Actions            []string        `json:"actions" gorm:"-"`
 	IPAddress          string          `json:"ipAddress,omitempty"`
+	BillingCycle       string          `json:"billingCycle,omitempty" gorm:"-"`
 	ExpiresAt          *time.Time      `json:"expiresAt,omitempty" gorm:"-"`
 	UpstreamOrderID    string          `json:"upstreamOrderId,omitempty" gorm:"-"`
 	UpstreamBillingURL string          `json:"upstreamBillingUrl,omitempty" gorm:"-"`
@@ -249,7 +250,7 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 	if kind == "manual-products" {
 		selection = "q.*,COALESCE(c.username,'关联客户不可用') customer_name,'' last_admin_id," + manualProductRevisionSQL() + " revision,COALESCE((SELECT h.primary_ip FROM instance.instances h WHERE q.source='instance' AND h.id=CAST(q.id AS UNSIGNED)),(SELECT h.primary_ip FROM instance.instance_renewals r JOIN instance.instances h ON h.id=r.instance_id AND h.customer_id=r.customer_id WHERE q.source='order' AND r.order_id=CAST(q.order_id AS UNSIGNED) AND r.customer_id=CAST(q.customer_id AS UNSIGNED) ORDER BY r.id DESC LIMIT 1),(SELECT h.primary_ip FROM instance.instance_upgrades u JOIN instance.instances h ON h.id=u.instance_id AND h.customer_id=u.customer_id WHERE q.source='order' AND u.order_id=CAST(q.order_id AS UNSIGNED) AND u.customer_id=CAST(q.customer_id AS UNSIGNED) ORDER BY u.id DESC LIMIT 1),'') ip_address"
 	}
-	if kind == "refunds" || kind == "manual-products" {
+	if kind == "refunds" || kind == "manual-products" || kind == "expiring" {
 		selection += ",COALESCE((SELECT NULLIF(TRIM(r.name),'') FROM customer.customer_realname r WHERE r.customer_id=CAST(q.customer_id AS UNSIGNED) AND r.status=2 ORDER BY r.updated_at DESC,r.id DESC LIMIT 1),'') customer_real_name"
 	}
 	if e = q.Select(selection, func() []any {
@@ -262,6 +263,11 @@ func List(ctx context.Context, db *gorm.DB, kind string, f Filter) (Page, error)
 	}
 	if kind == "refunds" {
 		if e = enrichRefundMachines(ctx, db, out.Items); e != nil {
+			return out, e
+		}
+	}
+	if kind == "expiring" {
+		if e = enrichExpiringDisplay(ctx, db, out.Items); e != nil {
 			return out, e
 		}
 	}
