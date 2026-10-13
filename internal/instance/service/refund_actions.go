@@ -43,6 +43,8 @@ type MachineRefundLeg struct {
 func (MachineRefundLeg) TableName() string { return "payment.machine_refund_legs" }
 
 type MachineRefundInput struct {
+	AmountMode        string    `json:"amountMode"`
+	CustomAmount      string    `json:"customAmount"`
 	Action            string    `json:"action"`
 	RequestID         string    `json:"requestId"`
 	ExpectedAmount    string    `json:"expectedAmount"`
@@ -79,6 +81,9 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 		return out, ErrUnsupported
 	}
 	in.Reason = strings.TrimSpace(in.Reason)
+	if in.Action == "upstream" && in.AmountMode != "" && in.AmountMode != "daily" {
+		return out, workflow.ErrInput
+	}
 	if actor.ID <= 0 || strings.TrimSpace(actor.Name) == "" || net.ParseIP(actor.IP) == nil || len(in.RequestID) < 8 || len(in.RequestID) > 64 || in.Reason == "" || len([]rune(in.Reason)) > 200 || (in.Action != "direct_balance" && in.Action != "upstream") {
 		return out, workflow.ErrInput
 	}
@@ -104,7 +109,7 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 				if e = tx.Model(&MachineRefundLeg{}).Where("application_id=? AND state NOT IN ('prepared','rejected','refunded')", id).Count(&unsafe).Error; e != nil {
 					return e
 				}
-				if (prior.State == "rejected" && unsafe > 0) || prior.Amount != in.ExpectedAmount || !prior.ApplicationUpdatedAt.Equal(in.ExpectedUpdatedAt) || prior.RequestID == in.RequestID {
+				if (prior.State == "rejected" && unsafe > 0) || !prior.ApplicationUpdatedAt.Equal(in.ExpectedUpdatedAt) || prior.RequestID == in.RequestID {
 					return workflow.ErrConflict
 				}
 				var review workflow.ReviewInput
@@ -115,11 +120,17 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 				if err != nil {
 					return err
 				}
+				calc, err = workflow.SelectAmount(calc, in.AmountMode, in.CustomAmount)
+				if err != nil {
+					return err
+				}
 				if !current.UpdatedAt.Equal(in.ExpectedUpdatedAt) || calc.Refund.String() != in.ExpectedAmount || calc.Paid > 5000000 && !in.ConfirmLarge {
 					return workflow.ErrConflict
 				}
 				previousState := prior.State
 				prior.Action, prior.State, prior.RequestID = "direct_balance", "prepared", in.RequestID
+				prior.Amount = calc.Refund.String()
+				review.AmountMode, review.CustomAmount, review.ExpectedAmount = in.AmountMode, in.CustomAmount, calc.Refund.String()
 				prior.AdminID, prior.AdminName, prior.OperatorIP, prior.Reason = actor.ID, actor.Name, actor.IP, in.Reason
 				review.RequestID, review.Reason, review.ConfirmLarge = in.RequestID, in.Reason, in.ConfirmLarge
 				prior.ReviewInput, _ = json.Marshal(review)
@@ -136,6 +147,10 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 			if prior.RequestID != in.RequestID || prior.Action != in.Action || prior.AdminID != actor.ID || prior.Amount != in.ExpectedAmount || prior.Reason != in.Reason {
 				return workflow.ErrConflict
 			}
+			var saved workflow.ReviewInput
+			if json.Unmarshal(prior.ReviewInput, &saved) != nil || (saved.AmountMode != in.AmountMode && !((saved.AmountMode == "" || saved.AmountMode == "daily") && (in.AmountMode == "" || in.AmountMode == "daily"))) || saved.CustomAmount != in.CustomAmount {
+				return workflow.ErrConflict
+			}
 			out = prior
 			return nil
 		}
@@ -143,6 +158,10 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 			return e
 		}
 		detail, calc, fees, e := workflow.MachineQuote(ctx, tx, id)
+		if e != nil {
+			return e
+		}
+		calc, e = workflow.SelectAmount(calc, in.AmountMode, in.CustomAmount)
 		if e != nil {
 			return e
 		}
@@ -154,7 +173,7 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 			return workflow.ErrCalculation
 		}
 		now := time.Now().UTC().Truncate(time.Millisecond)
-		review := workflow.ReviewInput{Action: "approve", Reason: in.Reason, RequestID: in.RequestID, ExpectedUpdatedAt: detail.UpdatedAt, ExpectedAmount: calc.Refund.String(), ConfirmLarge: in.ConfirmLarge, Fees: fees}
+		review := workflow.ReviewInput{AmountMode: in.AmountMode, CustomAmount: in.CustomAmount, Action: "approve", Reason: in.Reason, RequestID: in.RequestID, ExpectedUpdatedAt: detail.UpdatedAt, ExpectedAmount: calc.Refund.String(), ConfirmLarge: in.ConfirmLarge, Fees: fees}
 		body, _ := json.Marshal(review)
 		out = MachineRefundAction{ApplicationID: id, CustomerID: detail.UserID, OrderID: detail.Request.ObjectID, RequestID: in.RequestID, Action: in.Action, State: "prepared", Amount: calc.Refund.String(), AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Reason: in.Reason, ConfirmLarge: in.ConfirmLarge, ApplicationUpdatedAt: detail.UpdatedAt, ReviewInput: body, CreatedAt: now, UpdatedAt: now}
 		if e = tx.Create(&out).Error; e != nil {

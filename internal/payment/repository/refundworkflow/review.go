@@ -22,6 +22,8 @@ import (
 )
 
 type ReviewInput struct {
+	AmountMode        string    `json:"amountMode"`
+	CustomAmount      string    `json:"customAmount"`
 	Action            string    `json:"action"`
 	Reason            string    `json:"reason"`
 	RequestID         string    `json:"requestId"`
@@ -43,9 +45,19 @@ type Detail struct {
 
 func Load(ctx context.Context, db *gorm.DB, id int64) (Detail, error) {
 	var out Detail
-	if err := db.WithContext(ctx).Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&out.RefundApplication).Error; err != nil {
+	var row struct {
+		payment.RefundApplication
+		CreatedUTC string
+	}
+	if err := db.WithContext(ctx).Table("payment.payment_refunds").Select("*,DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%sZ') created_utc").Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&row).Error; err != nil {
 		return out, ErrConflict
 	}
+	out.RefundApplication = row.RefundApplication
+	applied, errTime := time.Parse(time.RFC3339, row.CreatedUTC)
+	if errTime != nil {
+		return out, ErrCalculation
+	}
+	out.CreatedAt = applied
 	var req Request
 	if err := db.WithContext(ctx).First(&req, "application_id=?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -108,6 +120,12 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 		fingerprint.Amount = in.ExpectedAmount
 	}
 	encoded, _ := json.Marshal(fingerprint)
+	if in.Action == "approve" && in.AmountMode != "" && in.AmountMode != "daily" {
+		encoded, _ = json.Marshal(struct {
+			Fees                 Fees
+			Amount, Mode, Custom string
+		}{in.Fees, in.ExpectedAmount, in.AmountMode, in.CustomAmount})
+	}
 	digest := sha256.Sum256(encoded)
 	proof := "IDC_DAILY_BALANCE_V1:" + hex.EncodeToString(digest[:])
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -122,6 +140,15 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&out).Error; err != nil {
 			return ErrConflict
 		}
+		var appliedRow struct{ CreatedUTC string }
+		if err := tx.Table("payment.payment_refunds").Select("DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%sZ') created_utc").Where("id=?", id).Take(&appliedRow).Error; err != nil {
+			return err
+		}
+		appliedUTC, errTime := time.Parse(time.RFC3339, appliedRow.CreatedUTC)
+		if errTime != nil {
+			return ErrCalculation
+		}
+		out.CreatedAt = appliedUTC
 		var audit struct {
 			Kind, Source, Action, Notes, Evidence string
 			ObjectID, AdminID                     int64
@@ -168,6 +195,23 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 			calc, err := Calculate(snapshot, out.CreatedAt, in.Fees)
 			if err != nil {
 				return err
+			}
+			if in.AmountMode != "" && in.AmountMode != "daily" && (req.Source != "order" || machine && intent.Action != "direct_balance") {
+				return ErrInput
+			}
+			calc, err = SelectAmount(calc, in.AmountMode, in.CustomAmount)
+			if err != nil {
+				return err
+			}
+			if req.Source == "order" {
+				var refunded struct{ Amount string }
+				if err := tx.Table("payment.todo_refund_calculations").Select("COALESCE(SUM(amount),0) amount").Where("source='order' AND object_id=? AND application_id<>?", req.ObjectID, id).Scan(&refunded).Error; err != nil {
+					return err
+				}
+				previous, err := balance.ParseMoney(refunded.Amount)
+				if err != nil || previous < 0 || previous > calc.Paid || calc.Refund > calc.Paid-previous {
+					return ErrInput
+				}
 			}
 			if calc.Refund.String() != in.ExpectedAmount {
 				return ErrConflict

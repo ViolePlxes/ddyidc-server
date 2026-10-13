@@ -47,7 +47,7 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 		}
 		switch r.Form.Get("action") {
 		case "list":
-			json.NewEncoder(w).Encode(map[string]any{"status": 200, "data": map[string]any{"total": 4, "data": []any{map[string]any{"id": 42}, map[string]any{"id": 43}, map[string]any{"id": 44}, map[string]any{"id": 45}}}})
+			json.NewEncoder(w).Encode(map[string]any{"status": 200, "data": map[string]any{"total": 6, "data": []any{map[string]any{"id": 42}, map[string]any{"id": 43}, map[string]any{"id": 44}, map[string]any{"id": 45}, map[string]any{"id": 46}, map[string]any{"id": 47}}}})
 		case "refund":
 			writes.Add(1)
 			mu.Lock()
@@ -86,7 +86,7 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 		}
 	}
 	actor := workflow.Actor{ID: 1, Name: "integration", IP: "127.0.0.1"}
-	for index, action := range []string{"direct_balance", "upstream", "upstream_rejected", "upstream_waiting_direct"} {
+	for index, action := range []string{"direct_balance", "direct_full", "direct_custom", "upstream", "upstream_rejected", "upstream_waiting_direct"} {
 		writes.Store(0)
 		customer, order, item, host := snowflake.GenID(), snowflake.GenID(), snowflake.GenID(), snowflake.GenID()
 		now := time.Now().UTC().Truncate(time.Second)
@@ -111,6 +111,10 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 			t.Fatal("application or quote caused money or supplier effect")
 		}
 		decision := action
+		expectedCredit := "87.00"
+		if action == "direct_full" || action == "direct_custom" {
+			decision = "direct_balance"
+		}
 		if action == "upstream_rejected" || action == "upstream_waiting_direct" {
 			decision = "upstream"
 		}
@@ -119,6 +123,22 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 			t.Fatal("tampered refund amount accepted")
 		}
 		in.ExpectedAmount = "87.00"
+		if action == "direct_full" {
+			in.AmountMode = "full"
+			in.ExpectedAmount = "100.00"
+			expectedCredit = "100.00"
+		}
+		if action == "direct_custom" {
+			in.AmountMode = "custom"
+			in.CustomAmount = "100.01"
+			in.ExpectedAmount = "100.01"
+			if _, err := service.MachineRefundAction(ctx, application.ID, actor, in); err == nil {
+				t.Fatal("above original price accepted")
+			}
+			in.CustomAmount = "25.50"
+			in.ExpectedAmount = "25.50"
+			expectedCredit = "25.50"
+		}
 		if action == "direct_balance" || action == "upstream_waiting_direct" {
 			// Reproduce legacy lifecycle uncertainty without altering the financial snapshot.
 			must(db.Table("`order`.delivery_units").Create(map[string]any{"id": snowflake.GenID(), "order_id": order, "order_item_id": item, "unit_no": 1, "customer_id": customer, "instance_id": host, "status": "unknown"}).Error)
@@ -127,7 +147,7 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 		}
 		out, e := service.MachineRefundAction(ctx, application.ID, actor, in)
 		must(e)
-		if action == "direct_balance" {
+		if decision == "direct_balance" {
 			if out.State != "completed" || writes.Load() != 0 {
 				t.Fatal("direct refund reached supplier or failed")
 			}
@@ -178,6 +198,11 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 				}
 				in.Action = "direct_balance"
 				in.RequestID += "-fallback"
+				if action == "upstream_waiting_direct" {
+					in.AmountMode = "full"
+					in.ExpectedAmount = "100.00"
+					expectedCredit = "100.00"
+				}
 				_, e = service.MachineRefundAction(ctx, application.ID, actor, in)
 				must(e)
 				if writes.Load() != 1 {
@@ -222,7 +247,7 @@ func TestMachineRefundDecisionsAndSupplierConfirmationMySQL(t *testing.T) {
 		}
 		var credited string
 		must(db.Table("billing.accounts").Select("balance").Where("customer_id=?", customer).Scan(&credited).Error)
-		if credited != "87.00" {
+		if credited != expectedCredit {
 			t.Fatal("unexpected final balance", credited)
 		}
 		t.Logf("EVIDENCE case=%s balance_before=0.00 balance_after=%s refund_rows=%d supplier_submit_calls=%d", action, credited, count, writes.Load())

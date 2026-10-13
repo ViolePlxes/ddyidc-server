@@ -560,5 +560,9 @@
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "隔离MySQL验证即将到期实例当前周期、到期时间、客户归属及不使用快照旧金额。"
+  },
+  "ddyidc/internal/admintodo/TestRefundListDailyAmountMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run in test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET, including TZ=Asia/Shanghai and FOUNDATION_MYSQL_LOCAL_TIME=1. Verify application-time daily amount, customer ownership, and matching UTC detail time. Normal-suite skip is not a pass."
   }
 }

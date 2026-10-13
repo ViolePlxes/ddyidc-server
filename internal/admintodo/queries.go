@@ -31,6 +31,7 @@ type Entry struct {
 	Title              string          `json:"title"`
 	Number             string          `json:"number"`
 	Status             string          `json:"status"`
+	RefundableAmount   *string         `json:"refundableAmount,omitempty" gorm:"-"`
 	Amount             string          `json:"amount"`
 	OrderID            string          `json:"orderId"`
 	InstanceID         string          `json:"instanceId"`

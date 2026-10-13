@@ -71,7 +71,7 @@ func TestTodoQueriesMySQL(t *testing.T) {
 		now := time.Now().UTC()
 		customer := int64(880011001)
 		for _, h := range []dom.Host{
-			{ID: 880011011, CustomerID: customer, OrderID: 880011021, InstanceNo: "DISPLAY-A", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.11", CreatedAt: now, UpdatedAt: now},
+			{ID: 880011011, CustomerID: customer, OrderID: 880011021, InstanceNo: "DISPLAY-A", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: `{"hostname":"original","listDisplay":{"hostname":"saved-machine"}}`, PrimaryIP: "192.0.2.11", CreatedAt: now, UpdatedAt: now},
 			{ID: 880011012, CustomerID: customer, OrderID: 880011021, InstanceNo: "DISPLAY-B", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.12", CreatedAt: now, UpdatedAt: now},
 			{ID: 880011013, CustomerID: customer + 1, OrderID: 880011021, InstanceNo: "DISPLAY-OTHER", ProductID: 1, ProductName: "isolated", ModuleType: "cloud", ConfigSnapshot: "{}", PrimaryIP: "192.0.2.13", CreatedAt: now, UpdatedAt: now},
 		} {
@@ -108,7 +108,7 @@ func TestTodoQueriesMySQL(t *testing.T) {
 		if err := enrichRefundMachines(ctx, tx, entries); err != nil {
 			t.Fatal(err)
 		}
-		if len(entries[0].Machines) != 4 || entries[0].Machines[0].IPAddress != "192.0.2.11" || entries[0].Machines[1].IPAddress != "192.0.2.12" || entries[0].Machines[2].IPAddress != "" || entries[0].Machines[3].IPAddress != "" {
+		if len(entries[0].Machines) != 4 || entries[0].Machines[0].Hostname != "saved-machine" || entries[0].Machines[2].Hostname != "" || entries[0].Machines[0].IPAddress != "192.0.2.11" || entries[0].Machines[1].IPAddress != "192.0.2.12" || entries[0].Machines[2].IPAddress != "" || entries[0].Machines[3].IPAddress != "" {
 			t.Fatalf("snapshot association or ownership failed: %+v", entries[0].Machines)
 		}
 		if len(entries[1].Machines) != 0 || len(entries[2].Machines) != 2 {
@@ -116,4 +116,33 @@ func TestTodoQueriesMySQL(t *testing.T) {
 		}
 	})
 
+}
+
+func TestRefundListDailyAmountMySQL(t *testing.T) {
+	db := testenv.MySQL(t)
+	tx := db.Begin()
+	defer tx.Rollback()
+	ctx := context.Background()
+	applied := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
+	start := applied.Add(-time.Hour * 10)
+	end := start.Add(time.Hour * 24 * 30)
+	snapshot, _ := json.Marshal(workflow.Snapshot{Paid: 10000, MinimumSetup: 1000, Periods: []workflow.Period{{InstanceID: 880019001, Paid: 10000, Start: &start, End: &end}}})
+	req := workflow.Request{ApplicationID: 880019002, CustomerID: 880019003, ObjectID: 880019004, Source: "order", RequestID: "daily-list-isolated", Snapshot: snapshot, CreatedAt: applied}
+	if err := tx.Create(&req).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Exec("INSERT INTO payment.payment_refunds(id,refund_no,payment_id,order_id,user_id,refund_amount,created_at) VALUES(880019002,'TODODAILYDISPLAY',0,880019004,880019003,100.00,?)", applied.Format("2006-01-02 15:04:05")).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows := []Entry{{ID: "880019002", Source: "application", Status: "0", CustomerID: "880019003", OrderID: "880019004", Amount: "100.00"}, {ID: "880019002", Source: "application", Status: "0", CustomerID: "880019099"}}
+	if err := enrichRefundMachines(ctx, tx, rows); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := workflow.Load(ctx, tx, 880019002)
+	if err != nil || !detail.CreatedAt.Equal(applied) {
+		t.Fatalf("UTC application mismatch: %v %v", detail.CreatedAt, err)
+	}
+	if rows[0].RefundableAmount == nil || *rows[0].RefundableAmount != "87.00" || rows[1].RefundableAmount != nil || rows[0].Amount != "100.00" {
+		t.Fatalf("incorrect daily estimate or ownership: %+v", rows)
+	}
 }

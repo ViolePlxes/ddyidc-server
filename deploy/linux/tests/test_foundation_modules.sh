@@ -37,3 +37,7 @@ go test -race -v ./internal/adminread -run "^TestBalancePermissionsMySQL$" -coun
 go test -race -v ./internal/billing/withdrawal -count=1
 go test -race -v ./internal/billing/balance -run "^TestReviewedRefundRequiresApprovalAndFrozenCalculationMySQL$" -count=1
 go test -race -v ./internal/instance/service -run "^TestMachineRefund(DecisionsAndSupplierConfirmation|PendingDirectRace)MySQL$" -count=3
+
+# Refund-list estimates use the same UTC application cutoff as the locked review.
+go test -race -v ./internal/admintodo -run "^TestRefundListDailyAmountMySQL$" -count=1
+TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/admintodo -run "^TestRefundListDailyAmountMySQL$" -count=1
