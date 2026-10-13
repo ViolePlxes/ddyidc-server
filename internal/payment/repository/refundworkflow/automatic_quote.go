@@ -20,6 +20,10 @@ func MachineQuote(ctx context.Context, db *gorm.DB, id int64) (Detail, Calculati
 	if json.Unmarshal(d.Request.Snapshot, &snapshot) != nil {
 		return d, Calculation{}, Fees{}, ErrCalculation
 	}
+	snapshot, e = ResolvePurchasedPeriod(db.WithContext(ctx), *d.Request, snapshot)
+	if e != nil {
+		return d, Calculation{}, Fees{}, e
+	}
 	for _, p := range snapshot.Periods {
 		if p.InstanceID <= 0 || p.RenewalID > 0 || p.Unstarted {
 			return d, Calculation{}, Fees{}, ErrCalculation

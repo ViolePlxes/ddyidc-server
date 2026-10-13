@@ -84,6 +84,10 @@ func Preview(ctx context.Context, db *gorm.DB, id int64, fees Fees) (Calculation
 	if json.Unmarshal(detail.Request.Snapshot, &snapshot) != nil {
 		return Calculation{}, ErrCalculation
 	}
+	snapshot, err = ResolvePurchasedPeriod(db.WithContext(ctx), *detail.Request, snapshot)
+	if err != nil {
+		return Calculation{}, err
+	}
 	return Calculate(snapshot, detail.CreatedAt, fees)
 }
 func Review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewInput) (payment.RefundApplication, error) {
@@ -172,6 +176,10 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 			var snapshot Snapshot
 			if json.Unmarshal(req.Snapshot, &snapshot) != nil {
 				return ErrCalculation
+			}
+			snapshot, periodErr := ResolvePurchasedPeriod(tx, req, snapshot)
+			if periodErr != nil {
+				return periodErr
 			}
 			calc, err := Calculate(snapshot, out.CreatedAt, in.Fees)
 			if err != nil {

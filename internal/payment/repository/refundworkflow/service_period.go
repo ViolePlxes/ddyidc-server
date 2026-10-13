@@ -30,7 +30,7 @@ func renewalPeriod(tx *gorm.DB, o order.Order, item order.OrderItem, paid balanc
 	if err := tx.Unscoped().Clauses(clause.Locking{Strength: "SHARE"}).First(&h, r.InstanceID).Error; err != nil {
 		return Period{}, nil, ErrConflict
 	}
-	p := Period{BillingCycle: originalBillingCycle(item), InstanceID: h.ID, OwnershipVersion: h.OwnershipVersion, RenewalID: r.ID, Paid: paid, Start: &r.BaseExpiry, EntitlementStart: h.ActivatedAt, EntitlementEnd: h.ExpiresAt}
+	p := Period{BillingDays: originalBillingDays(item), BillingCycle: originalBillingCycle(item), InstanceID: h.ID, OwnershipVersion: h.OwnershipVersion, RenewalID: r.ID, Paid: paid, Start: &r.BaseExpiry, EntitlementStart: h.ActivatedAt, EntitlementEnd: h.ExpiresAt}
 	warnings := []string{}
 	if r.State != "completed" || r.BaseExpiry.IsZero() {
 		warnings = append(warnings, "本次续费尚未核实交付结果，不能估算退款服务周期")

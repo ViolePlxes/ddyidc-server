@@ -14,6 +14,7 @@ var ErrCalculation = errors.New("计费周期或费用明细不完整，请先�
 var ErrPolicy = errors.New("退款只允许后台审核后退入账户余额，不允许自动退款或登记外部退款完成")
 
 type Period struct {
+	BillingDays      int64         `json:"billingDays,omitempty"`
 	BillingCycle     string        `json:"billingCycle,omitempty"`
 	InstanceID       int64         `json:"instanceId,string"`
 	OwnershipVersion int64         `json:"ownershipVersion"`

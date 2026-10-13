@@ -133,7 +133,7 @@ func SubmitOrder(ctx context.Context, db *gorm.DB, customer, orderID int64, reas
 					share = itemPaid - allocated
 				}
 				allocated += share
-				period := Period{Paid: share, Unstarted: true, BillingCycle: originalBillingCycle(item)}
+				period := Period{Paid: share, Unstarted: true, BillingDays: originalBillingDays(item), BillingCycle: originalBillingCycle(item)}
 				if int(index) < len(hosts) {
 					h := hosts[index]
 					period.InstanceID = h.ID

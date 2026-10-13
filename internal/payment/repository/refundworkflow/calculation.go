@@ -69,6 +69,14 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 			if period%(24*time.Hour) != 0 {
 				quote.TotalDays++
 			}
+			if p.BillingDays < 0 || p.BillingDays > 36600 {
+				return out, ErrCalculation
+			}
+			if p.BillingDays > 0 {
+				quote.TotalDays = p.BillingDays
+			} else if days := defaultPurchasedDays(p.BillingCycle); days > 0 {
+				quote.TotalDays = days
+			}
 			if !applied.Before(*p.End) {
 				quote.UsedDays = quote.TotalDays
 			} else if applied.After(*p.Start) {
