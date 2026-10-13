@@ -3,6 +3,7 @@ package admintodo
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestExpiringDisplayMySQL(t *testing.T) {
@@ -21,6 +22,9 @@ func TestExpiringDisplayMySQL(t *testing.T) {
 	}
 	if rows[0].BillingCycle != "monthly" || rows[1].BillingCycle != "annually" || rows[0].ExpiresAt == nil || rows[1].ExpiresAt == nil {
 		t.Fatal("expiry/current cycle missing")
+	}
+	if delta := rows[0].ExpiresAt.Sub(time.Now().UTC().Add(24 * time.Hour)); delta > time.Minute || delta < -time.Minute {
+		t.Fatal("UTC expiry interpreted using driver local timezone")
 	}
 	if rows[0].IPAddress != "192.0.2.10" || rows[1].IPAddress != "" || rows[2].IPAddress != "" {
 		t.Fatal("IP display invalid or leaked")

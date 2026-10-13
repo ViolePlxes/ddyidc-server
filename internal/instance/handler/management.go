@@ -74,7 +74,18 @@ func (h *handler) renewalOptions(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, e)
 		return
 	}
-	writeJSON(w, map[string]any{"items": out})
+	cycle, _ := h.service.CurrentBillingCycle(r.Context(), customer, id)
+	matched := false
+	for _, option := range out {
+		if option.Cycle == cycle {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		cycle = ""
+	}
+	writeJSON(w, map[string]any{"items": out, "currentCycle": cycle})
 }
 func (h *handler) createRenewal(w http.ResponseWriter, r *http.Request) {
 	customer, ok := h.claims(w, r)

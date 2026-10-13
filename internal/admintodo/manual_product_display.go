@@ -14,10 +14,10 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 	for i := range entries {
 		e := &entries[i]
 		var hosts []struct {
-			ID        string
-			ExpiresAt *time.Time
+			ID         string
+			ExpiresUTC string
 		}
-		query := db.WithContext(ctx).Table("instance.instances h").Select("CAST(h.id AS CHAR) id,h.expires_at").Where("h.customer_id=? AND h.deleted_at IS NULL", e.CustomerID)
+		query := db.WithContext(ctx).Table("instance.instances h").Select("CAST(h.id AS CHAR) id,DATE_FORMAT(h.expires_at,'%Y-%m-%dT%H:%i:%sZ') expires_utc").Where("h.customer_id=? AND h.deleted_at IS NULL", e.CustomerID)
 		if e.Source == "instance" {
 			query = query.Where("h.id=?", e.InstanceID)
 		} else {
@@ -28,7 +28,9 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 		}
 		if len(hosts) == 1 {
 			e.InstanceID = hosts[0].ID
-			e.ExpiresAt = hosts[0].ExpiresAt
+			if expiry, err := time.Parse(time.RFC3339, hosts[0].ExpiresUTC); err == nil {
+				e.ExpiresAt = &expiry
+			}
 		}
 		var bills []struct {
 			ID      string
