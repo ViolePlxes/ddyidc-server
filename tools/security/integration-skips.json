@@ -563,6 +563,6 @@
   },
   "ddyidc/internal/admintodo/TestRefundListDailyAmountMySQL": {
     "disposition": "isolated_suite_required",
-    "verification": "Run in test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET, including TZ=Asia/Shanghai and FOUNDATION_MYSQL_LOCAL_TIME=1. Verify application-time daily amount, customer ownership, and matching UTC detail time. Normal-suite skip is not a pass."
+    "verification": "Run in test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET, including TZ=Asia/Shanghai and FOUNDATION_MYSQL_LOCAL_TIME=1. Verify application-time daily amount, customer ownership, and matching business-zone detail time; 23 elapsed hours must remain one charged day. Normal-suite skip is not a pass."
   }
 }

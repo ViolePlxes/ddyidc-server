@@ -54,20 +54,18 @@ func enrichRefundMachines(ctx context.Context, db *gorm.DB, entries []Entry) err
 		}
 	}
 	type applyTime struct {
-		ID         string
-		AppliedUTC string
+		ID        string
+		AppliedAt time.Time
 	}
 	times := []applyTime{}
 	if len(applications) > 0 {
-		if err := db.WithContext(ctx).Table("payment.payment_refunds").Select("CAST(id AS CHAR) id,DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%sZ') applied_utc").Where("id IN ?", applications).Scan(&times).Error; err != nil {
+		if err := db.WithContext(ctx).Table("payment.payment_refunds").Select("CAST(id AS CHAR) id,created_at applied_at").Where("id IN ?", applications).Scan(&times).Error; err != nil {
 			return err
 		}
 	}
 	applied := map[string]time.Time{}
 	for _, row := range times {
-		if value, err := time.Parse(time.RFC3339, row.AppliedUTC); err == nil {
-			applied[row.ID] = value
-		}
+		applied[row.ID] = row.AppliedAt
 	}
 	byApplication := map[string]workflow.Request{}
 	ids := []int64{}

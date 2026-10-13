@@ -45,19 +45,9 @@ type Detail struct {
 
 func Load(ctx context.Context, db *gorm.DB, id int64) (Detail, error) {
 	var out Detail
-	var row struct {
-		payment.RefundApplication
-		CreatedUTC string
-	}
-	if err := db.WithContext(ctx).Table("payment.payment_refunds").Select("*,DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%sZ') created_utc").Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&row).Error; err != nil {
+	if err := db.WithContext(ctx).Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&out.RefundApplication).Error; err != nil {
 		return out, ErrConflict
 	}
-	out.RefundApplication = row.RefundApplication
-	applied, errTime := time.Parse(time.RFC3339, row.CreatedUTC)
-	if errTime != nil {
-		return out, ErrCalculation
-	}
-	out.CreatedAt = applied
 	var req Request
 	if err := db.WithContext(ctx).First(&req, "application_id=?", id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -140,15 +130,6 @@ func review(ctx context.Context, db *gorm.DB, id int64, actor Actor, in ReviewIn
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND refund_no LIKE 'TODO%'", id).Take(&out).Error; err != nil {
 			return ErrConflict
 		}
-		var appliedRow struct{ CreatedUTC string }
-		if err := tx.Table("payment.payment_refunds").Select("DATE_FORMAT(created_at,'%Y-%m-%dT%H:%i:%sZ') created_utc").Where("id=?", id).Take(&appliedRow).Error; err != nil {
-			return err
-		}
-		appliedUTC, errTime := time.Parse(time.RFC3339, appliedRow.CreatedUTC)
-		if errTime != nil {
-			return ErrCalculation
-		}
-		out.CreatedAt = appliedUTC
 		var audit struct {
 			Kind, Source, Action, Notes, Evidence string
 			ObjectID, AdminID                     int64

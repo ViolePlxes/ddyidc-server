@@ -123,8 +123,8 @@ func TestRefundListDailyAmountMySQL(t *testing.T) {
 	tx := db.Begin()
 	defer tx.Rollback()
 	ctx := context.Background()
-	applied := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	start := applied.Add(-time.Hour * 10)
+	applied := time.Date(2026, 10, 13, 12, 0, 0, 0, time.Local)
+	start := applied.Add(-time.Hour * 23)
 	end := start.Add(time.Hour * 24 * 30)
 	snapshot, _ := json.Marshal(workflow.Snapshot{Paid: 10000, MinimumSetup: 1000, Periods: []workflow.Period{{InstanceID: 880019001, Paid: 10000, Start: &start, End: &end}}})
 	req := workflow.Request{ApplicationID: 880019002, CustomerID: 880019003, ObjectID: 880019004, Source: "order", RequestID: "daily-list-isolated", Snapshot: snapshot, CreatedAt: applied}
@@ -140,7 +140,7 @@ func TestRefundListDailyAmountMySQL(t *testing.T) {
 	}
 	detail, err := workflow.Load(ctx, tx, 880019002)
 	if err != nil || !detail.CreatedAt.Equal(applied) {
-		t.Fatalf("UTC application mismatch: %v %v", detail.CreatedAt, err)
+		t.Fatalf("application time mismatch: %v %v", detail.CreatedAt, err)
 	}
 	if rows[0].RefundableAmount == nil || *rows[0].RefundableAmount != "87.00" || rows[1].RefundableAmount != nil || rows[0].Amount != "100.00" {
 		t.Fatalf("incorrect daily estimate or ownership: %+v", rows)
