@@ -69,10 +69,6 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 			if period%(24*time.Hour) != 0 {
 				quote.TotalDays++
 			}
-			fixedDays, fixed := fixedRefundDays(p, period)
-			if fixed {
-				quote.TotalDays = fixedDays
-			}
 			if !applied.Before(*p.End) {
 				quote.UsedDays = quote.TotalDays
 			} else if applied.After(*p.Start) {
@@ -96,7 +92,7 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 			if p.End.After(remainingStart) {
 				fullDays = int64(p.End.Sub(remainingStart) / (24 * time.Hour))
 			}
-			if !fixed && fullDays < quote.RemainingDays {
+			if fullDays < quote.RemainingDays {
 				quote.PartialDayDeductionDays = quote.RemainingDays - fullDays
 				quote.RemainingDays = fullDays
 			}
