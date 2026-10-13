@@ -69,6 +69,10 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 			if period%(24*time.Hour) != 0 {
 				quote.TotalDays++
 			}
+			fixedDays, fixed := fixedRefundDays(p, period)
+			if fixed {
+				quote.TotalDays = fixedDays
+			}
 			if !applied.Before(*p.End) {
 				quote.UsedDays = quote.TotalDays
 			} else if applied.After(*p.Start) {
@@ -77,6 +81,9 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 				if used%(24*time.Hour) != 0 {
 					quote.UsedDays++
 				}
+			}
+			if quote.UsedDays > quote.TotalDays {
+				quote.UsedDays = quote.TotalDays
 			}
 			quote.RemainingDays = quote.TotalDays - quote.UsedDays
 			// A partial remaining day is not refundable. This also handles legacy
@@ -89,7 +96,7 @@ func Calculate(snapshot Snapshot, applied time.Time, fees Fees) (Calculation, er
 			if p.End.After(remainingStart) {
 				fullDays = int64(p.End.Sub(remainingStart) / (24 * time.Hour))
 			}
-			if fullDays < quote.RemainingDays {
+			if !fixed && fullDays < quote.RemainingDays {
 				quote.PartialDayDeductionDays = quote.RemainingDays - fullDays
 				quote.RemainingDays = fullDays
 			}

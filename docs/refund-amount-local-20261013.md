@@ -17,3 +17,5 @@
 证据：deploy-notes/refund-amount-machine-fallback-final.log、refund-amount-workflow-all.log、refund-amount-timezone.log、refund-amount-all-tests.jsonl、refund-amount-browser-final.json、refund-amount-preview-20261013.png。本地预览 /dd-admin-aaaaaaaaaaaaaaaaaaaaaaaa/todos/refunds?demo=amount。
 
 地图：后台待办与异常处理、退款与人工财务操作、实例与产品生命周期、测试与回归矩阵。此前机器标识列调整仍保留。
+
+2026-10-13 发布期间用户追加固定核算周期：月30天、季90天、年365天；不足一天按一天扣费。以原购买周期为准，新申请保存原订单周期；旧无周期快照仅将标准单月28–31、单季89–92、单年365–366天区间归一，不读当前续费周期。实际到期仍不退，费用/原实付上限和人工金额方式保留。112/145已推未安装；最新候选113/146，取代前一候选。
