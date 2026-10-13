@@ -17,6 +17,12 @@ func manualProductFixtureDB(t *testing.T) *gorm.DB {
 	db := testenv.MySQL(t)
 	// Regular tables avoid MySQL temporary-table reopen limits in correlated queries.
 	statements := []string{
+		"CREATE TABLE IF NOT EXISTS instance.instance_upgrades(id BIGINT,instance_id BIGINT,order_id BIGINT,customer_id BIGINT,state VARCHAR(32),updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS customer.customer_realname(id BIGINT,customer_id BIGINT,name VARCHAR(64),status INT,updated_at DATETIME)",
+		"CREATE TABLE IF NOT EXISTS common.suppliers(id BIGINT,url VARCHAR(255))",
+		"CREATE TABLE IF NOT EXISTS `order`.unit_procurements(id BIGINT,order_id BIGINT,supplier_id BIGINT,upstream_order_id VARCHAR(100))",
+		"CREATE TABLE IF NOT EXISTS `order`.upstream_orders(id BIGINT,order_id BIGINT,supplier_id BIGINT,upstream_order_id VARCHAR(100),upstream_host_id VARCHAR(100))",
+
 		"CREATE TABLE IF NOT EXISTS customer.customers(id BIGINT,username VARCHAR(64))",
 		"CREATE TABLE IF NOT EXISTS instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,order_item_id BIGINT,product_id BIGINT DEFAULT 0,module_type VARCHAR(32) DEFAULT 'cloud',config_snapshot JSON,primary_ip VARCHAR(45) DEFAULT '',expires_at DATETIME(3),ownership_version BIGINT,upstream_provider_id BIGINT,upstream_instance_id VARCHAR(64),product_name VARCHAR(128),instance_no VARCHAR(64),created_at DATETIME(3),updated_at DATETIME(3),deleted_at DATETIME NULL)",
 		"CREATE TABLE IF NOT EXISTS instance.instance_events(id BIGINT,instance_id BIGINT,status INT,event_type VARCHAR(32),updated_at DATETIME(3))",
@@ -61,6 +67,7 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 		t.Fatal(tx.Error)
 	}
 	statements := []string{
+
 		"INSERT INTO instance.instances(id,customer_id,order_id,order_item_id,ownership_version,upstream_provider_id,upstream_instance_id,product_name,instance_no,created_at,updated_at,deleted_at) VALUES(901,77,701,0,1,88,'900','fixture','HOST-901',NOW(),NOW(),NULL)",
 		"INSERT INTO instance.instance_events VALUES(501,901,3,'create',NOW())",
 	}

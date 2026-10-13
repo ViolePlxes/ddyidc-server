@@ -11,6 +11,11 @@ import (
 
 func p2Routes(h *Handler) []rest.Route {
 	return []rest.Route{
+		{Method: http.MethodGet, Path: "/api/v1/cdnsell/cloud-certificates", Handler: h.cloudCertificates},
+		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/cloud-certificates", Handler: h.adminCloudCertificates},
+		{Method: http.MethodPost, Path: "/admin/v1/cdnsell/ip-check", Handler: h.adminIPCheck},
+		{Method: http.MethodGet, Path: "/api/v1/cdnsell/statistics", Handler: h.statistics},
+		{Method: http.MethodGet, Path: "/admin/v1/cdnsell/statistics", Handler: h.adminStatistics},
 		{Method: http.MethodPost, Path: "/api/v1/cdnsell/domains", Handler: h.createDomain},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains", Handler: h.domains},
 		{Method: http.MethodGet, Path: "/api/v1/cdnsell/domains/:id", Handler: h.domainDetail},

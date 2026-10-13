@@ -36,13 +36,16 @@ type Notifier interface {
 	NotifyCustomer(context.Context, string, int64, string, map[string]string) error
 }
 type Service struct {
-	db            *gorm.DB
-	key           []byte
-	notifier      Notifier
-	cloud         provider.Provider
-	now           func() time.Time
-	cloudMu       sync.Mutex
-	lastCloudCall time.Time
+	db              *gorm.DB
+	key             []byte
+	notifier        Notifier
+	cloud           provider.Provider
+	now             func() time.Time
+	cloudMu         sync.Mutex
+	lastCloudCall   time.Time
+	statisticsMu    sync.Mutex
+	statisticsCache map[string]statisticsCacheEntry
+	statisticsGate  chan struct{}
 }
 
 func NewService(db *gorm.DB, key []byte, notifier Notifier) *Service {

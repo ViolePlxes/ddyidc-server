@@ -545,5 +545,15 @@
   "ddyidc/internal/certification/TestPendingManualReviewMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable MySQL only: pending manual/alipay review, terminal status, audit and single concurrent winner. A normal skip is not a pass."
+  },
+  "ddyidc/internal/cdnsell/TestStatisticsCacheAuthorizationMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "使用临时FOUNDATION_MYSQL_SOCKET验证缓存命中仍复核用户归属、域名验证状态和服务账号启用状态。普通CI跳过不代表通过；2026-10-12已在隔离MySQL独立执行通过。"
+  },
+  "ddyidc/internal/admintodo/TestManualProductDisplayMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "隔离MySQL验证待手动处理产品到期时间、精确账单关联和跨客户隔离；普通CI跳过不代表通过。"
   }
 }
