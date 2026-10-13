@@ -134,9 +134,13 @@ func TestRefundListDailyAmountMySQL(t *testing.T) {
 	if err := tx.Exec("INSERT INTO payment.payment_refunds(id,refund_no,payment_id,order_id,user_id,refund_amount,created_at) VALUES(880019002,'TODODAILYDISPLAY',0,880019004,880019003,100.00,?)", applied.Format("2006-01-02 15:04:05")).Error; err != nil {
 		t.Fatal(err)
 	}
-	rows := []Entry{{ID: "880019002", Source: "application", Status: "0", CustomerID: "880019003", OrderID: "880019004", Amount: "100.00"}, {ID: "880019002", Source: "application", Status: "0", CustomerID: "880019099"}}
+	rows := []Entry{{ID: "880019002", Source: "application", Status: "application_pending", CustomerID: "880019003", OrderID: "880019004", Amount: "100.00"}, {ID: "880019002", Source: "application", Status: "application_pending", CustomerID: "880019099"}}
 	if err := enrichRefundMachines(ctx, tx, rows); err != nil {
 		t.Fatal(err)
+	}
+	page, err := List(ctx, tx, "refunds", Filter{Page: 1, PageSize: 20, CustomerID: "880019003"})
+	if err != nil || len(page.Items) != 1 || page.Items[0].Status != "application_pending" || page.Items[0].RefundableAmount == nil || *page.Items[0].RefundableAmount != "87.00" {
+		t.Fatalf("actual list stage/amount projection failed: %+v %v", page, err)
 	}
 	detail, err := workflow.Load(ctx, tx, 880019002)
 	if err != nil || !detail.CreatedAt.Equal(applied) {

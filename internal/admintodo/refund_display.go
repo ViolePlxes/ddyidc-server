@@ -127,7 +127,7 @@ func enrichRefundMachines(ctx context.Context, db *gorm.DB, entries []Entry) err
 	}
 	for i := range entries {
 		e := &entries[i]
-		if e.Source == "application" && e.Status == "0" {
+		if e.Source == "application" && (e.Status == "application_pending" || e.Status == "upstream_refund_waiting" || e.Status == "refund_submission_pending" || e.Status == "upstream_refund_rejected" || e.Status == "0") {
 			if request, ok := byApplication[e.ID]; ok && strconv.FormatInt(request.CustomerID, 10) == e.CustomerID {
 				snapshot := snapshots[e.ID]
 				fees := workflow.Fees{Setup: snapshot.MinimumSetup.String(), Handling: snapshot.MinimumHandling.String(), Installation: "0.00", Gift: "0.00", Traffic: "0.00", ValueAdded: "0.00", Evidence: "原始账单快照，按申请时间计算，不足一天按一天扣费"}
