@@ -98,7 +98,7 @@ func TestPushMarketRealDatabase(t *testing.T) {
 		must(err)
 		return order
 	}
-	_, err = balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyer, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: buyer, Channel: "admin_manual", RequestID: fmt.Sprintf("P017:%d", buyer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", Notes: "017 rollback-only funding"})
+	_, err = balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: buyer, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: buyer, Channel: "admin_manual", RequestID: fmt.Sprintf("P017:%d", buyer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "017 rollback-only funding"})
 	must(err)
 	order := makeOrder("0.10")
 	if order.Fee != "0.01" || order.SellerIncome != "0.09" {

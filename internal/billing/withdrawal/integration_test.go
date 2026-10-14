@@ -27,7 +27,7 @@ func TestWithdrawalConcurrentMySQL(t *testing.T) {
 	for k, v := range map[string]string{"todos.withdrawals.enabled": "1", "todos.withdrawals.fee_policy": "free", "todos.withdrawals.allowed_sources": "[\"manual_credit\"]"} {
 		must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)", snowflake.GenID(), k, v).Error)
 	}
-	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("CREDIT%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated concurrent test"})
+	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("CREDIT%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated concurrent test"})
 	must(err)
 	var wg sync.WaitGroup
 	results := make(chan error, 8)
@@ -77,11 +77,11 @@ func TestWithdrawalConcurrentSpendCannotWithdrawPointsMySQL(t *testing.T) {
 	for k, v := range map[string]string{"todos.withdrawals.enabled": "1", "todos.withdrawals.fee_policy": "free", "todos.withdrawals.allowed_sources": "[\"manual_credit\"]"} {
 		must(db.Exec("INSERT INTO system.system_configs(id,`key`,value) VALUES(?,?,?) ON DUPLICATE KEY UPDATE value=VALUES(value)", snowflake.GenID(), k, v).Error)
 	}
-	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("CASH%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated cash"})
+	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("CASH%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated cash"})
 	must(err)
 	points := snowflake.GenID()
 	must(db.Table("system.points_orders").Create(map[string]any{"id": points, "order_no": fmt.Sprintf("POINTS%d", points), "user_id": id, "goods_id": 1, "goods_name": "isolated points balance", "goods_type": "balance", "points_cost": 1, "quantity": 1, "status": "completed", "recipient": "{}", "tracking": "{}", "config_snapshot": "{\"amountCents\":10000}", "delivery_content": "isolated"}).Error)
-	_, err = billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "points_credit", Amount: "100.00", RefType: "points_order", RefID: points, Channel: "points", RequestID: fmt.Sprintf("POINTSCREDIT%d", id), Notes: "isolated non-cash"})
+	_, err = billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "points_credit", Amount: "100.00", RefType: "points_order", RefID: points, Channel: "points", RequestID: fmt.Sprintf("POINTSCREDIT%d", id), ClientNotes: "测试客户可见原因", Notes: "isolated non-cash"})
 	must(err)
 	spend := db.Begin()
 	defer spend.Rollback()
@@ -108,7 +108,7 @@ func TestWithdrawalConcurrentSpendCannotWithdrawPointsMySQL(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("withdrawal did not reach account lock")
 	}
-	_, err = billing.New(spend).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_debit", Amount: "-100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("SPEND%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "consume verified cash"})
+	_, err = billing.New(spend).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_debit", Amount: "-100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("SPEND%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "consume verified cash"})
 	must(err)
 	must(spend.Commit().Error)
 	select {

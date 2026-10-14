@@ -28,6 +28,7 @@ jobs:
           go build ./...
           go build -trimpath -o /tmp/ddyidc-server .
           python3 deploy/linux/tests/test_nginx_proxy.py
+          python3 deploy/linux/tests/test_ledger_guard_upgrade.py
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
           bash deploy/linux/tests/test_foundation_modules.sh > foundation-modules.log 2>&1
           bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1

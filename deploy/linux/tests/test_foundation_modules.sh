@@ -41,3 +41,15 @@ go test -race -v ./internal/instance/service -run "^TestMachineRefund(DecisionsA
 # Refund-list estimates use the same business-zone application cutoff as the locked review.
 go test -race -v ./internal/admintodo ./internal/payment/repository/refundworkflow -run "^(TestRefundListDailyAmountMySQL|TestResolvePurchasedPeriodMySQL)$" -count=1
 TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/admintodo ./internal/payment/repository/refundworkflow -run "^(TestRefundListDailyAmountMySQL|TestResolvePurchasedPeriodMySQL)$" -count=1
+
+# Customer ledger and transaction invariants, before any production guard fixture.
+go test -race -v ./internal/billing/balance -run "^(TestLedger.*MySQL|TestStatementSnapshotAndProjectionMySQL|TestStatementMissingAccountVisibilityMySQL)$" -count=1
+go test -race -v ./internal/customer/handler -run "^TestBalanceStatementHTTPMySQL$" -count=1
+go test -race -v ./internal/payment/repository -run "^TestVerifiedRechargeIntegrityReviewMySQL$" -count=1
+
+TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/billing/balance -run "^TestLedgerTimeAndFreezeMySQL$" -count=1
+
+# Production guard must accept registered upgrade/coupon accounting totals.
+go test -race -v ./internal/billing/balance -run "^TestBalanceGuardMySQL$" -count=1
+go test -race -v ./internal/instance/service -run "^TestUpgradePaidDeliveryAndUnknownOutcomeMySQL$" -count=1
+go test -race -v ./internal/promocoupon -run "^TestPromoCouponsMySQL$" -count=1

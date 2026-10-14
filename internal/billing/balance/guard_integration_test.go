@@ -66,7 +66,7 @@ func TestBalanceGuardMySQL(t *testing.T) {
 	}
 	service := New(runtime)
 	request := func(id, typ, amount string) ChangeRequest {
-		return ChangeRequest{CustomerID: 900001, Type: typ, Amount: amount, RefType: "customer", RefID: 900001, Channel: "admin_manual", RequestID: id, AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated guard validation"}
+		return ChangeRequest{CustomerID: 900001, Type: typ, Amount: amount, RefType: "customer", RefID: 900001, Channel: "admin_manual", RequestID: id, AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated guard validation"}
 	}
 	credit := request("guard-credit", "manual_credit", "100.00")
 	first, err := service.Change(ctx, credit)

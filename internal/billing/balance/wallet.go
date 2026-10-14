@@ -138,11 +138,7 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		} else {
 			return ErrBusiness
 		}
-		var wallet struct {
-			UserID                                              int64
-			Balance, FrozenBalance, TotalIncome, TotalWithdrawn Money
-			Version                                             int64
-		}
+		var wallet walletState
 		if err = tx.Exec("INSERT IGNORE INTO system.marketplace_wallet(user_id,balance,frozen_balance,total_income,total_withdrawn,version,updated_at) VALUES (?,0,0,0,0,0,?)", r.CustomerID, time.Now()).Error; err != nil {
 			return err
 		}
@@ -158,6 +154,9 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 			return nil
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err = verifyWalletLedger(tx, wallet); err != nil {
 			return err
 		}
 		before, frozenBefore := wallet.Balance, wallet.FrozenBalance
@@ -212,6 +211,27 @@ func (s *BalanceService) changeWallet(ctx context.Context, r ChangeRequest) (*Tr
 		}
 		if updated.RowsAffected != 1 {
 			return ErrReplay
+		}
+		var actual walletState
+		if err = tx.Table("system.marketplace_wallet").Where("user_id=?", r.CustomerID).Take(&actual).Error; err != nil {
+			return err
+		}
+		if actual.Balance != wallet.Balance || actual.FrozenBalance != wallet.FrozenBalance || actual.Version != wallet.Version+1 || actual.TotalIncome != wallet.TotalIncome || actual.TotalWithdrawn != wallet.TotalWithdrawn {
+			return ErrLedgerIntegrity
+		}
+		var saved struct {
+			UserID, RefID, AccountVersion                                  int64
+			FlowNo, Type, RequestHash                                      string
+			Amount, BalanceBefore, BalanceAfter, FrozenBefore, FrozenAfter Money
+		}
+		if err = tx.Table("system.marketplace_flows").Where("id=?", flowID).Take(&saved).Error; err != nil {
+			return err
+		}
+		if saved.UserID != r.CustomerID || saved.RefID != r.RefID || saved.AccountVersion != wallet.Version+1 || saved.FlowNo != r.RequestID || saved.Type != r.Type || saved.RequestHash != hash || saved.Amount != abs || saved.BalanceBefore != before || saved.BalanceAfter != wallet.Balance || saved.FrozenBefore != frozenBefore || saved.FrozenAfter != wallet.FrozenBalance {
+			return ErrLedgerIntegrity
+		}
+		if err = verifyWalletLedger(tx, actual); err != nil {
+			return err
 		}
 		out = Transaction{ID: flowID, Amount: amount, BalanceBefore: before, BalanceAfter: wallet.Balance, FrozenBefore: frozenBefore, FrozenAfter: wallet.FrozenBalance}
 		return nil

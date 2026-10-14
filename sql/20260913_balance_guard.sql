@@ -39,10 +39,10 @@ BEGIN
    AND t.amount=NEW.balance-OLD.balance
    AND NEW.credit_limit=OLD.credit_limit
    AND NEW.total_recharge=OLD.total_recharge+IF(t.type='recharge',t.amount,0)
-   AND NEW.total_refund=OLD.total_refund+IF(t.type='refund',t.amount,0)
+   AND NEW.total_refund=OLD.total_refund+IF(t.type IN ('refund','promo_coupon_refund'),t.amount,0)
    AND NEW.total_withdraw=OLD.total_withdraw-IF(t.type='withdraw',t.amount,0)
    AND NEW.total_consume=CASE
-     WHEN t.type IN ('order_pay','instance_renewal_pay') THEN OLD.total_consume-t.amount
+     WHEN t.type IN ('order_pay','instance_renewal_pay','instance_upgrade_pay','promo_coupon_pay') THEN OLD.total_consume-t.amount
      WHEN t.type='refund' AND t.channel='groupbuy' THEN GREATEST(0,OLD.total_consume-t.amount)
      ELSE OLD.total_consume END;
   IF matching<>1 OR NEW.version<>OLD.version+1 OR NEW.customer_id<>OLD.customer_id OR NEW.id<>OLD.id THEN

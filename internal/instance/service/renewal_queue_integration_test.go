@@ -39,7 +39,7 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	if err := db.Exec("INSERT INTO customer.customers(id,username,password_hash) VALUES(77,'isolated-renewal','!login-disabled')").Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, err := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: 77, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 77, Channel: "admin_manual", RequestID: "isolated-renew-fund", AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated integration funds"}); err != nil {
+	if _, err := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: 77, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 77, Channel: "admin_manual", RequestID: "isolated-renew-fund", AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated integration funds"}); err != nil {
 		t.Fatal(err)
 	}
 	supplierID := int64(1)

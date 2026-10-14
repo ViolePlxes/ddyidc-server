@@ -88,7 +88,7 @@ func TestIntegrationLifecycle(t *testing.T) {
 		if err := database.Exec("INSERT INTO customer.customers (id,tenant_id,username,password_hash,status,level,created_at,updated_at) VALUES (?,0,?,'test',1,1,?,?)", id, fmt.Sprintf("gbtest%d-%d", index, id), now, now).Error; err != nil {
 			t.Fatal(err)
 		}
-		if _, err := balance.New(database).Change(ctx, balance.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "1000.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("GBTEST:%d", id), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", Notes: "测试资金"}); err != nil {
+		if _, err := balance.New(database).Change(ctx, balance.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "1000.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("GBTEST:%d", id), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "测试资金"}); err != nil {
 			t.Fatal(err)
 		}
 	}

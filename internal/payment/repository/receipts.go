@@ -2,13 +2,18 @@ package payment
 
 import (
 	"context"
+	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/payment/domain"
 	types "ddyidc/internal/payment/types"
+	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/tasks"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"net"
+	"strings"
 	"time"
 )
 
@@ -83,4 +88,83 @@ func reviewReceipt(tx *gorm.DB, p *dom.Payment, n dom.VerifiedNotification, paid
 	}
 	p.Status, p.TransactionID, p.PaidAt = dom.StatusReview, n.TransactionID, &paidAt
 	return nil
+}
+
+// ReconcileRechargeReceipt only resumes an already verified, ledger-blocked receipt.
+// Payment row serializes this decision with receipt refunds; no gateway is called.
+func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, adminID int64, name, ip, reason string, confirmed bool) error {
+	reason = strings.TrimSpace(reason)
+	if id <= 0 || adminID <= 0 || strings.TrimSpace(name) == "" || net.ParseIP(ip) == nil || reason == "" || len([]rune(reason)) > 256 {
+		return ErrInvalidState
+	}
+	identity, e := r.paymentIdentity(ctx, id)
+	if e != nil {
+		return e
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		p := *identity
+		if e := r.lockPayment(tx, &p); e != nil {
+			return e
+		}
+		var review struct{ Reason, Status string }
+		if e := tx.Table("payment.receipt_reviews").Clauses(clause.Locking{Strength: "UPDATE"}).Where("payment_id=?", id).Take(&review).Error; e != nil {
+			return e
+		}
+		if p.BizType != dom.BizRecharge || review.Reason != "balance_ledger_mismatch" {
+			return ErrInvalidState
+		}
+		if p.Status == dom.StatusPaid && review.Status == "credited" {
+			return nil
+		}
+		if p.Status != dom.StatusReview || review.Status != "pending" || p.PaidAt == nil || p.TransactionID == "" || p.Currency != "CNY" {
+			return ErrInvalidState
+		}
+		money, e := balance.ParseMoney(p.Amount)
+		if e != nil || int64(money) != p.AmountFen || money <= 0 || money > 5000000 && !confirmed {
+			return ErrInvalidState
+		}
+		var verified int64
+		if e := tx.Table("payment.receipts").Where("payment_id=? AND channel=? AND transaction_id=? AND amount_fen=? AND currency=?", id, p.Channel, p.TransactionID, p.AmountFen, p.Currency).Count(&verified).Error; e != nil {
+			return e
+		}
+		if verified != 1 {
+			return ErrInvalidState
+		}
+		var conflicting int64
+		if e := tx.Table("payment.original_refunds").Where("payment_id=?", id).Count(&conflicting).Error; e != nil {
+			return e
+		}
+		if conflicting > 0 {
+			return ErrInvalidState
+		}
+		if e := tx.Table("payment.todo_refund_requests r").Joins("JOIN payment.payment_refunds a ON a.id=r.application_id").Where("r.source='receipt' AND r.object_id=? AND a.status<>2", id).Count(&conflicting).Error; e != nil {
+			return e
+		}
+		if conflicting > 0 {
+			return ErrInvalidState
+		}
+		now := time.Now()
+		changed := tx.Table("payment.recharge_orders").Where("id=? AND customer_id=? AND status=1 AND amount=?", p.BizID, p.CustomerID, p.AmountFen).Updates(map[string]any{"status": 2, "channel": p.Channel, "paid_at": p.PaidAt, "updated_at": now})
+		if changed.Error != nil {
+			return changed.Error
+		}
+		if changed.RowsAffected != 1 {
+			return ErrInvalidState
+		}
+		if e := tx.Model(&p).Updates(map[string]any{"status": dom.StatusPaid, "updated_at": now}).Error; e != nil {
+			return e
+		}
+		p.Status = dom.StatusPaid
+		if e := creditRecharge(tx, &p, *p.PaidAt); e != nil {
+			return e
+		}
+		if e := tx.Table("payment.receipt_reviews").Where("payment_id=? AND status='pending'", id).Updates(map[string]any{"status": "credited", "resolved_at": now}).Error; e != nil {
+			return e
+		}
+		details, _ := json.Marshal(map[string]any{"paymentId": id, "reason": reason, "action": "resume_verified_recharge"})
+		if e := tx.Table("customer.admin_customer_audits").Create(map[string]any{"id": snowflake.GenID(), "customer_id": p.CustomerID, "admin_id": adminID, "admin_name": name, "action": "receipt_reconcile", "fields": string(details), "operator_ip": ip, "created_at": now}).Error; e != nil {
+			return e
+		}
+		return enqueuePaid(tx, &p)
+	})
 }

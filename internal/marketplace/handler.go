@@ -671,6 +671,9 @@ func writeServiceError(w http.ResponseWriter, err error) {
 	writeError(w, status, err.Error())
 }
 func writeError(w http.ResponseWriter, status int, message string) {
+	if strings.Contains(message, "BALANCE_LEDGER_MISMATCH:") {
+		status = 409
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})

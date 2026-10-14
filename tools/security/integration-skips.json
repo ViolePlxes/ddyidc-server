@@ -568,5 +568,45 @@
   "ddyidc/internal/payment/repository/refundworkflow/TestResolvePurchasedPeriodMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET. Original monthly order with 31 calendar days refunds 29.00 of 30.00; ownership isolation. A skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerIntegrityMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerWriteMismatchRollbackMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerOuterRollbackAndConcurrencyMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestStatementSnapshotAndProjectionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerLargeAccountMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestBalanceStatementHTTPMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/TestVerifiedRechargeIntegrityReviewMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_foundation_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Covers ledger gates, real rollback, concurrency, statement identity/projection and verified receipt preservation. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerSelfConsistentWrongAmountMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run test_foundation_modules.sh. Real storage triggers change -10 to -11 and account 90 to 89 simultaneously; command-derived verification must roll everything back. Skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestLedgerTimeAndFreezeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run test_foundation_modules.sh in UTC and TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1. End-exclusive midnight query and freeze/unfreeze must preserve assets; second release rejected. Skip is not a pass."
+  },
+  "ddyidc/internal/billing/balance/TestStatementMissingAccountVisibilityMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run test_foundation_modules.sh. Missing account must warn without hiding its existing owned ledger, and must not claim balance zero. Skip is not a pass."
   }
 }

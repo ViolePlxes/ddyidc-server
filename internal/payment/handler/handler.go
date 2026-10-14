@@ -1,6 +1,7 @@
 package payment
 
 import (
+	balance "ddyidc/internal/billing/balance"
 	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
@@ -28,6 +29,7 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, manager *auth.M
 		{Method: http.MethodPost, Path: "/admin/v1/payment/delivery-tasks/:id/reconcile", Handler: h.reconcileDeliveryTask},
 		{Method: http.MethodGet, Path: "/admin/v1/payment/delivery-tasks", Handler: h.deliveryTasks},
 		{Method: http.MethodGet, Path: "/admin/v1/payment/receipt-reviews", Handler: h.receiptReviews},
+		{Method: http.MethodPost, Path: "/admin/v1/payment/receipt-reviews/:id/reconcile", Handler: h.reconcileRechargeReceipt},
 		{Method: http.MethodPost, Path: "/admin/v1/payment/refund", Handler: h.refund},
 		{Method: http.MethodPost, Path: "/api/v1/payment/order/:orderId/create", Handler: h.createOrder},
 		{Method: http.MethodPost, Path: "/api/v1/payment/recharge/create", Handler: h.createRecharge},
@@ -340,6 +342,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 }
 
 func writeResult(w http.ResponseWriter, data any, err error) {
+	if errors.Is(err, balance.ErrLedgerIntegrity) {
+		writeError(w, 409, 40910, balance.ErrLedgerIntegrity.Error())
+		return
+	}
 	if err == nil {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": data})
@@ -347,7 +353,11 @@ func writeResult(w http.ResponseWriter, data any, err error) {
 	}
 	var businessError *svc.BusinessError
 	if errors.As(err, &businessError) {
-		writeError(w, http.StatusBadRequest, businessError.Code, businessError.Message)
+		status := http.StatusBadRequest
+		if businessError.Code == 40911 {
+			status = http.StatusConflict
+		}
+		writeError(w, status, businessError.Code, businessError.Message)
 		return
 	}
 	logx.Error("payment request failed")
@@ -358,4 +368,33 @@ func writeError(w http.ResponseWriter, status, code int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message})
+}
+
+func (h *handler) reconcileRechargeReceipt(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	id := parsePathID(w, r, "id")
+	if id == 0 {
+		return
+	}
+	cookie, e := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	if e != nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	claims, e := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if e != nil || claims == nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	var in struct {
+		Reason    string `json:"reason"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	e = h.service.ReconcileRechargeReceipt(r.Context(), id, claims.UserID, claims.Username, clientip.FromRequest(r), in.Reason, in.Confirmed)
+	writeResult(w, map[string]bool{"credited": e == nil}, e)
 }

@@ -21,6 +21,7 @@ var (
 	ErrForbidden     = errors.New("payment business object forbidden")
 	ErrNotPayable    = errors.New("payment business object is not payable")
 	ErrPaymentExists = errors.New("payment already exists")
+	ErrReceiptReview = errors.New("verified receipt awaits review")
 	ErrInvalidState  = errors.New("invalid payment state transition")
 )
 
@@ -209,6 +210,13 @@ func (r *GormRepository) PrepareRecharge(ctx context.Context, customerID, rechar
 }
 
 func (r *GormRepository) insertOrReuse(tx *gorm.DB, payment *dom.Payment) error {
+	var reviews int64
+	if e := tx.Table(payment.TableName()).Where("biz_type=? AND biz_id=? AND status=?", payment.BizType, payment.BizID, dom.StatusReview).Count(&reviews).Error; e != nil {
+		return e
+	}
+	if reviews > 0 {
+		return ErrReceiptReview
+	}
 	var existing dom.Payment
 	err := tx.Table(existing.TableName()).Where("biz_type = ? AND biz_id = ?", payment.BizType, payment.BizID).Order("created_at DESC, id DESC").First(&existing).Error
 	if err == nil {
@@ -308,6 +316,9 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		if err := recordReceipt(tx, &completed, notification, paidAt); err != nil {
 			return err
 		}
+		if err := tx.SavePoint("before_receipt_business").Error; err != nil {
+			return err
+		}
 		switch completed.BizType {
 		case dom.BizOrder:
 			if err := tx.SavePoint("before_order_receipt").Error; err != nil {
@@ -386,6 +397,12 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		completed.Status, completed.TransactionID, completed.NotifyRaw, completed.PaidAt = dom.StatusPaid, notification.TransactionID, notification.SafeRaw, &paidAt
 		if completed.BizType == dom.BizRecharge {
 			if err := creditRecharge(tx, &completed, paidAt); err != nil {
+				if errors.Is(err, balance.ErrLedgerIntegrity) {
+					if e := tx.RollbackTo("before_receipt_business").Error; e != nil {
+						return errors.Join(err, e)
+					}
+					return reviewReceipt(tx, &completed, notification, paidAt, "balance_ledger_mismatch")
+				}
 				return err
 			}
 		}

@@ -409,9 +409,25 @@ func mapRepositoryError(err error) error {
 		return &BusinessError{Code: 40002, Message: "无权操作该订单"}
 	case errors.Is(err, rep.ErrNotPayable), errors.Is(err, rep.ErrInvalidState):
 		return &BusinessError{Code: 40003, Message: "当前状态不可支付"}
+	case errors.Is(err, rep.ErrReceiptReview):
+		return &BusinessError{Code: 40911, Message: "该笔收款已到账，正在核查入账，请勿再次支付"}
 	case errors.Is(err, rep.ErrPaymentExists):
 		return &BusinessError{Code: 40004, Message: "支付单已存在"}
 	default:
 		return err
 	}
+}
+
+func (s *Service) ReconcileRechargeReceipt(ctx context.Context, id, adminID int64, name, ip, reason string, confirmed bool) error {
+	repo, ok := s.repo.(interface {
+		ReconcileRechargeReceipt(context.Context, int64, int64, string, string, string, bool) error
+	})
+	if !ok {
+		return errors.New("receipt recovery unavailable")
+	}
+	e := repo.ReconcileRechargeReceipt(ctx, id, adminID, name, ip, reason, confirmed)
+	if errors.Is(e, rep.ErrInvalidState) {
+		return &BusinessError{Code: 40000, Message: "收款、账本或退款状态不允许恢复，请核查后重试"}
+	}
+	return e
 }

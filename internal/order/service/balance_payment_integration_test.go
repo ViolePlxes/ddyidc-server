@@ -51,7 +51,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 				}
 			}
 			must(tx.Exec("INSERT INTO customer.customers(id,username,password_hash) VALUES(?,?,'!login-disabled')", cid, fmt.Sprintf("isolated-balance-%d", cid)).Error)
-			_, err := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: cid, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: cid, Channel: "admin_manual", RequestID: fmt.Sprintf("isolated-fund:%d", cid), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated rollback fixture"})
+			_, err := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: cid, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: cid, Channel: "admin_manual", RequestID: fmt.Sprintf("isolated-fund:%d", cid), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated rollback fixture"})
 			must(err)
 			amount := int64(100)
 			if scenario == "insufficient" {
@@ -144,7 +144,7 @@ func TestOrderBalanceMySQL(t *testing.T) {
 	if err := db.Exec("INSERT INTO customer.customers(id,username,password_hash) VALUES(?,?,'!login-disabled')", cid, fmt.Sprintf("isolated-concurrent-%d", cid)).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err = balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: cid, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: cid, Channel: "admin_manual", RequestID: fmt.Sprintf("isolated-fund:%d", cid), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated concurrent verification"})
+	_, err = balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: cid, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: cid, Channel: "admin_manual", RequestID: fmt.Sprintf("isolated-fund:%d", cid), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated concurrent verification"})
 	if err != nil {
 		t.Fatal(err)
 	}

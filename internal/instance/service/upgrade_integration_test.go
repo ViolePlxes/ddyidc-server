@@ -78,7 +78,7 @@ func TestUpgradePaidDeliveryAndUnknownOutcomeMySQL(t *testing.T) {
 		p := &upgradeTestProvider{ambiguous: ambiguous}
 		s := NewService(repo.NewRepository(db), securityResolver{p})
 		s.SetManagement(db)
-		_, e := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: customer, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: customer, Channel: "admin_manual", RequestID: fmt.Sprintf("fixture-credit-%d", customer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", Notes: "isolated balance fixture"})
+		_, e := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: customer, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: customer, Channel: "admin_manual", RequestID: fmt.Sprintf("fixture-credit-%d", customer), AdminID: 1, AdminName: "integration", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated balance fixture"})
 		must(e)
 		must(s.PayUpgradeBalance(ctx, customer, host, orderID, "127.0.0.1"))
 		must(s.PayUpgradeBalance(ctx, customer, host, orderID, "127.0.0.1"))

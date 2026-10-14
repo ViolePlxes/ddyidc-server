@@ -176,7 +176,7 @@ func TestPromoCouponsMySQL(t *testing.T) {
 		}
 	})
 	t.Run("balance ledger and duplicate payment", func(t *testing.T) {
-		_, e := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: owner, Type: "manual_credit", Amount: "20.00", RefType: "customer", RefID: owner, Channel: "admin_manual", RequestID: "promo-qa-credit", AdminID: 1, AdminName: "QA", OperatorIP: "127.0.0.1", Notes: "隔离验收"})
+		_, e := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: owner, Type: "manual_credit", Amount: "20.00", RefType: "customer", RefID: owner, Channel: "admin_manual", RequestID: "promo-qa-credit", AdminID: 1, AdminName: "QA", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "隔离验收"})
 		must(e)
 		b := issue("balance", "direct", []string{fmt.Sprint(child)}, 1, 0)
 		must(s.PayBalance(ctx, owner, b.OrderID))

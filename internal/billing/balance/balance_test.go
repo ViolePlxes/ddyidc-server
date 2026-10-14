@@ -3,7 +3,7 @@ package billing
 import "testing"
 
 func TestChangeValidation(t *testing.T) {
-	base := ChangeRequest{CustomerID: 1, Type: "manual_credit", Amount: "1.00", RefType: "customer", RefID: 1, Channel: "admin_manual", RequestID: "validation", AdminID: 1, AdminName: "admin", Notes: "reason", OperatorIP: "127.0.0.1"}
+	base := ChangeRequest{CustomerID: 1, Type: "manual_credit", Amount: "1.00", RefType: "customer", RefID: 1, Channel: "admin_manual", RequestID: "validation", AdminID: 1, AdminName: "admin", ClientNotes: "测试客户可见原因", Notes: "reason", OperatorIP: "127.0.0.1"}
 	if _, err := validate(base); err != nil {
 		t.Fatal(err)
 	}

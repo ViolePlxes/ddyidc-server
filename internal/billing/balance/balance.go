@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"strings"
 	"time"
@@ -202,6 +203,12 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		if !errors.Is(found, gorm.ErrRecordNotFound) {
 			return found
 		}
+		if err := VerifyAccountLedger(tx, account); err != nil {
+			return err
+		}
+		if (r.Type == "manual_credit" || r.Type == "manual_debit") && strings.TrimSpace(r.ClientNotes) == "" && !strings.HasPrefix(r.RequestID, "v10:") && !strings.HasPrefix(r.RequestID, "v10d:") {
+			return ErrInvalid
+		}
 		next := account.Balance + amount
 		frozen := account.FrozenBalance
 		if r.Type == "freeze" || r.Type == "withdrawal_hold" {
@@ -235,6 +242,7 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		if amount < 0 {
 			result.Direction = 2
 		}
+		expected := result
 		if err := tx.Create(&result).Error; err != nil {
 			return err
 		}
@@ -263,6 +271,9 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		if updated.RowsAffected != 1 {
 			return errors.New("账户版本冲突")
 		}
+		if err := verifyAccountWrite(tx, expected, updates); err != nil {
+			return err
+		}
 		if r.Type == "freeze" {
 			if err := tx.Create(&notice{ID: result.ID, CustomerID: r.CustomerID, Amount: -amount, Reason: r.ClientNotes, Status: "pending", NextAttempt: now}).Error; err != nil {
 				return err
@@ -271,6 +282,9 @@ func (s *BalanceService) Change(ctx context.Context, r ChangeRequest) (*Transact
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, ErrLedgerIntegrity) {
+			log.Printf("BILLING_ALERT ledger_integrity customer=%d request=%q", r.CustomerID, r.RequestID)
+		}
 		return nil, err
 	}
 	return &result, nil

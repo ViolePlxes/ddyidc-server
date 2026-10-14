@@ -31,7 +31,7 @@ func TestPrepareRealBrowserFixtureMySQL(t *testing.T) {
 	if err = db.Table("system.admins").Select("id").Where("username=?", "initial-admin").Take(&admin).Error; err != nil {
 		t.Fatal(err)
 	}
-	_, err = balance.New(db).Change(context.Background(), balance.ChangeRequest{CustomerID: 930100, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 930100, Channel: "admin_manual", RequestID: "cdn-browser-isolated-credit", AdminID: admin.ID, AdminName: "isolated-admin", OperatorIP: "127.0.0.1", Notes: "isolated CDN browser acceptance only"})
+	_, err = balance.New(db).Change(context.Background(), balance.ChangeRequest{CustomerID: 930100, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 930100, Channel: "admin_manual", RequestID: "cdn-browser-isolated-credit", AdminID: admin.ID, AdminName: "isolated-admin", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated CDN browser acceptance only"})
 	if err != nil {
 		t.Fatal(err)
 	}

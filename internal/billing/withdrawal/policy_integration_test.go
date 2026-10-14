@@ -38,7 +38,7 @@ func TestWithdrawalPolicyAndNotificationMySQL(t *testing.T) {
 	config("allowed_sources", "[\"manual_credit\"]")
 	config("daily_count", "1")
 	config("daily_amount", "100.00")
-	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("POLICYCREDIT%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated policy test"})
+	_, err := billing.New(db).Change(ctx, billing.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "100.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprintf("POLICYCREDIT%d", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated policy test"})
 	must(err)
 	quote, err := GetQuote(ctx, db, id, "10.00")
 	must(err)

@@ -75,3 +75,13 @@ func TestWechatQueryRequiresAdminSession(t *testing.T) {
 		t.Fatal("anonymous platform reconciliation accepted")
 	}
 }
+
+func TestReceiptRecoveryRequiresAdminSession(t *testing.T) {
+	h := &handler{auth: &auth.Manager{}}
+	r := httptest.NewRequest(http.MethodPost, "/admin/v1/payment/receipt-reviews/1/reconcile", strings.NewReader(`{"reason":"untrusted","confirmed":true}`))
+	w := httptest.NewRecorder()
+	h.reconcileRechargeReceipt(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatal("unauthenticated receipt recovery accepted", w.Code)
+	}
+}

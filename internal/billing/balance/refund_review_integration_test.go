@@ -23,7 +23,7 @@ func TestReviewedRefundRequiresApprovalAndFrozenCalculationMySQL(t *testing.T) {
 	}
 	must(tx.Table("customer.customers").Create(map[string]any{"id": customer, "tenant_id": 0, "username": fmt.Sprintf("refund-%d", customer), "password_hash": "isolated", "status": 1, "created_at": now, "updated_at": now}).Error)
 	must(tx.Table("payment.payment_refunds").Create(map[string]any{"id": application, "refund_no": fmt.Sprintf("TODO%d", application), "payment_id": 0, "order_id": order, "user_id": customer, "refund_amount": "29.00", "reason": "isolated application", "status": 0, "created_at": now, "updated_at": now}).Error)
-	request := ChangeRequest{CustomerID: customer, Type: "refund", Amount: "29.00", RefType: "refund_application", RefID: application, Channel: "refund_review", RequestID: fmt.Sprintf("RF:%d", application), AdminID: 1, AdminName: "isolated admin", OperatorIP: "127.0.0.1", Notes: "review approved", BizTrace: fmt.Sprintf("refund:%d", application)}
+	request := ChangeRequest{CustomerID: customer, Type: "refund", Amount: "29.00", RefType: "refund_application", RefID: application, Channel: "refund_review", RequestID: fmt.Sprintf("RF:%d", application), AdminID: 1, AdminName: "isolated admin", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "review approved", BizTrace: fmt.Sprintf("refund:%d", application)}
 	service := New(tx)
 	if _, err := service.Change(ctx, request); err == nil {
 		t.Fatal("unreviewed application credited")

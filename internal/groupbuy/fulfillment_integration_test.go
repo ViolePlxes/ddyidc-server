@@ -49,7 +49,7 @@ func TestDurableGroupMySQL(t *testing.T) {
 	must(db.Exec("INSERT INTO product.product_specs(id,product_id,name,vcpu,memory,price_mode,price) VALUES(93002,93001,'isolated',1,'1 GB','fixed',1.00)").Error)
 	for _, id := range []int64{93011, 93012, 93013, 93014} {
 		must(db.Exec("INSERT INTO customer.customers(id,username,password_hash,status) VALUES(?,?,?,1)", id, fmt.Sprint("isolated-group-", id), "disabled-test-login").Error)
-		_, err := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprint("group-seed:", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", Notes: "isolated test"})
+		_, err := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: id, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: fmt.Sprint("group-seed:", id), AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated test"})
 		must(err)
 	}
 	svc := NewService(db, orders.NewService(orderrepo.NewRepository(db), nil), nil)

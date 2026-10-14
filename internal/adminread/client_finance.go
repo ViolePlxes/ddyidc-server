@@ -70,7 +70,7 @@ func (h *handler) credit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "管理员不可用")
 		return
 	}
-	command := balance.ChangeRequest{CustomerID: id, Type: in.Type, Amount: in.Amount, RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: in.RequestID, AdminID: actor, AdminName: name, OperatorIP: requestIP(r), Notes: strings.TrimSpace(in.Notes), ClientNotes: in.ClientNotes, BizTrace: in.TransactionNumber}
+	command := balance.ChangeRequest{CustomerID: id, Type: in.Type, Amount: in.Amount, RefType: "customer", RefID: id, Channel: "admin_manual", RequestID: in.RequestID, AdminID: actor, AdminName: name, OperatorIP: requestIP(r), Notes: strings.TrimSpace(in.Notes), ClientNotes: strings.TrimSpace(in.ClientNotes), BizTrace: in.TransactionNumber}
 	action := "adjust"
 	if strings.HasSuffix(r.URL.Path, "/recharge") {
 		action = "recharge"
@@ -115,6 +115,13 @@ func (h *handler) credit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			command.LargeAdjustmentAllowed = true
+		}
+	}
+	if action == "adjust" && command.ClientNotes == "" {
+		var existing balance.Transaction
+		if e := h.db.Where("tx_no=?", command.RequestID).Take(&existing).Error; e != nil {
+			writeError(w, 400, "客户可见原因必填")
+			return
 		}
 	}
 	var result any
@@ -201,6 +208,10 @@ func (h *handler) credit(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if err != nil {
+		if errors.Is(err, balance.ErrLedgerIntegrity) {
+			writeError(w, 409, balance.ErrLedgerIntegrity.Error())
+			return
+		}
 		writeError(w, 400, err.Error())
 		return
 	}
