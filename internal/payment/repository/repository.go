@@ -479,8 +479,9 @@ func generatePaymentNo() string {
 // settleExternalPayment records both legs in the business transaction. The
 // account lock stays held until commit, so the intermediate credit cannot escape.
 type externalLedgerActor struct {
-	ID       int64
-	Name, IP string
+	ID         int64
+	Name, IP   string
+	Historical bool
 }
 
 func settleExternalPayment(tx *gorm.DB, p *dom.Payment, actors ...externalLedgerActor) error {
@@ -491,11 +492,20 @@ func settleExternalPayment(tx *gorm.DB, p *dom.Payment, actors ...externalLedger
 	if p.BizType != dom.BizOrder && p.BizType != dom.BizMarketplace {
 		return ErrInvalidState
 	}
-	credit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "recharge", Amount: balance.Money(p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPC%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款到账", ClientNotes: "在线付款到账"})
+	creditNotes, debitNotes := "在线付款到账", "购买产品扣款"
+	if actor.Historical {
+		if p.PaidAt == nil {
+			return ErrInvalidState
+		}
+		original := p.PaidAt.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006/01/02 15:04:05")
+		creditNotes = "历史在线付款补记（原付款：" + original + "）"
+		debitNotes = "历史购买扣款补记（原付款：" + original + "）"
+	}
+	credit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "recharge", Amount: balance.Money(p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPC%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款到账", ClientNotes: creditNotes})
 	if err != nil {
 		return err
 	}
-	debit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "order_pay", Amount: balance.Money(-p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPD%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款扣款", ClientNotes: "购买产品扣款"})
+	debit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "order_pay", Amount: balance.Money(-p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPD%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款扣款", ClientNotes: debitNotes})
 	if err != nil {
 		return err
 	}

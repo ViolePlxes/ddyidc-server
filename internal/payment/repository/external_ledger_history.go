@@ -43,7 +43,7 @@ func (r *GormRepository) BackfillExternalLedger(ctx context.Context, id, adminID
 			return ErrInvalidState
 		}
 		var valid int64
-		if e := tx.Table("order.orders").Where("id=? AND customer_id=? AND status IN (2,6) AND pay_amount=? AND balance_amount=0", p.BizID, p.CustomerID, p.AmountFen).Count(&valid).Error; e != nil {
+		if e := tx.Table("order.orders").Where("id=? AND customer_id=? AND status IN (2,4,5,6) AND pay_amount=? AND balance_amount=0", p.BizID, p.CustomerID, p.AmountFen).Count(&valid).Error; e != nil {
 			return e
 		}
 		if valid != 1 {
@@ -59,7 +59,7 @@ func (r *GormRepository) BackfillExternalLedger(ctx context.Context, id, adminID
 		if pair != 0 {
 			return errors.New("incomplete external payment ledger requires review")
 		}
-		if e := settleExternalPayment(tx, &p, externalLedgerActor{adminID, name, ip}); e != nil {
+		if e := settleExternalPayment(tx, &p, externalLedgerActor{ID: adminID, Name: name, IP: ip, Historical: true}); e != nil {
 			return e
 		}
 		fields, err := json.Marshal(map[string]any{"paymentId": p.ID, "action": "append_verified_external_pair", "originalPaidAt": p.PaidAt.Format(time.RFC3339), "reason": strings.TrimSpace(reason)})

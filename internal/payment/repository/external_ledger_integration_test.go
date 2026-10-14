@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"strings"
 	"testing"
 	"time"
 )
@@ -91,7 +92,7 @@ func TestExternalPaymentLedgerMySQL(t *testing.T) {
 	// Historical paid order: verified receipt exists, no wallet movement yet.
 	oid, pid := snowflake.GenID(), snowflake.GenID()
 	at := time.Now().Add(-24 * time.Hour)
-	must(tx.Table("order.orders").Create(map[string]any{"id": oid, "order_no": fmt.Sprintf("EH%d", oid), "customer_id": customer, "pay_amount": 32000, "status": 6, "balance_amount": 0}).Error)
+	must(tx.Table("order.orders").Create(map[string]any{"id": oid, "order_no": fmt.Sprintf("EH%d", oid), "customer_id": customer, "pay_amount": 32000, "status": 5, "balance_amount": 0}).Error)
 	hp := dom.Payment{ID: pid, PaymentNo: fmt.Sprintf("EH%d", pid), BizType: dom.BizOrder, BizID: oid, OrderID: &oid, CustomerID: customer, Channel: "wechat", OutTradeNo: fmt.Sprintf("EH%d", pid), TransactionID: fmt.Sprintf("EH-TX-%d", pid), Amount: "320.00", AmountFen: 32000, Currency: "CNY", Status: dom.StatusPaid, PaidAt: &at, ExpireAt: at}
 	must(tx.Create(&hp).Error)
 	must(recordReceipt(tx, &hp, dom.VerifiedNotification{TransactionID: hp.TransactionID, AmountFen: 32000, Currency: "CNY"}, at))
@@ -109,6 +110,24 @@ func TestExternalPaymentLedgerMySQL(t *testing.T) {
 	must(tx.Where("related_type='external_payment' AND related_id=?", pid).Order("account_version").Find(&historyFlows).Error)
 	if len(historyFlows) != 2 || historyFlows[0].Amount.String() != "320.00" || historyFlows[1].Amount.String() != "-320.00" || historyFlows[1].BalanceAfter != expectedBalance {
 		t.Fatal("history pair")
+	}
+	var storedHistory dom.Payment
+	must(tx.First(&storedHistory, pid).Error)
+	expectedOriginal := storedHistory.PaidAt.In(time.FixedZone("Asia/Shanghai", 8*60*60)).Format("2006/01/02 15:04:05")
+	if !strings.Contains(historyFlows[0].ClientNotes, "历史在线付款补记") || !strings.Contains(historyFlows[0].ClientNotes, expectedOriginal) {
+		t.Fatalf("historical payment time not visible: got=%q expected=%q", historyFlows[0].ClientNotes, expectedOriginal)
+	}
+
+	var historicalState int
+	must(tx.Table("order.orders").Select("status").Where("id=?", oid).Scan(&historicalState).Error)
+	if historicalState != 5 {
+		t.Fatal("backfill changed partial-refund state")
+	}
+	must(tx.Table("order.orders").Where("id=?", oid).Update("status", 4).Error) // isolated fixture later fully refunded
+	again, e := repo.BackfillExternalLedger(ctx, pid, admin, "isolated", "127.0.0.1", "已核查全退后的原付款")
+	must(e)
+	if again {
+		t.Fatal("refund state change duplicated original purchase")
 	}
 	var audits int64
 	must(tx.Table("customer.admin_customer_audits").Where("customer_id=? AND action='external_payment_ledger_backfill'", customer).Count(&audits).Error)
