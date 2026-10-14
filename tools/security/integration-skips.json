@@ -620,5 +620,13 @@
   "ddyidc/internal/adminread/TestExternalReceiptTotalsMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "隔离测试、本地联调用。Disposable FOUNDATION_MYSQL_SOCKET required; go test ./internal/adminread -run TestExternalReceiptTotalsMySQL -v. Fixture transaction rolls back; tests all real receipt channels/statuses and exclusions."
+  },
+  "ddyidc/internal/upstream/service/TestProductDisconnectHistoryMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Run with disposable FOUNDATION_MYSQL_SOCKET. Verify unused deletion, all historical orders and deleted machines block deletion, and hide retains records. A default skip is not a pass."
+  },
+  "ddyidc/internal/upstream/service/TestComparisonCatalogAndConnectMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Disposable FOUNDATION_MYSQL_SOCKET; 137-item complete catalogue, real SQL connect/repeat/target-group/hide/disconnect; fixture provider never purchases. Default skip is not a pass."
   }
 }

@@ -29,7 +29,7 @@ go test -race -v ./internal/update -run '^TestRedisGlobalLock$' -count=1
 
 go test -race -v ./internal/videobind -run '^TestRealDatabaseVideoEvents$' -count=1
 go test -race -v ./internal/certification -run '^TestAlipayLocalDatabase$' -count=1
-go test -race -v ./internal/upstream/service -run '^(TestCatalogReplacementMySQL|TestCatalogMultiNodeMySQL)$' -count=1
+go test -race -v ./internal/upstream/service -run '^(TestCatalogReplacementMySQL|TestCatalogMultiNodeMySQL|TestProductDisconnectHistoryMySQL|TestComparisonCatalogAndConnectMySQL)$' -count=1
 
 go test -race -v ./internal/cdnsell -run '^TestPaidFulfillmentMySQL$' -count=1
 
