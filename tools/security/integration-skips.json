@@ -608,5 +608,9 @@
   "ddyidc/internal/billing/balance/TestStatementMissingAccountVisibilityMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run test_foundation_modules.sh. Missing account must warn without hiding its existing owned ledger, and must not claim balance zero. Skip is not a pass."
+  },
+  "ddyidc/internal/adminread/TestCreditLedgerSnapshotDirectionAndTimeOrder": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Run with a disposable FOUNDATION_MYSQL_SOCKET under /tmp/ddyidc-foundation-*/mysql.sock: go test ./internal/adminread -run TestCreditLedgerSnapshotDirectionAndTimeOrder -v. Tests time-first ordering, 20-row direction pagination and a fixed snapshot excluding new records; fixture writes roll back. Local evidence: ledger150-server-checks-20261014.log. A normal-suite skip is not a pass."
   }
 }
