@@ -238,13 +238,38 @@ func (h *handler) creditList(w http.ResponseWriter, r *http.Request, id int64, f
 		limit = 100
 	}
 	q := h.db.WithContext(r.Context()).Model(&balance.Transaction{}).Where("customer_id=?", id)
+	var snapshot int64
+	if err := q.Session(&gorm.Session{}).Select("COALESCE(MAX(account_version),0)").Scan(&snapshot).Error; err != nil {
+		writeError(w, 500, "读取流水快照失败")
+		return
+	}
+	if raw := r.URL.Query().Get("snapshotVersion"); raw != "" {
+		requested, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || requested < 0 || requested > snapshot {
+			writeError(w, 400, "流水快照无效")
+			return
+		}
+		snapshot = requested
+	}
+	q = q.Where("account_version<=?", snapshot)
+	switch r.URL.Query().Get("direction") {
+	case "", "all":
+	case "increase":
+		q = q.Where("amount>0")
+	case "decrease":
+		q = q.Where("amount<0")
+	default:
+		writeError(w, 400, "流水方向无效")
+		return
+	}
+
 	if frozen {
 		q = q.Where("type='freeze'")
 	} else if typ := r.URL.Query().Get("type"); typ != "" {
 		q = q.Where("type=?", typ)
 	}
 	if keyword := r.URL.Query().Get("keywords"); keyword != "" {
-		q = q.Where("CAST(id AS CHAR) LIKE ? OR remark LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
+		q = q.Where("CAST(id AS CHAR) LIKE ? OR remark LIKE ? OR client_notes LIKE ?", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 	}
 	if order := r.URL.Query().Get("order_id"); order != "" {
 		q = q.Where("related_id=?", order)
@@ -274,7 +299,7 @@ func (h *handler) creditList(w http.ResponseWriter, r *http.Request, id int64, f
 		return
 	}
 	rows := []balance.Transaction{}
-	if e := q.Order("id DESC").Offset((page - 1) * limit).Limit(limit).Find(&rows).Error; e != nil {
+	if e := q.Order("created_at DESC,account_version DESC,id DESC").Offset((page - 1) * limit).Limit(limit).Find(&rows).Error; e != nil {
 		writeError(w, 500, "读取流水失败")
 		return
 	}
@@ -295,7 +320,7 @@ func (h *handler) creditList(w http.ResponseWriter, r *http.Request, id int64, f
 		pageTotal += row.Amount
 		list = append(list, item)
 	}
-	writeJSON(w, map[string]any{"list": list, "count": count, "page_total_amount": pageTotal.String(), "total_amount": total.String()})
+	writeJSON(w, map[string]any{"list": list, "count": count, "page_total_amount": pageTotal.String(), "total_amount": total.String(), "snapshot_version": snapshot})
 }
 func (h *handler) clientLogin(w http.ResponseWriter, r *http.Request) {
 	id, ok := h.detailID(w, r)
