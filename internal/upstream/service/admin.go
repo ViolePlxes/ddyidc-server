@@ -11,6 +11,7 @@ import (
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/upstream/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const lossGuardKey = "upstream.loss_guard"
@@ -99,7 +100,7 @@ func (s *Store) ListAdminProducts(q ProductListQuery) (ProductListResult, error)
 		return ProductListResult{}, err
 	}
 	var items []AdminProductRow
-	if err := dbq.Order("up.created_at ASC").Limit(q.PageSize).Offset((q.Page - 1) * q.PageSize).Scan(&items).Error; err != nil {
+	if err := dbq.Order("up.created_at ASC, up.id ASC").Limit(q.PageSize).Offset((q.Page - 1) * q.PageSize).Scan(&items).Error; err != nil {
 		return ProductListResult{}, err
 	}
 	for i := range items {
@@ -121,23 +122,30 @@ func (s *Store) ListAdminProducts(q ProductListQuery) (ProductListResult, error)
 }
 
 func (s *Store) deleteProtected(product model.UpstreamProduct) error {
-	if product.ProductID == "" || product.ProductID == "0" {
-		return nil
-	}
 	var count int64
 	// The upstream order link remains present even where a legacy order did not
 	// persist an order_item, so it is the authoritative order-retention check.
-	if err := s.db.Table(procurementOrders+" AS uo").Joins("JOIN `order`.orders AS o ON o.id = uo.order_id").Where("uo.supplier_id = ? AND uo.upstream_product_id = ? AND o.status NOT IN ?", product.SupplierID, product.UpstreamProductID, []int{3, 4}).Count(&count).Error; err != nil {
+	if err := s.db.Table(procurementOrders+" AS uo").Where("uo.supplier_id = ? AND uo.upstream_product_id = ?", product.SupplierID, product.UpstreamProductID).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("该商品已有开通产品，禁止删除")
+		return fmt.Errorf("该商品存在订单或机器关联，禁止删除，请改为隐藏")
+	}
+	if product.ProductID == "" || product.ProductID == "0" {
+		return nil
+	}
+	// Historical, cancelled and refunded orders also retain their product link.
+	if err := s.db.Table("`order`.order_items").Where("product_id = ?", product.ProductID).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return fmt.Errorf("该商品存在订单或机器关联，禁止删除，请改为隐藏")
 	}
 	if err := s.db.Table("instance.instances").Where("product_id = ?", product.ProductID).Count(&count).Error; err != nil {
 		return err
 	}
 	if count > 0 {
-		return fmt.Errorf("该商品已有开通产品，禁止删除")
+		return fmt.Errorf("该商品存在订单或机器关联，禁止删除，请改为隐藏")
 	}
 	return nil
 }
@@ -151,14 +159,21 @@ func (s *Store) DeleteProducts(ids []string) error {
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		var products []model.UpstreamProduct
-		if err := tx.Table((model.UpstreamProduct{}).TableName()).Where("id IN ?", ids).Find(&products).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Table((model.UpstreamProduct{}).TableName()).Where("id IN ?", ids).Find(&products).Error; err != nil {
 			return err
 		}
 		if len(products) != len(ids) {
 			return fmt.Errorf("部分商品不存在")
 		}
+		guard := NewStore(tx, s.aesKey)
 		for _, item := range products {
-			if err := s.deleteProtected(item); err != nil {
+			if item.ProductID != "" && item.ProductID != "0" {
+				var local productdomain.Product
+				if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", item.ProductID).Take(&local).Error; err != nil {
+					return err
+				}
+			}
+			if err := guard.deleteProtected(item); err != nil {
 				return err
 			}
 		}

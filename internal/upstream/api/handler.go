@@ -13,6 +13,15 @@ type Handler struct{ Store *service.Store }
 
 func RegisterHandlers(server *rest.Server, store *service.Store) {
 	h := &Handler{Store: store}
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/upstream/config/loss-guard", Handler: func(w http.ResponseWriter, r *http.Request) {
+		v, e := store.LossGuard()
+		respond(w, map[string]bool{"enabled": v}, e)
+	}})
+	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/upstream/suppliers/:id/comparison-catalog", Handler: func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimSuffix(id(r), "/comparison-catalog")
+		v, e := store.ComparisonCatalog(key)
+		respond(w, v, e)
+	}})
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/upstream/metrics", Handler: func(w http.ResponseWriter, r *http.Request) {
 		respond(w, map[string]any{"items": store.RequestMetrics(), "scope": "process", "window": "minute-buckets"}, nil)
 	}})
