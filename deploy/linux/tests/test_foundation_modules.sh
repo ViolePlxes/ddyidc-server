@@ -45,7 +45,10 @@ TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/admin
 # Customer ledger and transaction invariants, before any production guard fixture.
 go test -race -v ./internal/billing/balance -run "^(TestLedger.*MySQL|TestStatementSnapshotAndProjectionMySQL|TestStatementMissingAccountVisibilityMySQL)$" -count=1
 go test -race -v ./internal/customer/handler -run "^TestBalanceStatementHTTPMySQL$" -count=1
-go test -race -v ./internal/payment/repository -run "^TestVerifiedRechargeIntegrityReviewMySQL$" -count=1
+go test -race -v ./internal/payment/repository -run "^(TestVerifiedRechargeIntegrityReviewMySQL|TestExternalPaymentLedgerMySQL)$" -count=1
+
+# Real external receipts and direct-purchase ledger pairs use isolated MySQL only.
+go test -race -v ./internal/adminread -run "^TestExternalReceiptTotalsMySQL$" -count=1
 
 TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/billing/balance -run "^TestLedgerTimeAndFreezeMySQL$" -count=1
 

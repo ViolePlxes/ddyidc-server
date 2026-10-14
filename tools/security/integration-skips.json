@@ -612,5 +612,13 @@
   "ddyidc/internal/adminread/TestCreditLedgerSnapshotDirectionAndTimeOrder": {
     "disposition": "isolated_suite_required",
     "verification": "隔离测试、本地联调用。Run with a disposable FOUNDATION_MYSQL_SOCKET under /tmp/ddyidc-foundation-*/mysql.sock: go test ./internal/adminread -run TestCreditLedgerSnapshotDirectionAndTimeOrder -v. Tests time-first ordering, 20-row direction pagination and a fixed snapshot excluding new records; fixture writes roll back. Local evidence: ledger150-server-checks-20261014.log. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/TestExternalPaymentLedgerMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Disposable FOUNDATION_MYSQL_SOCKET /tmp/ddyidc-foundation-*/mysql.sock required; go test ./internal/payment/repository -run TestExternalPaymentLedgerMySQL -v. Real MySQL rollback fixture; no gateway calls. Normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/adminread/TestExternalReceiptTotalsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Disposable FOUNDATION_MYSQL_SOCKET required; go test ./internal/adminread -run TestExternalReceiptTotalsMySQL -v. Fixture transaction rolls back; tests all real receipt channels/statuses and exclusions."
   }
 }

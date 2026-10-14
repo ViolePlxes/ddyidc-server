@@ -405,6 +405,14 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 				}
 				return err
 			}
+		} else if err := settleExternalPayment(tx, &completed); err != nil {
+			if errors.Is(err, balance.ErrLedgerIntegrity) {
+				if e := tx.RollbackTo("before_receipt_business").Error; e != nil {
+					return errors.Join(err, e)
+				}
+				return reviewReceipt(tx, &completed, notification, paidAt, "external_balance_ledger_mismatch")
+			}
+			return err
 		}
 		transitioned = true
 		return enqueuePaid(tx, &completed)
@@ -466,4 +474,33 @@ func channelPayType(channel string) uint8 {
 
 func generatePaymentNo() string {
 	return fmt.Sprintf("PAY%d", snowflake.GenID())
+}
+
+// settleExternalPayment records both legs in the business transaction. The
+// account lock stays held until commit, so the intermediate credit cannot escape.
+type externalLedgerActor struct {
+	ID       int64
+	Name, IP string
+}
+
+func settleExternalPayment(tx *gorm.DB, p *dom.Payment, actors ...externalLedgerActor) error {
+	var actor externalLedgerActor
+	if len(actors) > 0 {
+		actor = actors[0]
+	}
+	if p.BizType != dom.BizOrder && p.BizType != dom.BizMarketplace {
+		return ErrInvalidState
+	}
+	credit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "recharge", Amount: balance.Money(p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPC%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款到账", ClientNotes: "在线付款到账"})
+	if err != nil {
+		return err
+	}
+	debit, err := balance.New(tx).Change(tx.Statement.Context, balance.ChangeRequest{CustomerID: p.CustomerID, AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Type: "order_pay", Amount: balance.Money(-p.AmountFen).String(), RefType: "external_payment", RefID: p.ID, Channel: "payment_callback", RequestID: fmt.Sprintf("EPD%d", p.ID), BizTrace: p.TransactionID, Notes: "订单在线付款扣款", ClientNotes: "购买产品扣款"})
+	if err != nil {
+		return err
+	}
+	if credit.BalanceBefore != debit.BalanceAfter || credit.BalanceAfter != debit.BalanceBefore || credit.AccountVersion+1 != debit.AccountVersion {
+		return balance.ErrLedgerIntegrity
+	}
+	return nil
 }

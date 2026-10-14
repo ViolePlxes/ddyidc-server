@@ -426,8 +426,31 @@ func (s *Service) ReconcileRechargeReceipt(ctx context.Context, id, adminID int6
 		return errors.New("receipt recovery unavailable")
 	}
 	e := repo.ReconcileRechargeReceipt(ctx, id, adminID, name, ip, reason, confirmed)
+	if errors.Is(e, rep.ErrForbidden) {
+		return &BusinessError{Code: 403, Message: "仅有效超级管理员可恢复订单收款"}
+	}
 	if errors.Is(e, rep.ErrInvalidState) {
 		return &BusinessError{Code: 40000, Message: "收款、账本或退款状态不允许恢复，请核查后重试"}
 	}
 	return e
+}
+
+func (s *Service) BackfillExternalLedger(ctx context.Context, id, adminID int64, name, ip, reason string, confirmed bool) (bool, error) {
+	if !confirmed {
+		return false, &BusinessError{Code: 40000, Message: "请确认补记原付款的两条流水"}
+	}
+	repo, ok := s.repo.(interface {
+		BackfillExternalLedger(context.Context, int64, int64, string, string, string) (bool, error)
+	})
+	if !ok {
+		return false, errors.New("external payment ledger backfill unavailable")
+	}
+	changed, e := repo.BackfillExternalLedger(ctx, id, adminID, name, ip, reason)
+	if errors.Is(e, rep.ErrForbidden) {
+		return false, &BusinessError{Code: 403, Message: "仅有效超级管理员可补记"}
+	}
+	if errors.Is(e, rep.ErrInvalidState) {
+		return false, &BusinessError{Code: 40000, Message: "原支付或订单不符合补记条件，请核查"}
+	}
+	return changed, e
 }
