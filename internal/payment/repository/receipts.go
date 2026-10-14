@@ -190,7 +190,7 @@ func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, admin
 		action := "resume_verified_recharge"
 		if external {
 			action = "resume_verified_order_payment"
-			if e := settleExternalPayment(tx, &p, externalLedgerActor{adminID, name, ip}); e != nil {
+			if e := settleExternalPayment(tx, &p, externalLedgerActor{ID: adminID, Name: name, IP: ip}); e != nil {
 				return e
 			}
 		} else if e := creditRecharge(tx, &p, *p.PaidAt); e != nil {

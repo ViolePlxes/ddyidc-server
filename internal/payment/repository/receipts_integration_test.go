@@ -36,7 +36,9 @@ func TestReceiptRacesMySQL(t *testing.T) {
 	if err := snowflake.Configure(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.Exec("INSERT IGNORE INTO customer.customers (id,username,password_hash,status) VALUES (77,'receipt-races-customer','isolated',1)").Error; err != nil {
+	customerID := snowflake.GenID()
+	caseBase := snowflake.GenID()
+	if err := database.Table("customer.customers").Create(map[string]any{"id": customerID, "username": fmt.Sprintf("receipt-races-%d", customerID), "password_hash": "isolated", "status": 1}).Error; err != nil {
 		t.Fatal(err)
 	}
 	repo := &GormRepository{db: database}
@@ -102,10 +104,12 @@ func TestReceiptRacesMySQL(t *testing.T) {
 	})
 	create := func(orderID, paymentID int64, orderState int, status dom.Status) dom.VerifiedNotification {
 		t.Helper()
-		if err := database.Exec("INSERT IGNORE INTO `order`.orders (id,order_no,customer_id,pay_amount,status) VALUES (?,?,77,100,?)", orderID, fmt.Sprintf("F04O%d", orderID), orderState).Error; err != nil {
+		orderID += caseBase
+		paymentID += caseBase
+		if err := database.Exec("INSERT IGNORE INTO `order`.orders (id,order_no,customer_id,pay_amount,status) VALUES (?,?,?,100,?)", orderID, fmt.Sprintf("F04O%d", orderID), customerID, orderState).Error; err != nil {
 			t.Fatal(err)
 		}
-		p := dom.Payment{ID: paymentID, PaymentNo: fmt.Sprintf("F04P%d", paymentID), BizType: dom.BizOrder, BizID: orderID, CustomerID: 77, Channel: "alipay", OutTradeNo: fmt.Sprintf("F04P%d", paymentID), Amount: "1.00", AmountFen: 100, Currency: "CNY", Status: status, ExpireAt: time.Now().Add(-time.Hour)}
+		p := dom.Payment{ID: paymentID, PaymentNo: fmt.Sprintf("F04P%d", paymentID), BizType: dom.BizOrder, BizID: orderID, CustomerID: customerID, Channel: "alipay", OutTradeNo: fmt.Sprintf("F04P%d", paymentID), Amount: "1.00", AmountFen: 100, Currency: "CNY", Status: status, ExpireAt: time.Now().Add(-time.Hour)}
 		if err := database.Create(&p).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +141,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 		t.Fatal(err)
 	} // Repository transition only, not a real gateway refund.
 	var state int
-	database.Raw("SELECT status FROM `order`.orders WHERE id=71001").Scan(&state)
+	database.Raw("SELECT status FROM `order`.orders WHERE id=?", caseBase+71001).Scan(&state)
 	if state != 2 {
 		t.Fatal("extra refund changed fulfilled order", state)
 	}
@@ -177,7 +181,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 			Count int64
 			Net   string
 		}
-		if e := database.Table("billing.transactions t").Joins("JOIN payment.payments p ON p.id=t.related_id AND t.related_type='external_payment'").Select("COUNT(*) AS count,COALESCE(SUM(t.amount),0) AS net").Where("p.biz_type='order' AND p.biz_id=?", 73000+round).Scan(&pair).Error; e != nil {
+		if e := database.Table("billing.transactions t").Joins("JOIN payment.payments p ON p.id=t.related_id AND t.related_type='external_payment'").Select("COUNT(*) AS count,COALESCE(SUM(t.amount),0) AS net").Where("p.biz_type='order' AND p.biz_id=?", caseBase+73000+round).Scan(&pair).Error; e != nil {
 			t.Fatal(e)
 		}
 		if pair.Count != 2 || pair.Net != "0.00" {
@@ -191,7 +195,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 		t.Fatal("wrong amount accepted")
 	}
 	var count int64
-	database.Table("payment.receipts").Where("payment_id=76001").Count(&count)
+	database.Table("payment.receipts").Where("payment_id=?", caseBase+76001).Count(&count)
 	if count != 0 {
 		t.Fatal("invalid receipt persisted")
 	}
@@ -200,7 +204,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 	var manualID int64
 	err = database.Transaction(func(tx *gorm.DB) error {
 		var e error
-		manualID, e = RecordAdminRechargeTx(tx, 77, 1, "isolated manual receipt", 100, "bank_transfer", "isolated-manual-rollback", time.Now())
+		manualID, e = RecordAdminRechargeTx(tx, customerID, 1, "isolated manual receipt", 100, "bank_transfer", "isolated-manual-rollback", time.Now())
 		if e != nil {
 			return e
 		}
@@ -212,7 +216,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 	if err := database.Model(&dom.Payment{}).Where("id=?", manualID).Count(&count).Error; err != nil || count != 0 {
 		t.Fatal("manual payment escaped caller rollback", err)
 	}
-	if err := database.Table("payment.recharge_orders").Where("customer_id=77 AND channel='bank_transfer'").Count(&count).Error; err != nil || count != 0 {
+	if err := database.Table("payment.recharge_orders").Where("customer_id=? AND channel='bank_transfer'", customerID).Count(&count).Error; err != nil || count != 0 {
 		t.Fatal("manual recharge escaped caller rollback", err)
 	}
 	t.Log("manual recharge repository writes roll back with caller balance-credit transaction")
