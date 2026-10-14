@@ -36,6 +36,9 @@ func TestReceiptRacesMySQL(t *testing.T) {
 	if err := snowflake.Configure(context.Background(), pool); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.Exec("INSERT IGNORE INTO customer.customers (id,username,password_hash,status) VALUES (77,'receipt-races-customer','isolated',1)").Error; err != nil {
+		t.Fatal(err)
+	}
 	repo := &GormRepository{db: database}
 	ctx := context.Background()
 	t.Run("owned_order_transitions_rollback", func(t *testing.T) {
@@ -170,6 +173,17 @@ func TestReceiptRacesMySQL(t *testing.T) {
 		if delivered.Load() != 1 {
 			t.Fatalf("double/missing delivery round %d: %d", round, delivered.Load())
 		}
+		var pair struct {
+			Count int64
+			Net   string
+		}
+		if e := database.Table("billing.transactions t").Joins("JOIN payment.payments p ON p.id=t.related_id AND t.related_type='external_payment'").Select("COUNT(*) AS count,COALESCE(SUM(t.amount),0) AS net").Where("p.biz_type='order' AND p.biz_id=?", 73000+round).Scan(&pair).Error; e != nil {
+			t.Fatal(e)
+		}
+		if pair.Count != 2 || pair.Net != "0.00" {
+			t.Fatal("race duplicated/missed ledger pair", round, pair)
+		}
+
 	}
 	invalid := create(75001, 76001, 1, dom.StatusPending)
 	invalid.AmountFen = 101

@@ -3,6 +3,9 @@ package payment
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/marketplace"
+	"ddyidc/internal/order/inventory"
+	orderstate "ddyidc/internal/order/repository"
 	dom "ddyidc/internal/payment/domain"
 	types "ddyidc/internal/payment/types"
 	"ddyidc/internal/shared/snowflake"
@@ -90,7 +93,7 @@ func reviewReceipt(tx *gorm.DB, p *dom.Payment, n dom.VerifiedNotification, paid
 	return nil
 }
 
-// ReconcileRechargeReceipt only resumes an already verified, ledger-blocked receipt.
+// ReconcileRechargeReceipt resumes a verified ledger-blocked recharge or order.
 // Payment row serializes this decision with receipt refunds; no gateway is called.
 func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, adminID int64, name, ip, reason string, confirmed bool) error {
 	reason = strings.TrimSpace(reason)
@@ -110,8 +113,18 @@ func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, admin
 		if e := tx.Table("payment.receipt_reviews").Clauses(clause.Locking{Strength: "UPDATE"}).Where("payment_id=?", id).Take(&review).Error; e != nil {
 			return e
 		}
-		if p.BizType != dom.BizRecharge || review.Reason != "balance_ledger_mismatch" {
+		external := (p.BizType == dom.BizOrder || p.BizType == dom.BizMarketplace) && review.Reason == "external_balance_ledger_mismatch"
+		if !external && (p.BizType != dom.BizRecharge || review.Reason != "balance_ledger_mismatch") {
 			return ErrInvalidState
+		}
+		if external {
+			var allowed int64
+			if e := tx.Table("system.admins").Where("id=? AND status=1 AND is_super=1", adminID).Count(&allowed).Error; e != nil {
+				return e
+			}
+			if allowed != 1 {
+				return ErrForbidden
+			}
 		}
 		if p.Status == dom.StatusPaid && review.Status == "credited" {
 			return nil
@@ -144,24 +157,49 @@ func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, admin
 			return ErrInvalidState
 		}
 		now := time.Now()
-		changed := tx.Table("payment.recharge_orders").Where("id=? AND customer_id=? AND status=1 AND amount=?", p.BizID, p.CustomerID, p.AmountFen).Updates(map[string]any{"status": 2, "channel": p.Channel, "paid_at": p.PaidAt, "updated_at": now})
-		if changed.Error != nil {
-			return changed.Error
-		}
-		if changed.RowsAffected != 1 {
-			return ErrInvalidState
+		if external {
+			if p.BizType == dom.BizMarketplace {
+				if e := marketplace.CompletePaidOrderTx(tx, p.BizID, p.CustomerID, *p.PaidAt, p.Channel); e != nil {
+					return e
+				}
+			} else {
+				changed, e := orderstate.AcceptPaymentTx(tx, p.BizID, p.CustomerID, p.AmountFen, channelPayType(p.Channel), *p.PaidAt)
+				if e != nil {
+					return e
+				}
+				if !changed {
+					return ErrInvalidState
+				}
+				if e := inventory.Consume(tx, p.BizID); e != nil {
+					return e
+				}
+			}
+		} else {
+			changed := tx.Table("payment.recharge_orders").Where("id=? AND customer_id=? AND status=1 AND amount=?", p.BizID, p.CustomerID, p.AmountFen).Updates(map[string]any{"status": 2, "channel": p.Channel, "paid_at": p.PaidAt, "updated_at": now})
+			if changed.Error != nil {
+				return changed.Error
+			}
+			if changed.RowsAffected != 1 {
+				return ErrInvalidState
+			}
 		}
 		if e := tx.Model(&p).Updates(map[string]any{"status": dom.StatusPaid, "updated_at": now}).Error; e != nil {
 			return e
 		}
 		p.Status = dom.StatusPaid
-		if e := creditRecharge(tx, &p, *p.PaidAt); e != nil {
+		action := "resume_verified_recharge"
+		if external {
+			action = "resume_verified_order_payment"
+			if e := settleExternalPayment(tx, &p, externalLedgerActor{adminID, name, ip}); e != nil {
+				return e
+			}
+		} else if e := creditRecharge(tx, &p, *p.PaidAt); e != nil {
 			return e
 		}
 		if e := tx.Table("payment.receipt_reviews").Where("payment_id=? AND status='pending'", id).Updates(map[string]any{"status": "credited", "resolved_at": now}).Error; e != nil {
 			return e
 		}
-		details, _ := json.Marshal(map[string]any{"paymentId": id, "reason": reason, "action": "resume_verified_recharge"})
+		details, _ := json.Marshal(map[string]any{"paymentId": id, "reason": reason, "action": action})
 		if e := tx.Table("customer.admin_customer_audits").Create(map[string]any{"id": snowflake.GenID(), "customer_id": p.CustomerID, "admin_id": adminID, "admin_name": name, "action": "receipt_reconcile", "fields": string(details), "operator_ip": ip, "created_at": now}).Error; e != nil {
 			return e
 		}

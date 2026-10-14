@@ -314,6 +314,20 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		return nil
 	}
 	switch r.RefType {
+	case "external_payment":
+		if r.Channel != "payment_callback" || (r.Type != "recharge" && r.Type != "order_pay") {
+			return ErrBusiness
+		}
+		abs := amount
+		if abs < 0 {
+			abs = -abs
+		}
+		if (r.Type == "recharge" && amount <= 0) || (r.Type == "order_pay" && amount >= 0) {
+			return ErrBusiness
+		}
+		if err := tx.Table("payment.payments p").Joins("JOIN payment.receipts r ON r.payment_id=p.id AND r.channel=p.channel AND r.transaction_id=p.transaction_id AND r.amount_fen=p.amount_fen AND r.currency=p.currency").Where("p.id=? AND p.customer_id=? AND p.status='paid' AND p.currency='CNY' AND p.amount_fen=? AND p.amount=? AND p.channel IN ('wechat','alipay','offline','bank_transfer') AND ((p.biz_type='order' AND EXISTS (SELECT 1 FROM `order`.orders o WHERE o.id=p.biz_id AND o.customer_id=p.customer_id AND o.status IN (2,6) AND o.pay_amount=p.amount_fen AND o.balance_amount=0)) OR (p.biz_type='marketplace' AND EXISTS (SELECT 1 FROM system.marketplace_orders m WHERE m.id=p.biz_id AND m.buyer_id=p.customer_id AND m.status IN ('paid','settled') AND m.pay_amount=p.amount)))", r.RefID, r.CustomerID, int64(abs), abs.String()).Count(&count).Error; err != nil {
+			return err
+		}
 	case "promo_coupon_batch":
 		if r.Type != "promo_coupon_pay" || r.Channel != "promo_coupon" {
 			return ErrBusiness

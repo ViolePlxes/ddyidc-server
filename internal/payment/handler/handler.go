@@ -30,6 +30,7 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, manager *auth.M
 		{Method: http.MethodGet, Path: "/admin/v1/payment/delivery-tasks", Handler: h.deliveryTasks},
 		{Method: http.MethodGet, Path: "/admin/v1/payment/receipt-reviews", Handler: h.receiptReviews},
 		{Method: http.MethodPost, Path: "/admin/v1/payment/receipt-reviews/:id/reconcile", Handler: h.reconcileRechargeReceipt},
+		{Method: http.MethodPost, Path: "/admin/v1/payment/:id/ledger-backfill", Handler: h.backfillExternalLedger},
 		{Method: http.MethodPost, Path: "/admin/v1/payment/refund", Handler: h.refund},
 		{Method: http.MethodPost, Path: "/api/v1/payment/order/:orderId/create", Handler: h.createOrder},
 		{Method: http.MethodPost, Path: "/api/v1/payment/recharge/create", Handler: h.createRecharge},
@@ -397,4 +398,33 @@ func (h *handler) reconcileRechargeReceipt(w http.ResponseWriter, r *http.Reques
 	}
 	e = h.service.ReconcileRechargeReceipt(r.Context(), id, claims.UserID, claims.Username, clientip.FromRequest(r), in.Reason, in.Confirmed)
 	writeResult(w, map[string]bool{"credited": e == nil}, e)
+}
+
+func (h *handler) backfillExternalLedger(w http.ResponseWriter, r *http.Request) {
+	if !h.admin(w, r) {
+		return
+	}
+	id := parsePathID(w, r, "id")
+	if id == 0 {
+		return
+	}
+	cookie, e := r.Cookie(h.auth.CookieName(auth.SessionAdmin))
+	if e != nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	claims, e := h.auth.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, cookie.Value)
+	if e != nil || claims == nil {
+		writeError(w, 401, 401, "登录已失效")
+		return
+	}
+	var in struct {
+		Reason    string `json:"reason"`
+		Confirmed bool   `json:"confirmed"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	changed, e := h.service.BackfillExternalLedger(r.Context(), id, claims.UserID, claims.Username, clientip.FromRequest(r), in.Reason, in.Confirmed)
+	writeResult(w, map[string]bool{"appended": changed}, e)
 }

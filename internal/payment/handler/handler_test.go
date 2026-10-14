@@ -85,3 +85,13 @@ func TestReceiptRecoveryRequiresAdminSession(t *testing.T) {
 		t.Fatal("unauthenticated receipt recovery accepted", w.Code)
 	}
 }
+
+func TestExternalLedgerBackfillRequiresAdminSession(t *testing.T) {
+	h := &handler{auth: &auth.Manager{}}
+	r := httptest.NewRequest(http.MethodPost, "/admin/v1/payment/1/ledger-backfill", strings.NewReader(`{"reason":"untrusted","confirmed":true}`))
+	w := httptest.NewRecorder()
+	h.backfillExternalLedger(w, r)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatal("anonymous ledger backfill accepted")
+	}
+}
