@@ -60,6 +60,17 @@ func TestUsageLedgerMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	check(0, 1000, 200)
+	cdnFixture(t, db, 882002, 882102, now)
+	if e := s.ApplyUsage(ctx, 882002, 882102, provider.UsagePoint{Start: p.Start, End: p.End, Bytes: 75}); e != nil {
+		t.Fatal(e)
+	}
+	overview, e := s.Overview(ctx, 882001)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if overview.DistributedBytes != 1200 || overview.UsedBytes != 1000 || overview.TodayBytes != 1200 || len(overview.DailyTrend) != 30 || overview.DailyTrend[29].Bytes != 1200 {
+		t.Fatalf("delivery must include overage and exclude another customer: %+v", overview)
+	}
 	p.Bytes = 300
 	if e := s.ApplyUsage(ctx, 882001, 882101, p); e != nil {
 		t.Fatal(e)
