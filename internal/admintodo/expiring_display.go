@@ -41,5 +41,5 @@ func enrichExpiringDisplay(ctx context.Context, db *gorm.DB, entries []Entry) er
 			}
 		}
 	}
-	return nil
+	return enrichExpiryNotifications(ctx, db, entries)
 }

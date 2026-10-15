@@ -22,30 +22,31 @@ func expiryCutoff(now time.Time) time.Time {
 // Entry exposes only safe summary fields. Attachments and business operations
 // remain behind their original services' object authorization.
 type Entry struct {
-	ID                 string          `json:"id"`
-	Source             string          `json:"source"`
-	CustomerID         string          `json:"customerId"`
-	CustomerName       string          `json:"customerName"`
-	CustomerRealName   string          `json:"customerRealName,omitempty"`
-	Machines           []RefundMachine `json:"machines,omitempty" gorm:"-"`
-	Title              string          `json:"title"`
-	Number             string          `json:"number"`
-	Status             string          `json:"status"`
-	RefundableAmount   *string         `json:"refundableAmount,omitempty" gorm:"-"`
-	Amount             string          `json:"amount"`
-	OrderID            string          `json:"orderId"`
-	InstanceID         string          `json:"instanceId"`
-	CreatedAt          time.Time       `json:"createdAt"`
-	UpdatedAt          time.Time       `json:"updatedAt"`
-	Href               string          `json:"href"`
-	LastAdminID        string          `json:"lastAdminId"`
-	Actions            []string        `json:"actions" gorm:"-"`
-	IPAddress          string          `json:"ipAddress,omitempty"`
-	BillingCycle       string          `json:"billingCycle,omitempty" gorm:"-"`
-	ExpiresAt          *time.Time      `json:"expiresAt,omitempty" gorm:"-"`
-	UpstreamOrderID    string          `json:"upstreamOrderId,omitempty" gorm:"-"`
-	UpstreamBillingURL string          `json:"upstreamBillingUrl,omitempty" gorm:"-"`
-	Revision           string          `json:"revision,omitempty"`
+	ExpiryNotifications *ExpiryNotifications `json:"expiryNotifications,omitempty" gorm:"-"`
+	ID                  string               `json:"id"`
+	Source              string               `json:"source"`
+	CustomerID          string               `json:"customerId"`
+	CustomerName        string               `json:"customerName"`
+	CustomerRealName    string               `json:"customerRealName,omitempty"`
+	Machines            []RefundMachine      `json:"machines,omitempty" gorm:"-"`
+	Title               string               `json:"title"`
+	Number              string               `json:"number"`
+	Status              string               `json:"status"`
+	RefundableAmount    *string              `json:"refundableAmount,omitempty" gorm:"-"`
+	Amount              string               `json:"amount"`
+	OrderID             string               `json:"orderId"`
+	InstanceID          string               `json:"instanceId"`
+	CreatedAt           time.Time            `json:"createdAt"`
+	UpdatedAt           time.Time            `json:"updatedAt"`
+	Href                string               `json:"href"`
+	LastAdminID         string               `json:"lastAdminId"`
+	Actions             []string             `json:"actions" gorm:"-"`
+	IPAddress           string               `json:"ipAddress,omitempty"`
+	BillingCycle        string               `json:"billingCycle,omitempty" gorm:"-"`
+	ExpiresAt           *time.Time           `json:"expiresAt,omitempty" gorm:"-"`
+	UpstreamOrderID     string               `json:"upstreamOrderId,omitempty" gorm:"-"`
+	UpstreamBillingURL  string               `json:"upstreamBillingUrl,omitempty" gorm:"-"`
+	Revision            string               `json:"revision,omitempty"`
 }
 type Filter struct {
 	Page, PageSize                                                  int
