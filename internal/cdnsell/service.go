@@ -467,6 +467,16 @@ func (s *Service) Overview(ctx context.Context, userID int64) (*Overview, error)
 	}
 	sort.Slice(trend, func(i, j int) bool { return trend[i].Time.Before(trend[j].Time) })
 	v.Trend = trend
+	// Confirmed metering includes both package-covered and overage delivery.
+	if e := db.Table(meterTable).Where("user_id=? AND status='confirmed'", userID).Select("COALESCE(SUM(confirmed_bytes),0)").Scan(&v.DistributedBytes).Error; e != nil {
+		return nil, e
+	}
+	start := day.AddDate(0, 0, -29)
+	var windows []TrendPoint
+	if e := db.Table(meterTable).Where("user_id=? AND status='confirmed' AND window_start>=? AND window_start<?", userID, start, day.AddDate(0, 0, 1)).Select("window_start time,SUM(confirmed_bytes) bytes").Group("window_start").Order("window_start ASC").Scan(&windows).Error; e != nil {
+		return nil, e
+	}
+	v.DailyTrend = dailyDeliveryTrend(start, 30, windows)
 	return &v, nil
 }
 func (s *Service) Batches(ctx context.Context, userID int64) ([]Batch, error) {

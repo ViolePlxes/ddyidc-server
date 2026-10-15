@@ -100,14 +100,16 @@ type PurchaseResult struct {
 	Amount  Yuan   `json:"amount"`
 }
 type Overview struct {
-	RemainingBytes int64        `json:"remainingBytes"`
-	UsedBytes      int64        `json:"usedBytes"`
-	TodayBytes     int64        `json:"todayBytes"`
-	OverageBytes   int64        `json:"overageBytes"`
-	ActiveBatches  int64        `json:"activeBatches"`
-	ActiveDomains  int64        `json:"activeDomains"`
-	ExpiringAt     *time.Time   `json:"expiringAt"`
-	Trend          []TrendPoint `json:"trend"`
+	DistributedBytes int64        `json:"distributedBytes"`
+	DailyTrend       []TrendPoint `json:"dailyTrend" gorm:"-"`
+	RemainingBytes   int64        `json:"remainingBytes"`
+	UsedBytes        int64        `json:"usedBytes"`
+	TodayBytes       int64        `json:"todayBytes"`
+	OverageBytes     int64        `json:"overageBytes"`
+	ActiveBatches    int64        `json:"activeBatches"`
+	ActiveDomains    int64        `json:"activeDomains"`
+	ExpiringAt       *time.Time   `json:"expiringAt"`
+	Trend            []TrendPoint `json:"trend" gorm:"-"`
 }
 type TrendPoint struct {
 	Time  time.Time `json:"time"`
