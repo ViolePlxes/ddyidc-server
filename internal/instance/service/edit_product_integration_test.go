@@ -1,0 +1,359 @@
+package instance
+
+import (
+	"context"
+	dom "ddyidc/internal/instance/domain"
+	repo "ddyidc/internal/instance/repository"
+	product "ddyidc/internal/product/domain"
+	"ddyidc/internal/product/specification"
+	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/shared/testenv"
+	"ddyidc/internal/upstream/model"
+	upp "ddyidc/internal/upstream/provider"
+	"ddyidc/internal/upstream/provider/contracts"
+	"encoding/json"
+	"errors"
+	"gorm.io/gorm"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+type editProductProvider struct {
+	remoteInstanceProvider
+	detail       *contracts.InstanceDetail
+	product      *contracts.UpstreamProductDetail
+	failure      error
+	beforeDetail func()
+}
+
+func (p *editProductProvider) GetInstanceDetail(int64) (*contracts.InstanceDetail, error) {
+	if p.beforeDetail != nil {
+		p.beforeDetail()
+	}
+	return p.detail, p.failure
+}
+func (p *editProductProvider) GetProductDetail(int) (*contracts.UpstreamProductDetail, error) {
+	return p.product, p.failure
+}
+
+type editProductResolver struct{ p *editProductProvider }
+
+func (r editProductResolver) ProviderFor(string) (upp.UpstreamProvider, error) { return r.p, nil }
+func (r editProductResolver) GetOrderPageByLocalProduct(string) (*contracts.OrderPage, error) {
+	return nil, nil
+}
+
+type editProductFixture struct {
+	db   *gorm.DB
+	host dom.Host
+	p    *editProductProvider
+	s    *Service
+}
+
+func newEditProductFixture(t *testing.T, db *gorm.DB) *editProductFixture {
+	t.Helper()
+	supplier := snowflake.GenID()
+	if e := db.Exec("INSERT INTO common.suppliers(id,status) VALUES(?,1)", supplier).Error; e != nil {
+		t.Fatal(e)
+	}
+	old := product.Product{TenantID: 0, Name: "original", ModuleType: "cloud", Status: 1}
+	if e := db.Create(&old).Error; e != nil {
+		t.Fatal(e)
+	}
+	h := dom.Host{ID: snowflake.GenID(), TenantID: 23, InstanceNo: "EDIT-ISOLATED", CustomerID: 77, ProductID: old.ID, ProductName: old.Name, ModuleType: "cloud", UpstreamProviderID: &supplier, UpstreamInstanceID: "41", OwnershipVersion: 1, OrderID: 910, OrderItemID: 911, Remark: "keep", ConfigSnapshot: `{"old":true}`, CreatedAt: time.Now().Add(-time.Hour), Status: 3}
+	if e := db.Create(&h).Error; e != nil {
+		t.Fatal(e)
+	}
+	p := &editProductProvider{detail: &contracts.InstanceDetail{ID: "56078", ProductID: "404", PrimaryIP: "192.0.2.55", Status: "active", Hostname: "new-machine", BillingCycle: "monthly"}, product: &contracts.UpstreamProductDetail{UpstreamProduct: contracts.UpstreamProduct{ID: 404, Name: "actual upstream product", Type: "cloud", Price: 30, Cycle: "monthly"}}}
+	s := NewService(repo.NewRepository(db), editProductResolver{p})
+	s.SetManagement(db)
+	return &editProductFixture{db, h, p, s}
+}
+func (f *editProductFixture) edit() error {
+	id := "56078"
+	return f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id})
+}
+func (f *editProductFixture) load(t *testing.T) dom.Host {
+	t.Helper()
+	var h dom.Host
+	if e := f.db.First(&h, "id=?", f.host.ID).Error; e != nil {
+		t.Fatal(e)
+	}
+	return h
+}
+func (f *editProductFixture) assertUnchanged(t *testing.T) {
+	t.Helper()
+	h := f.load(t)
+	if h.ProductID != f.host.ProductID || h.UpstreamInstanceID != f.host.UpstreamInstanceID || h.ConfigSnapshot != f.host.ConfigSnapshot || h.OwnershipVersion != 1 {
+		t.Fatal("failed edit partially changed instance")
+	}
+	var n int64
+	f.db.Model(&dom.Event{}).Where("instance_id=?", h.ID).Count(&n)
+	if n != 0 {
+		t.Fatal("failed edit created success event")
+	}
+}
+func (f *editProductFixture) mapProduct(t *testing.T, id int) product.Product {
+	t.Helper()
+	p := product.Product{TenantID: 0, Name: "operator catalogue name", ModuleType: "cloud", Status: 1}
+	if e := f.db.Create(&p).Error; e != nil {
+		t.Fatal(e)
+	}
+	m := model.UpstreamProduct{SupplierID: strconv.FormatInt(*f.host.UpstreamProviderID, 10), UpstreamProductID: id, ProductID: strconv.FormatInt(p.ID, 10), ProductGroupID: "0", Mode: "sync", Price: 99}
+	if e := f.db.Create(&m).Error; e != nil {
+		t.Fatal(e)
+	}
+	return p
+}
+
+func TestEditUpstreamProductMySQL(t *testing.T) {
+	db := testenv.MySQL(t)
+	for _, q := range []string{
+		"CREATE DATABASE IF NOT EXISTS payment",
+		"CREATE TABLE IF NOT EXISTS common.suppliers(id BIGINT PRIMARY KEY,status INT)",
+		"CREATE TABLE IF NOT EXISTS system.marketplace_listings(product_id BIGINT,status VARCHAR(20))",
+		"CREATE TABLE IF NOT EXISTS system.push_transfers(instance_id BIGINT,status VARCHAR(20))",
+		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(instance_id BIGINT,order_id BIGINT,state VARCHAR(20))",
+		"CREATE TABLE IF NOT EXISTS `order`.orders(id BIGINT PRIMARY KEY,status INT)",
+		"CREATE TABLE IF NOT EXISTS payment.machine_refund_actions(application_id BIGINT PRIMARY KEY,state VARCHAR(30))",
+		"CREATE TABLE IF NOT EXISTS payment.machine_refund_legs(application_id BIGINT,instance_id BIGINT,state VARCHAR(30))",
+	} {
+		if e := db.Exec(q).Error; e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := db.AutoMigrate(&dom.Host{}, &dom.Event{}, &product.ProductGroup{}, &product.Product{}, &model.UpstreamProduct{}, &specification.Snapshot{}); e != nil {
+		t.Fatal(e)
+	}
+	run := func(name string, fn func(*testing.T, *editProductFixture)) {
+		t.Run(name, func(t *testing.T) { tx := db.Begin(); defer tx.Rollback(); fn(t, newEditProductFixture(t, tx)) })
+	}
+	run("empty old binding can be repaired using entered identity", func(t *testing.T, f *editProductFixture) {
+		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("upstream_instance_id", "")
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		if f.load(t).UpstreamInstanceID != "56078" {
+			t.Fatal("entered identity not used")
+		}
+	})
+	run("mapped product follows entered instance without modifying catalogue or orders", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		h := f.load(t)
+		if h.ProductID != target.ID || h.ProductName != f.p.product.Name || h.UpstreamInstanceID != "56078" || h.PrimaryIP != "192.0.2.55" || h.OwnershipVersion != 2 || h.OrderID != 910 || h.OrderItemID != 911 || h.Remark != "keep" {
+			t.Fatalf("wrong rebound fields: %#v", h)
+		}
+		var after product.Product
+		f.db.First(&after, "id=?", target.ID)
+		if after.Name != target.Name || after.Hidden || after.Status != 1 {
+			t.Fatal("shared catalogue was changed")
+		}
+		var event dom.Event
+		f.db.First(&event, "instance_id=?", h.ID)
+		var response map[string]any
+		if json.Unmarshal([]byte(event.UpstreamResponse), &response) != nil || response["upstream_instance_id"] != "56078" {
+			t.Fatal("audit does not record actual binding")
+		}
+	})
+	run("old module type is refreshed only on instance", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		f.db.Model(&target).Update("module_type", "legacy_snapshot")
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		if f.load(t).ModuleType != "cloud" {
+			t.Fatal("stale service type retained")
+		}
+		var after product.Product
+		f.db.First(&after, "id=?", target.ID)
+		if after.ModuleType != "legacy_snapshot" {
+			t.Fatal("shared catalogue overwritten")
+		}
+	})
+	run("shared local sku cannot silently select another supplier", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		m := model.UpstreamProduct{SupplierID: strconv.FormatInt(snowflake.GenID(), 10), UpstreamProductID: 404, ProductID: strconv.FormatInt(target.ID, 10), ProductGroupID: "0", Mode: "sync"}
+		if e := f.db.Create(&m).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := f.edit(); e == nil {
+			t.Fatal("ambiguous supplier mapping accepted")
+		}
+		f.assertUnchanged(t)
+	})
+	run("unmapped product becomes hidden and unsaleable and is reused", func(t *testing.T, f *editProductFixture) {
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		h := f.load(t)
+		var local product.Product
+		f.db.First(&local, "id=?", h.ProductID)
+		if !local.Hidden || local.Status != 2 || local.TenantID != 0 {
+			t.Fatal("instance-only product was exposed for sale")
+		}
+		var mapping model.UpstreamProduct
+		f.db.First(&mapping, "product_id=?", h.ProductID)
+		if !mapping.Hidden || mapping.Mode != "only_api" || mapping.UpstreamProductID != 404 {
+			t.Fatal("hidden relation incorrect")
+		}
+		var group product.ProductGroup
+		f.db.First(&group, "id=?", local.GroupID)
+		if group.Status != 2 {
+			t.Fatal("hidden group became public")
+		}
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		if f.load(t).ProductID != h.ProductID || f.load(t).OwnershipVersion != h.OwnershipVersion {
+			t.Fatal("repeat sync created new binding")
+		}
+	})
+	run("catalogue-only mapping is attached once and remains hidden", func(t *testing.T, f *editProductFixture) {
+		m := model.UpstreamProduct{SupplierID: strconv.FormatInt(*f.host.UpstreamProviderID, 10), UpstreamProductID: 404, ProductID: "0", ProductGroupID: "0", Mode: "only_api"}
+		if e := f.db.Create(&m).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		var rows []model.UpstreamProduct
+		f.db.Where("supplier_id=? AND upstream_product_id=404", f.host.UpstreamProviderID).Find(&rows)
+		if len(rows) != 1 || rows[0].ID != m.ID || !rows[0].Hidden {
+			t.Fatal("mapping duplicated or exposed")
+		}
+	})
+	run("duplicate target rolls back without hidden products", func(t *testing.T, f *editProductFixture) {
+		other := f.host
+		other.ID = snowflake.GenID()
+		other.CustomerID = 88
+		other.UpstreamInstanceID = "56078"
+		f.db.Create(&other)
+		if e := f.edit(); e == nil || !strings.Contains(e.Error(), "已绑定") {
+			t.Fatal("duplicate target accepted", e)
+		}
+		f.assertUnchanged(t)
+		var n int64
+		f.db.Model(&model.UpstreamProduct{}).Where("supplier_id=?", f.host.UpstreamProviderID).Count(&n)
+		if n != 0 {
+			t.Fatal("failed edit retained hidden mapping")
+		}
+	})
+	run("ambiguous product mapping rolls back", func(t *testing.T, f *editProductFixture) {
+		f.mapProduct(t, 404)
+		f.mapProduct(t, 404)
+		if e := f.edit(); e == nil {
+			t.Fatal("ambiguous mapping accepted")
+		}
+		f.assertUnchanged(t)
+	})
+	run("other supplier mapping cannot be reused", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		f.db.Model(&model.UpstreamProduct{}).Where("product_id=?", target.ID).Update("supplier_id", snowflake.GenID())
+		if e := f.edit(); e != nil {
+			t.Fatal(e)
+		}
+		if f.load(t).ProductID == target.ID {
+			t.Fatal("foreign supplier product reused")
+		}
+	})
+	run("provider identity mismatch leaves dates and binding untouched", func(t *testing.T, f *editProductFixture) {
+		f.p.detail.ID = "56079"
+		date := time.Now().Format(time.RFC3339)
+		id := "56078"
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id, CreatedAt: &date}); e == nil {
+			t.Fatal("foreign instance accepted")
+		}
+		f.assertUnchanged(t)
+	})
+	run("product identity mismatch rolls back", func(t *testing.T, f *editProductFixture) {
+		f.p.product.ID = 405
+		if e := f.edit(); e == nil {
+			t.Fatal("foreign product accepted")
+		}
+		f.assertUnchanged(t)
+	})
+	run("provider unavailable rolls back", func(t *testing.T, f *editProductFixture) {
+		f.p.failure = errors.New("private upstream error")
+		if e := f.edit(); e == nil || strings.Contains(e.Error(), "private") {
+			t.Fatal("provider error accepted or leaked")
+		}
+		f.assertUnchanged(t)
+	})
+	run("ownership product race rejects stale read", func(t *testing.T, f *editProductFixture) {
+		f.p.beforeDetail = func() { f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("product_id", 123456) }
+		if e := f.edit(); e == nil || !strings.Contains(e.Error(), "已变更") {
+			t.Fatal("stale product accepted", e)
+		}
+		h := f.load(t)
+		if h.UpstreamInstanceID != "41" || h.ProductID != 123456 {
+			t.Fatal("concurrent edit overwritten")
+		}
+	})
+	run("refund locks reject rebind and roll back newly created product", func(t *testing.T, f *editProductFixture) {
+		id := snowflake.GenID()
+		f.db.Exec("INSERT INTO payment.machine_refund_actions VALUES(?,'completed')", id)
+		f.db.Exec("INSERT INTO payment.machine_refund_legs VALUES(?,?,'confirmed')", id, f.host.ID)
+		if e := f.edit(); e == nil {
+			t.Fatal("refund binding changed")
+		}
+		f.assertUnchanged(t)
+		var n int64
+		f.db.Model(&model.UpstreamProduct{}).Where("supplier_id=?", f.host.UpstreamProviderID).Count(&n)
+		if n != 0 {
+			t.Fatal("rollback retained hidden product")
+		}
+	})
+	run("pending renewal prevents product changes", func(t *testing.T, f *editProductFixture) {
+		id := snowflake.GenID()
+		f.db.Exec("INSERT INTO `order`.orders VALUES(?,1)", id)
+		f.db.Exec("INSERT INTO instance.instance_renewals VALUES(?,?,'unpaid')", f.host.ID, id)
+		if e := f.edit(); e == nil {
+			t.Fatal("pending renewal rebound")
+		}
+		f.assertUnchanged(t)
+	})
+	run("date only local instance remains editable", func(t *testing.T, f *editProductFixture) {
+		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("upstream_provider_id", nil)
+		date := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{CreatedAt: &date}); e != nil {
+			t.Fatal(e)
+		}
+	})
+	t.Run("concurrent same target succeeds exactly once", func(t *testing.T) {
+		f := newEditProductFixture(t, db)
+		other := f.host
+		other.ID = snowflake.GenID()
+		other.UpstreamInstanceID = "42"
+		if e := db.Create(&other).Error; e != nil {
+			t.Fatal(e)
+		}
+		var ready sync.WaitGroup
+		ready.Add(2)
+		f.p.beforeDetail = func() { ready.Done(); ready.Wait() }
+		var successes atomic.Int32
+		var wg sync.WaitGroup
+		for _, id := range []int64{f.host.ID, other.ID} {
+			wg.Add(1)
+			go func(id int64) {
+				defer wg.Done()
+				target := "56078"
+				if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, id, EditInput{UpstreamInstanceID: &target}); e == nil {
+					successes.Add(1)
+				}
+			}(id)
+		}
+		wg.Wait()
+		var count int64
+		db.Model(&dom.Host{}).Where("upstream_provider_id=? AND upstream_instance_id='56078'", f.host.UpstreamProviderID).Count(&count)
+		if successes.Load() != 1 || count != 1 {
+			t.Fatalf("duplicate target: successes=%d bindings=%d", successes.Load(), count)
+		}
+	})
+}
