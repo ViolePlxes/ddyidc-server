@@ -4,6 +4,7 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/remoteconsole"
+	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,6 +42,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		return ErrTradingLocked
 	}
 	updates := map[string]any{}
+	var upstreamProduct *contracts.UpstreamProductDetail
 	for key, v := range map[string]*string{"created_at": in.CreatedAt, "activated_at": in.ActivatedAt} {
 		if v == nil {
 			continue
@@ -56,9 +58,23 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e != nil || target <= 0 {
 			return errors.New("上游实例 ID 必须为正整数")
 		}
-		p, warning := s.providerContext(ctx, h)
-		if warning != "" {
+		// An administrator can repair an empty/stale old binding. Resolve by
+		// the fixed supplier, never by the old instance or product identity.
+		if h.UpstreamProviderID == nil || s.providers == nil {
 			return errors.New("供应商不可用")
+		}
+		provider, err := s.providers.ProviderFor(strconv.FormatInt(*h.UpstreamProviderID, 10))
+		if err != nil {
+			return errors.New("供应商不可用")
+		}
+		p, ok := provider.(contracts.InstanceProvider)
+		if !ok {
+			return ErrUnsupported
+		}
+		if scoped, ok := p.(interface {
+			WithInstanceContext(context.Context) contracts.InstanceProvider
+		}); ok {
+			p = scoped.WithInstanceContext(ctx)
 		}
 		detail, e := p.GetInstanceDetail(target)
 		if e != nil {
@@ -67,13 +83,20 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if detail == nil || detail.ID != strconv.FormatInt(target, 10) {
 			return errors.New("实例身份不匹配")
 		}
-		var mapping struct{ UpstreamProductID int64 }
-		if e = s.db.Table("product.upstream_products").Select("upstream_product_id").Where("product_id=? AND supplier_id=?", h.ProductID, h.UpstreamProviderID).Take(&mapping).Error; e != nil {
-			return e
+		productID, err := strconv.Atoi(detail.ProductID)
+		if err != nil || productID <= 0 {
+			return errors.New("上游未返回有效商品身份，未修改绑定")
 		}
-		if detail.ProductID != strconv.FormatInt(mapping.UpstreamProductID, 10) {
-			return errors.New("实例所属商品与当前产品不一致")
+		// Reuse the exact scoped provider/account and its 25-second budget.
+		resolved, ok := p.(contracts.Provider)
+		if !ok {
+			return errors.New("供应商未提供商品查询能力，未修改绑定")
 		}
+		upstreamProduct, err = resolved.GetProductDetail(productID)
+		if err != nil || upstreamProduct == nil || upstreamProduct.ID != productID {
+			return errors.New("读取实例所属商品失败，未修改绑定")
+		}
+
 		raw, _ := json.Marshal(snapshotFromUpstream(detail))
 		updates["upstream_instance_id"] = detail.ID
 		updates["config_snapshot"] = string(raw)
@@ -94,11 +117,19 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 	}
 	updates["updated_at"] = time.Now()
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Lock the supplier before any consistent reads: a waiter must see the
+		// preceding edit/import commit when checking a target binding.
+		if _, syncing := updates["upstream_instance_id"]; syncing {
+			var supplier struct{ ID int64 }
+			if e := tx.Table("common.suppliers").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND status=1", h.UpstreamProviderID).Take(&supplier).Error; e != nil {
+				return e
+			}
+		}
 		var current dom.Host
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customerID).Take(&current).Error; e != nil {
 			return ErrNotFound
 		}
-		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID {
+		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(current.UpstreamProviderID, h.UpstreamProviderID) {
 			return errors.New("实例已变更，请刷新后重试")
 		}
 		var trading int64
@@ -122,10 +153,6 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 			return errors.New("存在未结束的续费订单，不能修改实例")
 		}
 		if target, ok := updates["upstream_instance_id"]; ok {
-			var supplier struct{ ID int64 }
-			if e := tx.Table("common.suppliers").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", current.UpstreamProviderID).Take(&supplier).Error; e != nil {
-				return e
-			}
 			var count int64
 			if e := tx.Unscoped().Model(&dom.Host{}).Where("upstream_provider_id=? AND upstream_instance_id=? AND id<>?", current.UpstreamProviderID, target, id).Count(&count).Error; e != nil {
 				return e
@@ -133,15 +160,32 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 			if count > 0 {
 				return errors.New("该实例已绑定其他本地产品")
 			}
-			if target != h.UpstreamInstanceID {
+			product, err := resolveEditedProduct(tx, current, upstreamProduct)
+			if err != nil {
+				return err
+			}
+			updates["product_id"] = product.ID
+			updates["product_name"] = upstreamProduct.Name
+			updates["module_type"] = product.ModuleType
+			if target != h.UpstreamInstanceID || product.ID != current.ProductID || product.ModuleType != current.ModuleType {
+				if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+					return err
+				}
 				updates["ownership_version"] = current.OwnershipVersion + 1
 			}
 		}
 		if e := tx.Model(&current).Updates(updates).Error; e != nil {
 			return e
 		}
+		response := map[string]any{"saved": true}
+		for _, key := range []string{"upstream_instance_id", "product_id"} {
+			if value, ok := updates[key]; ok {
+				response[key] = value
+			}
+		}
+		responseJSON, _ := json.Marshal(response)
 		now := time.Now()
-		return tx.Create(&dom.Event{InstanceID: id, EventType: "edit", OperatorType: 2, OperatorID: &admin, Status: 2, UpstreamRequest: fmt.Sprintf(`{"previousInstanceId":%q}`, h.UpstreamInstanceID), UpstreamResponse: `{"saved":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}).Error
+		return tx.Create(&dom.Event{InstanceID: id, EventType: "edit", OperatorType: 2, OperatorID: &admin, Status: 2, UpstreamRequest: fmt.Sprintf(`{"previousInstanceId":%q,"previousProductId":"%d"}`, h.UpstreamInstanceID, h.ProductID), UpstreamResponse: string(responseJSON), CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}).Error
 	})
 	if e == nil {
 		remoteconsole.RevokeInstance(id)

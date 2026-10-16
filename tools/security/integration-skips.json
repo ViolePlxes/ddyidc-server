@@ -628,5 +628,9 @@
   "ddyidc/internal/upstream/service/TestComparisonCatalogAndConnectMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "隔离测试、本地联调用。Disposable FOUNDATION_MYSQL_SOCKET; 137-item complete catalogue, real SQL connect/repeat/target-group/hide/disconnect; fixture provider never purchases. Default skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestEditUpstreamProductMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。CI executes deploy/linux/tests/test_instance_edit_product.sh with disposable FOUNDATION_MYSQL_SOCKET; verifies authoritative upstream identity, hidden non-saleable mapping, rollback and concurrent unique binding. Normal-suite skip is not a pass."
   }
 }
