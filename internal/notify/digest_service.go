@@ -472,6 +472,7 @@ func (d *DigestService) Work(ctx context.Context) error {
 }
 
 func (m *Manager) StartDigestWorker(ctx context.Context) {
+	m.startSMSReceiptWorker(ctx)
 	if m.digest == nil {
 		return
 	}
