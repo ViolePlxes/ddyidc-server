@@ -6,4 +6,6 @@ PATCH /admin/v1/customers/:customerId/instances/:instanceId接口字段不变。
 
 VM隔离MySQL/race回归、go build/vet/test已通过；前端双端编辑输入保存演示、tsc/build通过。新增独立CI隔离脚本真实运行改绑回归，普通套件skip单独登记；前端产物门禁修正随机hash误报且保留真实mock/fixture拦截。
 
-发布候选：后端v0.1.127、前端v0.1.159。最终SHA、生产在线更新与权限核验见开发地图和本地部署报告。
+发布候选：后端v0.1.128、前端v0.1.159。最终SHA、生产在线更新与权限核验见开发地图和本地部署报告。
+
+补充：商品映射和本地商品行使用FOR UPDATE，与后台取消对接的映射→商品锁顺序一致。并发删除完成后重新解析/建立隐藏引用，不能留下悬空product_id。v127尚未安装，最终后端交付用v128。

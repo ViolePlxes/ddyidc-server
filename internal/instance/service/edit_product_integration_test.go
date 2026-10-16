@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"strconv"
 	"strings"
 	"sync"
@@ -324,6 +325,53 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 		date := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second).Format(time.RFC3339)
 		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{CreatedAt: &date}); e != nil {
 			t.Fatal(e)
+		}
+	})
+	t.Run("concurrent catalogue removal cannot leave dangling product", func(t *testing.T) {
+		f := newEditProductFixture(t, db)
+		target := f.mapProduct(t, 404)
+		deleting := db.Begin()
+		defer deleting.Rollback()
+		var mapping model.UpstreamProduct
+		if e := deleting.Clauses(clause.Locking{Strength: "UPDATE"}).Where("product_id=?", target.ID).First(&mapping).Error; e != nil {
+			t.Fatal(e)
+		}
+		var productRow product.Product
+		if e := deleting.Clauses(clause.Locking{Strength: "UPDATE"}).First(&productRow, "id=?", target.ID).Error; e != nil {
+			t.Fatal(e)
+		}
+		entered := make(chan struct{})
+		f.p.beforeDetail = func() { close(entered) }
+		done := make(chan error, 1)
+		go func() { done <- f.edit() }()
+		<-entered
+		select {
+		case err := <-done:
+			t.Fatalf("edit ignored catalogue deletion lock: %v", err)
+		case <-time.After(300 * time.Millisecond):
+		}
+		if e := deleting.Delete(&mapping).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := deleting.Delete(&productRow).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := deleting.Commit().Error; e != nil {
+			t.Fatal(e)
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("edit did not resume")
+		}
+		h := f.load(t)
+		var count int64
+		db.Model(&product.Product{}).Where("id=?", h.ProductID).Count(&count)
+		if h.ProductID == target.ID || count != 1 {
+			t.Fatal("instance retained deleted catalogue product")
 		}
 	})
 	t.Run("concurrent same target succeeds exactly once", func(t *testing.T) {

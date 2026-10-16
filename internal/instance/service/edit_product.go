@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"strconv"
 	"strings"
 )
@@ -27,7 +28,7 @@ func resolveEditedProduct(tx *gorm.DB, host dom.Host, detail *contracts.Upstream
 		return nil, errors.New("上游商品信息不完整，未修改绑定")
 	}
 	var mappings []model.UpstreamProduct
-	if err := tx.Where("supplier_id=? AND upstream_product_id=?", *host.UpstreamProviderID, detail.ID).Limit(2).Find(&mappings).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("supplier_id=? AND upstream_product_id=?", *host.UpstreamProviderID, detail.ID).Limit(2).Find(&mappings).Error; err != nil {
 		return nil, err
 	}
 	if len(mappings) > 1 {
@@ -37,7 +38,7 @@ func resolveEditedProduct(tx *gorm.DB, host dom.Host, detail *contracts.Upstream
 		id, _ := strconv.ParseInt(mappings[0].ProductID, 10, 64)
 		if id > 0 {
 			var local product.Product
-			err := tx.First(&local, "id=?", id).Error
+			err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&local, "id=?", id).Error
 			if err == nil {
 				if local.TenantID != 0 && local.TenantID != host.TenantID {
 					return nil, errors.New("商品不属于当前租户，未修改绑定")
