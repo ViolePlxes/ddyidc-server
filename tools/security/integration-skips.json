@@ -632,5 +632,9 @@
   "ddyidc/internal/instance/service/TestEditUpstreamProductMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "隔离测试、本地联调用。CI executes deploy/linux/tests/test_instance_edit_product.sh with disposable FOUNDATION_MYSQL_SOCKET; verifies authoritative upstream identity, hidden non-saleable mapping, rollback and concurrent unique binding. Normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/adminread/TestOrderInstanceLinksMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。CI runs deploy/linux/tests/test_admin_order_links.sh against disposable FOUNDATION_MYSQL_SOCKET; verifies purchase and renewal ownership, multiple machines, duplicate item references and soft-deleted/transferred exclusions. Normal-suite skip is not a pass."
   }
 }

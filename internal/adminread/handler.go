@@ -21,20 +21,28 @@ type handler struct {
 	dataRoot string
 }
 
+type orderInstanceLink struct {
+	ID         string `json:"id"`
+	CustomerID string `json:"customerId"`
+	OrderID    string `json:"-"`
+	Name       string `json:"name"`
+}
+
 type orderRow struct {
-	ID                  string    `json:"id" gorm:"column:id"`
-	OrderNo             string    `json:"orderNo" gorm:"column:order_no"`
-	Username            string    `json:"username" gorm:"column:username"`
-	CustomerID          string    `json:"customerId" gorm:"column:customer_id"`
-	CustomerDisplayName string    `json:"customerDisplayName" gorm:"column:customer_display_name"`
-	CustomerPhone       string    `json:"-" gorm:"column:customer_phone"`
-	VerifiedName        string    `json:"-" gorm:"column:verified_name"`
-	RealnameStatus      uint8     `json:"-" gorm:"column:realname_status"`
-	ProductName         string    `json:"productName" gorm:"column:product_name"`
-	PayAmount           int64     `json:"payAmount" gorm:"column:pay_amount"`
-	Status              uint8     `json:"status" gorm:"column:status"`
-	PayType             uint8     `json:"payType" gorm:"column:pay_type"`
-	CreatedAt           time.Time `json:"createdAt" gorm:"column:created_at"`
+	Instances           []orderInstanceLink `json:"instances" gorm:"-"`
+	ID                  string              `json:"id" gorm:"column:id"`
+	OrderNo             string              `json:"orderNo" gorm:"column:order_no"`
+	Username            string              `json:"username" gorm:"column:username"`
+	CustomerID          string              `json:"customerId" gorm:"column:customer_id"`
+	CustomerDisplayName string              `json:"customerDisplayName" gorm:"column:customer_display_name"`
+	CustomerPhone       string              `json:"-" gorm:"column:customer_phone"`
+	VerifiedName        string              `json:"-" gorm:"column:verified_name"`
+	RealnameStatus      uint8               `json:"-" gorm:"column:realname_status"`
+	ProductName         string              `json:"productName" gorm:"column:product_name"`
+	PayAmount           int64               `json:"payAmount" gorm:"column:pay_amount"`
+	Status              uint8               `json:"status" gorm:"column:status"`
+	PayType             uint8               `json:"payType" gorm:"column:pay_type"`
+	CreatedAt           time.Time           `json:"createdAt" gorm:"column:created_at"`
 }
 
 type customerRow struct {
@@ -309,7 +317,26 @@ func (h *handler) orderRows(r *http.Request, page, pageSize int, status *uint8, 
 	for i := range rows {
 		rows[i].CustomerDisplayName = orderCustomerDisplayName(rows[i])
 	}
-	return rows, err
+	if err != nil || len(rows) == 0 {
+		return rows, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.ID)
+	}
+	links, err := orderInstanceLinks(h.db.WithContext(r.Context()), ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		rows[i].Instances = []orderInstanceLink{}
+		for _, link := range links {
+			if link.OrderID == rows[i].ID && link.CustomerID == rows[i].CustomerID {
+				rows[i].Instances = append(rows[i].Instances, link)
+			}
+		}
+	}
+	return rows, nil
 }
 
 func orderCustomerDisplayName(row orderRow) string {
@@ -614,4 +641,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
+}
+
+func orderInstanceLinks(database *gorm.DB, ids []string) ([]orderInstanceLink, error) {
+	var links []orderInstanceLink
+	// Match current ownership as well as order identity; transferred machines must
+	// never become links under their former customer's order.
+	err := database.Table("instance.instances AS i").
+		Joins("JOIN `order`.orders o ON o.customer_id=i.customer_id AND (o.id=i.order_id OR EXISTS (SELECT 1 FROM `order`.order_items oi WHERE oi.order_id=o.id AND oi.instance_id=i.id))").
+		Where("o.id IN ? AND i.deleted_at IS NULL", ids).
+		Select("CAST(i.id AS CHAR) id, CAST(i.customer_id AS CHAR) customer_id, CAST(o.id AS CHAR) order_id, i.product_name name").Order("i.id ASC").Scan(&links).Error
+	return links, err
 }
