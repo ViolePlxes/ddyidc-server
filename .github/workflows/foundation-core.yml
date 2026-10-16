@@ -34,6 +34,7 @@ jobs:
           bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1
           bash deploy/linux/tests/test_finance_recovery.sh > finance-recovery.log 2>&1
           bash deploy/linux/tests/test_instance_edit_product.sh > instance-edit-product.log 2>&1
+          bash deploy/linux/tests/test_admin_order_links.sh > admin-order-links.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
           python3 -m unittest discover -s deploy/linux -p 'test_production_preflight.py'
       - name: Source and artifact vulnerability checks
@@ -58,3 +59,4 @@ jobs:
             schema-contracts.log
             finance-recovery.log
             instance-edit-product.log
+            admin-order-links.log
