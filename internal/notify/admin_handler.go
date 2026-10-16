@@ -39,6 +39,8 @@ func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *a
 		{Method: http.MethodPut, Path: "/admin/v1/system/notify/config", Handler: h.saveConfig},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/templates", Handler: h.listTemplates},
 		{Method: http.MethodPut, Path: "/admin/v1/system/notify/templates/:id", Handler: h.updateTemplate},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/logs/:id/receipt", Handler: h.smsReceipt},
+		{Method: http.MethodPost, Path: "/admin/v1/system/notify/tasks/:id/receipt", Handler: h.smsTaskReceipt},
 		{Method: http.MethodGet, Path: "/admin/v1/system/notify/logs", Handler: h.listLogs},
 		{Method: http.MethodPost, Path: "/admin/v1/system/notify/test", Handler: h.testNotify},
 	})

@@ -15,6 +15,8 @@ type ExpiryNotifications struct {
 	Email string `json:"email"`
 }
 type expiryNotificationRow struct {
+	LogID           string
+	RequestID       string
 	InstanceID      string
 	Channel         string
 	Status          string
@@ -23,15 +25,28 @@ type expiryNotificationRow struct {
 }
 
 func mergeExpiryStatus(current, incoming string) string {
+	rank := func(status string) int {
+		switch status {
+		case "delivered":
+			return 5
+		case "delivery_failed":
+			return 4
+		case "receipt_pending", "receipt_unknown":
+			return 3
+		case "success":
+			return 2
+		case "not_sent":
+			return 0
+		default:
+			return 1
+		}
+	}
 	switch incoming {
-	case "success", "submitted", "pending", "sending", "failed", "unknown", "canceled", "skipped":
+	case "delivered", "delivery_failed", "receipt_pending", "receipt_unknown", "success", "submitted", "pending", "sending", "failed", "unknown", "canceled", "skipped":
 	default:
 		incoming = "unknown"
 	}
-	if current == "success" || incoming == "success" {
-		return "success"
-	}
-	if current == "not_sent" {
+	if rank(incoming) > rank(current) {
 		return incoming
 	}
 	return current
@@ -51,13 +66,73 @@ func enrichExpiryNotifications(ctx context.Context, db *gorm.DB, entries []Entry
 	}
 	var digest []expiryNotificationRow
 	// Item cancellation must override the parent; pending items inherit task state.
-	err := db.WithContext(ctx).Table("system.notification_task_items i").Joins("JOIN system.notification_tasks t ON t.id=i.task_id AND t.customer_id=i.customer_id AND t.channel=i.channel").Joins("JOIN instance.instances x ON x.id=i.instance_id AND x.customer_id=i.customer_id AND x.expires_at=i.expires_at AND x.deleted_at IS NULL").Select("CAST(i.instance_id AS CHAR) instance_id,i.channel,CASE WHEN i.status='pending' THEN t.status ELSE i.status END status").Where("i.instance_id IN ?", ids).Order("t.created_at DESC,t.id DESC").Scan(&digest).Error
+	err := db.WithContext(ctx).Table("system.notification_task_items i").Joins("JOIN system.notification_tasks t ON t.id=i.task_id AND t.customer_id=i.customer_id AND t.channel=i.channel").Joins("JOIN instance.instances x ON x.id=i.instance_id AND x.customer_id=i.customer_id AND x.expires_at=i.expires_at AND x.deleted_at IS NULL").Select("CAST(t.id AS CHAR) business_id,t.request_id,CAST(i.instance_id AS CHAR) instance_id,i.channel,CASE WHEN i.status='pending' THEN t.status ELSE i.status END status").Where("i.instance_id IN ?", ids).Order("t.created_at DESC,t.id DESC").Scan(&digest).Error
 	if err != nil {
 		return err
 	}
 	var logs []expiryNotificationRow
-	if err = db.WithContext(ctx).Table("system.notify_logs").Select("channel,status,business_id,content_snapshot").Where("scene='expiry' AND business_id IN ?", businesses).Order("created_at DESC,id DESC").Scan(&logs).Error; err != nil {
+	if err = db.WithContext(ctx).Table("system.notify_logs").Select("CAST(id AS CHAR) log_id,request_id,channel,status,business_id,content_snapshot").Where("scene='expiry' AND business_id IN ?", businesses).Order("created_at DESC,id DESC").Scan(&logs).Error; err != nil {
 		return err
+	}
+
+	// Fetch original task-log IDs first, then receipts separately (no per-row requests).
+	taskIDs := []string{}
+	logIDs := []string{}
+	for _, row := range digest {
+		if row.Channel == "sms" && row.RequestID != "" {
+			taskIDs = append(taskIDs, row.BusinessID)
+		}
+	}
+	type originalRow struct {
+		ID         string
+		BusinessID string
+		RequestID  string
+	}
+	originals := []originalRow{}
+	if len(taskIDs) > 0 {
+		if e := db.WithContext(ctx).Table("system.notify_logs").Select("CAST(id AS CHAR) id,business_id,request_id").Where("scene='expiry_digest' AND channel='sms' AND business_id IN ?", taskIDs).Scan(&originals).Error; e != nil {
+			return e
+		}
+	}
+	for _, row := range originals {
+		logIDs = append(logIDs, row.ID)
+	}
+	for _, row := range logs {
+		if row.Channel == "sms" {
+			logIDs = append(logIDs, row.LogID)
+		}
+	}
+	receipts := []expiryNotificationRow{}
+	if len(logIDs) > 0 {
+		if e := db.WithContext(ctx).Table("system.notify_logs").Select("business_id,status").Where("scene='sms_receipt' AND channel='sms' AND business_id IN ?", logIDs).Order("created_at DESC,id DESC").Scan(&receipts).Error; e != nil {
+			return e
+		}
+	}
+	receiptByLog := map[string]string{}
+	for _, row := range receipts {
+		if _, exists := receiptByLog[row.BusinessID]; !exists {
+			receiptByLog[row.BusinessID] = row.Status
+		}
+	}
+	for i := range logs {
+		if logs[i].Channel == "sms" && (logs[i].Status == "success" || logs[i].Status == "submitted") {
+			if status := receiptByLog[logs[i].LogID]; status != "" {
+				logs[i].Status = status
+			}
+		}
+	}
+	for i := range digest {
+		row := &digest[i]
+		if row.Channel != "sms" || (row.Status != "submitted" && row.Status != "success") {
+			continue
+		}
+		for _, original := range originals {
+			if row.BusinessID == original.BusinessID && row.RequestID == original.RequestID {
+				if status := receiptByLog[original.ID]; status != "" {
+					row.Status = status
+				}
+			}
+		}
 	}
 	for i := range entries {
 		entry := &entries[i]

@@ -164,4 +164,5 @@ func TestDigestQueueMySQL(t *testing.T) {
 	if sms.Status != "unknown" {
 		t.Fatal("timeout must remain unknown")
 	}
+	checkSMSReceiptsMySQL(t, db)
 }
