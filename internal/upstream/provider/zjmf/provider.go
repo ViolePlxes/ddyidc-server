@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	billing "ddyidc/internal/billing/balance"
 	"ddyidc/internal/upstream/metrics"
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
@@ -367,7 +368,7 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 	}
 	if outbound.DetailReadOnly() {
 		detail := product.toContract(productID)
-		return &contracts.OrderPage{Product: detail.UpstreamProduct, ConfigOptions: detail.ConfigOptions,
+		return &contracts.OrderPage{CustomFields: customFields(product.CustomFields), Product: detail.UpstreamProduct, ConfigOptions: detail.ConfigOptions,
 			Cycles: []contracts.CycleItem{{Billingcycle: detail.Cycle, Price: detail.Price, SetupFee: detail.SetupFee}}}, nil
 	}
 	page, err := p.getLegacyOrderPage(productID, product)
@@ -415,7 +416,7 @@ func (p *Provider) getCloudOrderPage(productID int, product financeProduct) (*co
 	if len(dataCenters) == 0 {
 		return nil, errors.New("cloud order page has no data_center definition")
 	}
-	page := &contracts.OrderPage{Product: product.toContract(productID).UpstreamProduct, DataCenters: dataCenters}
+	page := &contracts.OrderPage{Product: product.toContract(productID).UpstreamProduct, DataCenters: dataCenters, CustomFields: customFields(product.CustomFields)}
 	page.Images = configValues(data["image"])
 	page.NetworkTypes = configValues(data["network"])
 	for _, field := range []string{"cpu", "memory", "disk", "bandwidth", "ip_num", "network"} {
@@ -441,6 +442,7 @@ func (p *Provider) getLegacyOrderPage(productID int, detail financeProduct) (*co
 		return nil, upstreamError("finance set_config", payload.Message)
 	}
 	page := &contracts.OrderPage{
+		CustomFields:    customFields(detail.CustomFields),
 		Product:         detail.toContract(productID).UpstreamProduct,
 		Cycles:          legacyCycles(payload.Product.Cycle),
 		DefaultPassword: payload.Product.Password.Password,
@@ -527,13 +529,21 @@ type legacyConfigOption struct {
 }
 
 func (v legacyConfigOption) toContract() contracts.ConfigOption {
-	optionType := "select"
-	if isQuantityOption(v.Type) {
-		optionType = "qty"
+	optionType := "unsupported"
+	// Finance has dedicated choice types for OS, CPU, memory, disk, region
+	// and IP in addition to the original WHMCS-style 1/2/3 choices.
+	switch v.Type {
+	case 1, 2, 3, 5, 6, 8, 10, 12, 13:
+		optionType = "select"
+	default:
+		if isQuantityOption(v.Type) {
+			optionType = "qty"
+		}
 	}
 	values := configValues(v.Sub)
 	result := contracts.ConfigOption{
 		ID:         v.ID,
+		SourceType: strconv.Itoa(v.Type),
 		Name:       v.Name,
 		Field:      configField(v.Name),
 		OptionType: optionType,
@@ -574,10 +584,12 @@ func configField(name string) string {
 		return "cpu"
 	case strings.Contains(name, "内存") || strings.Contains(strings.ToLower(name), "memory"):
 		return "memory"
-	case strings.Contains(name, "系统盘"):
+	case strings.Contains(name, "系统盘") || name == "主硬盘":
 		return "system_disk"
-	case strings.Contains(name, "数据盘"):
+	case strings.Contains(name, "数据盘") || name == "附加硬盘":
 		return "data_disk"
+	case strings.Contains(name, "流量"):
+		return "traffic"
 	case strings.Contains(name, "带宽") || strings.Contains(strings.ToLower(name), "bandwidth"):
 		return "bandwidth"
 	case strings.Contains(name, "IP"):
@@ -641,7 +653,7 @@ func configValues(raw json.RawMessage) []contracts.ConfigOptionValue {
 		name := firstNonEmpty(item.Display, item.Version, item.Option, item.Name)
 		if item.ID != 0 && name != "" {
 			values = append(values, contracts.ConfigOptionValue{
-				ID: item.ID, Name: name, Price: number(item.Price),
+				ID: item.ID, Name: name, Price: number(item.Price), PriceKnown: scalarPriceKnown(item.Price),
 				Min: number(item.Min), Max: number(item.Max), Step: number(item.Step),
 			})
 		}
@@ -896,6 +908,11 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		ctx = p.instanceContext
 	}
 	for attempt := 0; attempt < attempts; attempt++ {
+		if p.Supplier.AuthorizeRequest != nil {
+			if err := p.Supplier.AuthorizeRequest(method, parsed.Path); err != nil {
+				return nil, 0, err
+			}
+		}
 		if isQKIDC && (p.Supplier.LimitRequests || metrics.IsBackground(ctx)) {
 			if err := waitForRequestSlotContext(ctx, parsed.Hostname(), 2*time.Second); err != nil {
 				return nil, 0, err
@@ -1057,7 +1074,7 @@ func redactValue(value any) any {
 func sensitiveKey(key string) bool {
 	key = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "[", "_"), "]", ""))
 	sensitiveParts := []string{
-		"password", "token", "secret", "authorization", "username", "email",
+		"customfield", "self_defined_field", "password", "token", "secret", "authorization", "username", "email",
 		"phone", "address", "postcode", "card", "wechat", "signature", "company", "pass", "url",
 	}
 	for _, part := range sensitiveParts {
@@ -1119,6 +1136,12 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	actualAmount, err := p.purchaseQuote(order)
 	if err != nil {
 		return nil, err
+	}
+	if order.ProcurementCeiling != "" {
+		ceiling, err := decodeQuoteMoney(json.RawMessage(strconv.Quote(order.ProcurementCeiling)))
+		if err != nil || ceiling <= 0 || actualAmount > ceiling*billing.Money(order.Quantity) {
+			return nil, errors.New("供应商采购报价超过成交预算，需人工核查，未创建采购订单")
+		}
 	}
 	requiredAmount := float64(actualAmount) / 100
 	form := orderForm(order)
@@ -1215,8 +1238,16 @@ func orderForm(order contracts.OrderInfo) url.Values {
 		"upstream_product[qty]":   {strconv.Itoa(order.Quantity)},
 	}
 	for optionID, value := range order.ConfigOptions {
-		form.Set("configoption["+optionID+"]", value)
-		form.Set("upstream_product[config_options]["+optionID+"]", value)
+		var values []string
+		if strings.HasPrefix(value, "[") && json.Unmarshal([]byte(value), &values) == nil {
+			for i, v := range values {
+				form.Set(fmt.Sprintf("configoption[%s][%d]", optionID, i), v)
+				form.Set(fmt.Sprintf("upstream_product[config_options][%s][%d]", optionID, i), v)
+			}
+		} else {
+			form.Set("configoption["+optionID+"]", value)
+			form.Set("upstream_product[config_options]["+optionID+"]", value)
+		}
 	}
 	for fieldID, value := range order.CustomFields {
 		form.Set("customfield["+fieldID+"]", value)
@@ -1869,4 +1900,16 @@ func (p *Provider) ParseWebhook(data []byte) (*contracts.WebhookEvent, error) {
 		return nil, err
 	}
 	return &event, nil
+}
+
+func scalarPriceKnown(raw json.RawMessage) *bool {
+	_, err := decodeQuoteMoney(raw)
+	known := err == nil
+	return &known
+}
+func (p *Provider) GetOrderPageContext(ctx context.Context, id int) (*contracts.OrderPage, error) {
+	q := *p
+	q.instanceContext = ctx
+	q.procurementContext = true
+	return q.GetOrderPage(id)
 }

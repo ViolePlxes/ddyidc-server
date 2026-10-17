@@ -3,6 +3,7 @@ package api
 import (
 	repository "ddyidc/internal/product/repository"
 	"ddyidc/internal/upstream/provider/contracts"
+	"ddyidc/internal/upstream/service"
 	"ddyidc/pkg/db"
 	"fmt"
 	"net/http"
@@ -31,5 +32,25 @@ func (h *Handler) orderPage(w http.ResponseWriter, r *http.Request) {
 // Copy the cached provider response into a customer-facing allowlist.
 func publicOrderPage(page *contracts.OrderPage) map[string]any {
 	product := page.Product
-	return map[string]any{"product": map[string]any{"id": strconv.Itoa(product.ID), "name": product.Name, "description": product.Description, "price": product.Price, "cycle": product.Cycle, "payType": product.PayType, "currencyCode": product.CurrencyCode, "setupFee": product.SetupFee, "stock": product.Stock, "trialEnabled": product.TrialEnabled, "trialPrice": product.TrialPrice}, "dataCenters": page.DataCenters, "images": page.Images, "imageGroups": page.ImageGroups, "configOptions": page.ConfigOptions, "cycles": page.Cycles, "networkTypes": page.NetworkTypes}
+	return map[string]any{"product": map[string]any{"id": strconv.Itoa(product.ID), "name": product.Name, "description": product.Description, "price": product.Price, "cycle": product.Cycle, "payType": product.PayType, "currencyCode": product.CurrencyCode, "setupFee": product.SetupFee, "stock": product.Stock, "trialEnabled": product.TrialEnabled, "trialPrice": product.TrialPrice}, "dataCenters": page.DataCenters, "images": page.Images, "imageGroups": page.ImageGroups, "customFields": page.CustomFields, "configOptions": page.ConfigOptions, "cycles": page.Cycles, "networkTypes": page.NetworkTypes}
+}
+
+func (h *Handler) quote(w http.ResponseWriter, r *http.Request) {
+	var in service.QuoteInput
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if e := decode(r, &in); e != nil {
+		respond(w, nil, fmt.Errorf("报价参数无效"))
+		return
+	}
+	localID, e := strconv.ParseInt(in.LocalProductID, 10, 64)
+	if e != nil || localID <= 0 {
+		respond(w, nil, fmt.Errorf("商品无效"))
+		return
+	}
+	if _, e = repository.NewRepository(db.G).FindPublicByID(r.Context(), localID); e != nil {
+		respond(w, nil, fmt.Errorf("商品不存在或已下架"))
+		return
+	}
+	q, e := h.Store.Quote(r.Context(), in)
+	respond(w, q, e)
 }

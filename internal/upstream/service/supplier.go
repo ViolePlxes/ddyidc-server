@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,11 +28,28 @@ func sanitizeSupplier(v model.Supplier) model.Supplier { v.Token = ""; v.Secret 
 
 func (s *Store) CreateSupplier(in SupplierInput) (model.Supplier, error) {
 	in.URL = strings.TrimRight(strings.TrimSpace(in.URL), "/")
-	if in.Name == "" || in.URL == "" || in.Username == "" || in.Token == "" {
-		return model.Supplier{}, fmt.Errorf("name, url, username and token are required")
+	if in.Name == "" || in.URL == "" {
+		return model.Supplier{}, fmt.Errorf("供应商名称和接口地址为必填项")
 	}
 	if in.Type == "" {
 		in.Type = "default"
+	}
+	module, ok := provider.ModuleForVariant(in.Type)
+	if !ok {
+		return model.Supplier{}, fmt.Errorf("请选择已注册的对接能力")
+	}
+	fields := map[string]string{"url": in.URL, "username": in.Username, "token": in.Token, "secret": in.Secret}
+	for _, field := range module.ConfigFields {
+		if field.Required && strings.TrimSpace(fields[field.Name]) == "" {
+			return model.Supplier{}, fmt.Errorf("请填写%s", field.Label)
+		}
+	}
+	state, e := s.moduleState(module.ID)
+	if e != nil {
+		return model.Supplier{}, e
+	}
+	if e = moduleAllows(state, "sales"); e != nil {
+		return model.Supplier{}, e
 	}
 	if in.Rate == 0 {
 		in.Rate = 1
@@ -55,7 +73,12 @@ func (s *Store) CreateSupplier(in SupplierInput) (model.Supplier, error) {
 		v.UpdatedAt = v.CreatedAt
 		s.suppliers[v.ID] = v
 		s.mu.Unlock()
-	} else if e := s.db.Table(v.TableName()).Create(&v).Error; e != nil {
+	} else if e := s.db.Transaction(func(tx *gorm.DB) error {
+		if e := tx.Table(v.TableName()).Create(&v).Error; e != nil {
+			return e
+		}
+		return s.CheckSupplierCapabilityTx(context.Background(), tx, v.ID, "sales")
+	}); e != nil {
 		return model.Supplier{}, e
 	}
 	return sanitizeSupplier(v), nil
@@ -110,8 +133,8 @@ func (s *Store) UpdateSupplier(key string, in SupplierInput) (model.Supplier, er
 	if in.Username != "" {
 		v.Username = in.Username
 	}
-	if in.Type != "" {
-		v.Type = in.Type
+	if in.Type != "" && in.Type != v.Type {
+		return v, fmt.Errorf("供应商协议不可直接切换，请新增独立供应商，避免影响已有商品和机器")
 	}
 	if in.Rate > 0 {
 		v.Rate = in.Rate
@@ -146,6 +169,18 @@ func (s *Store) UpdateSupplier(key string, in SupplierInput) (model.Supplier, er
 	return sanitizeSupplier(v), nil
 }
 func (s *Store) DeleteSupplier(key string) error {
+	if !s.isMemory() {
+		for _, table := range []string{"product.upstream_products", "instance.upstream_hosts", "order.upstream_orders", "order.unit_procurements"} {
+			var count int64
+			if e := s.db.Table(table).Where("supplier_id=?", key).Count(&count).Error; e != nil {
+				return e
+			}
+			if count > 0 {
+				return fmt.Errorf("供应商仍有商品、机器或历史交易关联，不能删除")
+			}
+		}
+	}
+
 	if s.isMemory() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -177,6 +212,9 @@ func (s *Store) providerFor(key string, limited bool) (provider.UpstreamProvider
 	if e != nil {
 		return nil, e
 	}
+	if e = s.CheckSupplierCapability(key, "maintenance"); e != nil {
+		return nil, e
+	}
 	v.Token, e = s.decrypt(v.Token)
 	if e != nil {
 		return nil, e
@@ -187,6 +225,7 @@ func (s *Store) providerFor(key string, limited bool) (provider.UpstreamProvider
 	}
 	config := toProvider(v)
 	config.LimitRequests = limited
+	config.AuthorizeRequest = func(method, path string) error { return s.CheckSupplierCapability(key, "maintenance") }
 	return provider.NewProvider(config)
 }
 func (s *Store) TestSupplier(key string) error {

@@ -326,6 +326,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Database migration preflight failed:", err)
 			os.Exit(2)
 		}
+		if err := upstreamservice.NewDefaultStore(nil).ValidateRetainedModules(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Adapter compatibility preflight failed:", err)
+			os.Exit(2)
+		}
 		// The candidate is invoked by old and new online update managers alike.
 		// Refuse an unsafe backup before switching, without changing business data.
 		if current := c.Update.Backend.Executable; current != "" {
@@ -494,6 +498,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	notify.RegisterAdminHandlers(server, notifyManager, jwt, balance.New(db.G))
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
+	upstreamapi.RegisterModuleHandlers(server, upstreamservice.Default, jwt)
 	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
 	admintodo.Register(server, db.G, jwt, snapshotKey)
 	admintodo.RegisterExpiryWorkflows(server, db.G, jwt, notifyManager)

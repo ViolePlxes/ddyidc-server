@@ -44,5 +44,6 @@
   "043_cdn_yuan.sql": "53b23690f4d395119e7eaaf200b99165e8cdd3684eb776bcf4b23936ded88e2f",
   "044_cdn_overage_order.sql": "d3bacdc8cc09da8a20eef0d5eb6787c0692c97990e2e22f12d38ddc171e0c93c",
   "045_cdn_bootstrap_guard.sql": "b553165fd3aedf7bd2ce7fb8088b0f35b38e180aa1866cc2fdd861b228e80377",
-  "046_balance_ledger_read_indexes.sql": "af11162ba6c7c624f842952eec5235b282802b2451adbd645d169536dbdcc2e6"
+  "046_balance_ledger_read_indexes.sql": "af11162ba6c7c624f842952eec5235b282802b2451adbd645d169536dbdcc2e6",
+  "047_order_create_requests.sql": "feea9b7f8f6a218bb780bbc9bfdac6c0336cce5334d36340097d9ef756eb0031"
 }

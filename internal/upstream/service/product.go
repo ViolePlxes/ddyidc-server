@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
@@ -57,6 +58,9 @@ func (s *Store) GetProductDetail(supplierID string, upstreamProductID int) (*con
 // GetOrderPage exposes optional provider purchase configuration without
 // coupling the service layer to a concrete finance/cloud implementation.
 func (s *Store) GetOrderPage(supplierID string, upstreamProductID int) (*contracts.OrderPage, error) {
+	return s.GetOrderPageContext(context.Background(), supplierID, upstreamProductID)
+}
+func (s *Store) GetOrderPageContext(ctx context.Context, supplierID string, upstreamProductID int) (*contracts.OrderPage, error) {
 	p, err := s.ProviderFor(supplierID)
 	if err != nil {
 		return nil, err
@@ -65,7 +69,14 @@ func (s *Store) GetOrderPage(supplierID string, upstreamProductID int) (*contrac
 	if !ok {
 		return nil, fmt.Errorf("upstream provider %T does not support order-page configuration", p)
 	}
-	page, err := configurable.GetOrderPage(upstreamProductID)
+	var page *contracts.OrderPage
+	if scoped, ok := p.(interface {
+		GetOrderPageContext(context.Context, int) (*contracts.OrderPage, error)
+	}); ok {
+		page, err = scoped.GetOrderPageContext(ctx, upstreamProductID)
+	} else {
+		page, err = configurable.GetOrderPage(upstreamProductID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +114,9 @@ func (s *Store) GetOrderPageByLocalProduct(localProductID string) (*contracts.Or
 	return s.GetOrderPage(mapping.SupplierID, mapping.UpstreamProductID)
 }
 func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
+	if err := s.CheckSupplierCapability(in.SupplierID, "sales"); err != nil {
+		return model.UpstreamProduct{}, err
+	}
 	// product.upstream_products.product_group_id is bigint unsigned. The
 	// upstream catalogue does not require a local group, so use its explicit
 	// sentinel value instead of passing an empty string to MySQL.
@@ -153,6 +167,9 @@ func (s *Store) AddProduct(in ProductInput) (model.UpstreamProduct, error) {
 		s.mu.Unlock()
 	} else if in.Mode == "sync" {
 		if e := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := s.CheckSupplierCapabilityTx(context.Background(), tx, in.SupplierID, "sales"); err != nil {
+				return err
+			}
 			var existing model.UpstreamProduct
 			findErr := tx.Table(v.TableName()).Where("supplier_id = ? AND upstream_product_id = ?", in.SupplierID, in.UpstreamProductID).First(&existing).Error
 			if findErr == nil {

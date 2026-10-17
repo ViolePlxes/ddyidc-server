@@ -6,11 +6,13 @@ package order
 import (
 	"context"
 	"crypto/rand"
+	billing "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
 
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
@@ -98,10 +100,13 @@ func NewService(repo OrderRepository, hooks MarketingHooks, snapshotKey ...[]byt
 }
 
 type persistedConfigSnapshot struct {
-	ConfigOptions      map[string]ConfigOptionInput `json:"configOptions,omitempty"`
-	Hostname           string                       `json:"hostname,omitempty"`
-	BillingCycle       string                       `json:"billingCycle,omitempty"`
-	PasswordCiphertext string                       `json:"passwordCiphertext,omitempty"`
+	CustomFieldsCiphertext string                       `json:"customFieldsCiphertext,omitempty"`
+	CustomFields           map[string]string            `json:"-"`
+	Quote                  *VerifiedQuoteEvidence       `json:"quote,omitempty"`
+	ConfigOptions          map[string]ConfigOptionInput `json:"configOptions,omitempty"`
+	Hostname               string                       `json:"hostname,omitempty"`
+	BillingCycle           string                       `json:"billingCycle,omitempty"`
+	PasswordCiphertext     string                       `json:"passwordCiphertext,omitempty"`
 }
 
 var (
@@ -110,7 +115,7 @@ var (
 )
 
 func buildConfigSnapshot(input *CreateOrderInput, key []byte) (string, error) {
-	if len(input.ConfigOptions) == 0 {
+	if len(input.ConfigOptions) == 0 && len(input.CustomFields) == 0 {
 		return `{}`, nil
 	}
 	if len(input.ConfigOptions) > 64 {
@@ -157,9 +162,20 @@ func buildConfigSnapshot(input *CreateOrderInput, key []byte) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("加密实例密码: %w", err)
 	}
-	persisted := persistedConfigSnapshot{
+	persisted := persistedConfigSnapshot{Quote: input.VerifiedQuote,
 		ConfigOptions: input.ConfigOptions, Hostname: hostname,
 		BillingCycle: cycle, PasswordCiphertext: ciphertext,
+	}
+	if len(input.CustomFields) > 0 {
+		data, e := json.Marshal(input.CustomFields)
+		if e != nil {
+			return "", e
+		}
+		encrypted, e := cryptoutil.Encrypt(string(data), key)
+		if e != nil {
+			return "", e
+		}
+		persisted.CustomFieldsCiphertext = encrypted
 	}
 	raw, err := json.Marshal(persisted)
 	if err != nil {
@@ -212,6 +228,15 @@ func decryptConfigSnapshot(raw string, key []byte) (persistedConfigSnapshot, err
 		}
 		snapshot.PasswordCiphertext = password
 	}
+	if snapshot.CustomFieldsCiphertext != "" {
+		raw, e := cryptoutil.Decrypt(snapshot.CustomFieldsCiphertext, key)
+		if e != nil {
+			return snapshot, errors.New("附加字段解密失败")
+		}
+		if json.Unmarshal([]byte(raw), &snapshot.CustomFields) != nil {
+			return snapshot, errors.New("附加字段快照无效")
+		}
+	}
 	return snapshot, nil
 }
 
@@ -221,6 +246,9 @@ func normalizeAndPriceConfig(product *rep.SellableProduct, input *CreateOrderInp
 			return 0, nil, errors.New("固定商品不接受选配参数")
 		}
 		return 0, nil, nil
+	}
+	if upstream.Default == nil {
+		return 0, nil, errors.New("商品对接服务尚未初始化")
 	}
 	page, err := upstream.Default.GetOrderPage(product.SupplierID, product.UpstreamProductID)
 	if err != nil {
@@ -295,24 +323,51 @@ func periodBasePrice(product *rep.SellableProduct, spec *rep.PricingSpec, page *
 
 func normalizeConfigOptions(options []upstreamcontracts.ConfigOption, input *CreateOrderInput, skipPriceFields ...map[string]bool) (int64, error) {
 	if len(input.ConfigOptions) == 0 {
-		return 0, errors.New("该商品必须提交完整选配")
+		for _, option := range options {
+			if option.Required && upstream.ConfigurationVisible(option, nil) {
+				return 0, errors.New("该商品必须提交完整选配")
+			}
+		}
+	}
+	raw := map[string]string{}
+	for k, v := range input.ConfigOptions {
+		raw[k] = v.Value
+	}
+	normalized, err := upstream.NormalizeConfiguration(&upstreamcontracts.OrderPage{ConfigOptions: options}, raw)
+	if err != nil {
+		return 0, err
+	}
+	for key := range input.ConfigOptions {
+		if value, ok := normalized[key]; ok {
+			v := input.ConfigOptions[key]
+			v.Value = value
+			input.ConfigOptions[key] = v
+		} else {
+			delete(input.ConfigOptions, key)
+		}
 	}
 	allowed := make(map[string]struct{}, len(options))
 	var extraCents int64
 	for position, option := range options {
+		if !upstream.ConfigurationVisible(option, normalized) {
+			continue
+		}
 		skipPrice := len(skipPriceFields) > 0 && skipPriceFields[0][option.Field]
 		optionID := strconv.Itoa(option.ID)
 		allowed[optionID] = struct{}{}
 		selected, ok := input.ConfigOptions[optionID]
 		if !ok || strings.TrimSpace(selected.Value) == "" {
+			if !option.Required {
+				continue
+			}
 			return 0, fmt.Errorf("缺少配置项：%s", option.Name)
 		}
 		selected.Field = option.Field
 		selected.DisplayName = option.Name
 		selected.Position = position
-		if option.OptionType == "qty" {
+		if option.OptionType == "qty" || option.OptionType == "quantity" || option.OptionType == "quantity_range" {
 			value, parseErr := strconv.ParseFloat(strings.TrimSpace(selected.Value), 64)
-			if parseErr != nil || value < option.Min || value > option.Max {
+			if parseErr != nil || math.IsNaN(value) || math.IsInf(value, 0) || value < option.Min || value > option.Max {
 				return 0, fmt.Errorf("配置项 %s 超出可选范围", option.Name)
 			}
 			step := option.Step
@@ -320,7 +375,7 @@ func normalizeConfigOptions(options []upstreamcontracts.ConfigOption, input *Cre
 				step = 1
 			}
 			steps := (value - option.Min) / step
-			if steps != float64(int64(steps)) {
+			if math.Abs(steps-math.Round(steps)) > 1e-7 {
 				return 0, fmt.Errorf("配置项 %s 不符合步进规则", option.Name)
 			}
 			selected.Value = strconv.FormatFloat(value, 'f', -1, 64)
@@ -351,6 +406,8 @@ func normalizeConfigOptions(options []upstreamcontracts.ConfigOption, input *Cre
 					extraCents += int64(tier.Price*units*100 + 0.5)
 				}
 			}
+		} else if option.OptionType == "multi_select" || option.OptionType == "cascade" {
+			selected.DisplayValue = upstream.ConfigurationDisplay(option, selected.Value)
 		} else {
 			found := false
 			for _, choice := range option.Options {
@@ -444,15 +501,41 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 	if err != nil {
 		return nil, err
 	}
-	configSnapshot, err := buildConfigSnapshot(input, s.snapshotKey)
-	if err != nil {
-		return nil, err
-	}
 	periodPrice, setupFee, err := periodBasePrice(product, spec, page, input.BillingCycle, duration)
 	if err != nil {
 		return nil, err
 	}
 	unitPrice := periodPrice + optionPrice*int64(duration) + setupFee
+	if product.SupplierID != "" && product.SupplierID != "0" {
+		if err := upstream.Default.CheckSupplierCapability(product.SupplierID, "sales"); err != nil {
+			return nil, err
+		}
+		if page != nil && (len(page.ConfigOptions) > 0 || len(page.CustomFields) > 0) {
+			values := map[string]string{}
+			for key, selected := range input.ConfigOptions {
+				values[key] = selected.Value
+			}
+			quote, err := upstream.Default.VerifyRetailQuote(ctx, upstream.QuoteInput{LocalProductID: input.ProductID, Cycle: input.BillingCycle, Quantity: qty, ConfigOptions: values, CustomFields: input.CustomFields}, input.QuoteToken)
+			if err != nil {
+				return nil, err
+			}
+			input.VerifiedQuote = &VerifiedQuoteEvidence{ProcurementCeiling: quote.ProcurementCeiling, RetailUnit: quote.Unit, RenewalTotal: quote.Renewal, Currency: quote.Currency, VerifiedAt: time.Now().Unix()}
+			money, err := billing.ParseMoney(quote.Unit)
+			if err != nil {
+				return nil, err
+			}
+			unitPrice = int64(money)
+			fee, err := billing.ParseMoney(quote.Setup)
+			if err != nil {
+				return nil, err
+			}
+			setupFee = int64(fee) / int64(qty)
+		}
+	}
+	configSnapshot, err := buildConfigSnapshot(input, s.snapshotKey)
+	if err != nil {
+		return nil, err
+	}
 	if unitPrice <= 0 {
 		return nil, errors.New("商品价格异常，暂不能下单")
 	}
@@ -491,18 +574,54 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 }
 
 func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*OrderView, error) {
+	fingerprint, err := s.requestFingerprint(input)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.existingRequest(ctx, customerID, input, fingerprint)
+	if err != nil {
+		return nil, err
+	}
+	if existing != 0 {
+		return s.replayOrder(ctx, customerID, existing)
+	}
 	prepared, err := s.PrepareOrder(ctx, customerID, input)
 	if err != nil {
 		return nil, err
 	}
 	orderRow, item, couponID := prepared.order, prepared.item, prepared.couponID
+	var replayID int64
 	productID, qty, total := item.ProductID, int(item.Qty), orderRow.TotalAmount
 	if e := s.repo.Transaction(ctx, func(tx *gorm.DB) error {
+		id, err := claimCreateRequest(tx, customerID, input, fingerprint)
+		if err != nil {
+			return err
+		}
+		if id != 0 {
+			replayID = id
+			return nil
+		}
+
 		if e := certification.CheckPurchase(tx, customerID); e != nil {
 			return e
 		}
+		if upstream.Default != nil {
+			var binding struct{ SupplierID string }
+			err := tx.Table("product.products").Select("supplier_id").Where("id=?", productID).Take(&binding).Error
+			if err != nil {
+				return err
+			}
+			if binding.SupplierID != "" && binding.SupplierID != "0" {
+				if err := upstream.Default.CheckSupplierCapabilityTx(ctx, tx, binding.SupplierID, "sales"); err != nil {
+					return err
+				}
+			}
+		}
 		if e := s.repo.CreateOrderTx(ctx, tx, orderRow); e != nil {
 			return e
+		}
+		if err := finishCreateRequest(tx, customerID, input, orderRow); err != nil {
+			return err
 		}
 		if err := inventory.Reserve(tx, orderRow.ID, productID, qty); err != nil {
 			return err
@@ -549,6 +668,9 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		return nil
 	}); e != nil {
 		return nil, fmt.Errorf("创建订单失败: %w", e)
+	}
+	if replayID != 0 {
+		return s.replayOrder(ctx, customerID, replayID)
 	}
 	view := orderToView(orderRow)
 	view.Items = []OrderItemView{itemToView(item)}
@@ -633,7 +755,12 @@ func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64
 	}); err != nil {
 		return fmt.Errorf("锁定开通任务失败: %w", err)
 	}
+	ceiling := ""
+	if snapshot.Quote != nil {
+		ceiling = snapshot.Quote.ProcurementCeiling
+	}
 	result, err := upstream.Default.ProvisionOrder(ctx, upstream.ProvisionInput{
+		ProcurementCeiling: ceiling, CustomFields: snapshot.CustomFields,
 		OrderID: formatID(orderID), LocalProductID: formatID(item.ProductID), CustomerID: formatID(customerID),
 		InstanceID: formatID(instanceID), UnitID: formatID(unit.ID), Quantity: 1, Cycle: cycle,
 		ConfigOptions: configValues, Hostname: snapshot.Hostname, Password: snapshot.PasswordCiphertext,

@@ -167,3 +167,36 @@ func TestBuildConfigSnapshotGeneratesHostnameForNewDraft(t *testing.T) {
 		t.Fatal("hostname changed on repeat snapshot")
 	}
 }
+
+func TestCustomFieldsSnapshotIsEncrypted(t *testing.T) {
+	input := &CreateOrderInput{DurationMonth: 1, BillingCycle: "monthly", Password: "aB1234567890", CustomFields: map[string]string{"5": "private-license-value"}}
+	key := []byte("01234567890123456789012345678901")
+	raw, e := buildConfigSnapshot(input, key)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.Contains(raw, "private-license-value") {
+		t.Fatal("custom field plaintext persisted")
+	}
+	snapshot, e := decryptConfigSnapshot(raw, key)
+	if e != nil || snapshot.CustomFields["5"] != "private-license-value" {
+		t.Fatal("encrypted procurement fields lost", e)
+	}
+}
+
+func TestNormalizeOptionalAndFractionalConfiguration(t *testing.T) {
+	input := &CreateOrderInput{ConfigOptions: map[string]ConfigOptionInput{"20": {Value: "0.3"}}}
+	options := []upstreamcontracts.ConfigOption{
+		{ID: 10, Name: "可选附加项", OptionType: "select"},
+		{ID: 20, Name: "数量", OptionType: "qty", Required: true, Min: 0, Max: 1, Step: 0.1},
+	}
+	if _, err := normalizeConfigOptions(options, input); err != nil {
+		t.Fatal("valid fractional step or omitted optional field rejected", err)
+	}
+	if input.ConfigOptions["20"].Value != "0.3" {
+		t.Fatal("quantity changed")
+	}
+	if _, err := normalizeConfigOptions(options, &CreateOrderInput{ConfigOptions: map[string]ConfigOptionInput{"20": {Value: "0.31"}}}); err == nil {
+		t.Fatal("fractional non-step accepted")
+	}
+}
