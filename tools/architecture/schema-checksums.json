@@ -45,5 +45,7 @@
   "044_cdn_overage_order.sql": "d3bacdc8cc09da8a20eef0d5eb6787c0692c97990e2e22f12d38ddc171e0c93c",
   "045_cdn_bootstrap_guard.sql": "b553165fd3aedf7bd2ce7fb8088b0f35b38e180aa1866cc2fdd861b228e80377",
   "046_balance_ledger_read_indexes.sql": "af11162ba6c7c624f842952eec5235b282802b2451adbd645d169536dbdcc2e6",
-  "047_order_create_requests.sql": "feea9b7f8f6a218bb780bbc9bfdac6c0336cce5334d36340097d9ef756eb0031"
+  "047_order_create_requests.sql": "feea9b7f8f6a218bb780bbc9bfdac6c0336cce5334d36340097d9ef756eb0031",
+  "048_ticket_rich_content.sql": "020f1784ca096a0f3bbdce1a5d3c16dc6fc5d49d1cc8c08e677ca6506894b348",
+  "049_ticket_reply_order.sql": "aae336379fe64c0713dfe5d3eee1deffb50f38a491392ecec5f0459bd3cc9930"
 }

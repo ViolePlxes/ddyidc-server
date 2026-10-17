@@ -67,11 +67,13 @@ func (v *HostLink) BeforeCreate(_ *gorm.DB) error {
 }
 
 type Reply struct {
+	Sequence       int64           `gorm:"column:reply_seq;autoIncrement" json:"-"`
 	ID             int64           `gorm:"column:id;primaryKey" json:"id,string"`
 	TicketID       int64           `gorm:"column:ticket_id" json:"ticketId,string"`
 	Type           string          `gorm:"column:type" json:"type"`
 	RelID          int64           `gorm:"column:rel_id" json:"relId,string"`
 	Content        string          `gorm:"column:content" json:"content"`
+	RichContent    json.RawMessage `gorm:"column:rich_content;type:json" json:"-"`
 	AttachmentJSON json.RawMessage `gorm:"column:attachment;type:json" json:"-"`
 	QuoteReplyID   *int64          `gorm:"column:quote_reply_id" json:"quoteReplyId,omitempty,string"`
 	CreatedAt      time.Time       `gorm:"column:create_time" json:"createdAt"`

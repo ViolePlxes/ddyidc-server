@@ -2,10 +2,12 @@ package ticket
 
 import (
 	dom "ddyidc/internal/ticket/domain"
+	"encoding/json"
 	"time"
 )
 
 type ReplyView struct {
+	RichContent  json.RawMessage  `json:"richContent,omitempty"`
 	ID           int64            `json:"id,string"`
 	Type         string           `json:"type"`
 	RelID        int64            `json:"relId,string"`
@@ -69,6 +71,7 @@ type ListResult struct {
 	PollIntervalSeconds int          `json:"pollIntervalSeconds"`
 }
 type CreateInput struct {
+	RichContent  json.RawMessage  `json:"richContent,omitempty"`
 	Title        string           `json:"title"`
 	TicketTypeID int64            `json:"ticketTypeId,string"`
 	Content      string           `json:"content"`
@@ -76,6 +79,7 @@ type CreateInput struct {
 	HostID       *int64           `json:"hostId,string"`
 }
 type ReplyInput struct {
+	RichContent  json.RawMessage  `json:"richContent,omitempty"`
 	Content      string           `json:"content"`
 	Attachments  []dom.Attachment `json:"attachments"`
 	QuoteReplyID *int64           `json:"quoteReplyId,string"`

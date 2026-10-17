@@ -3,8 +3,10 @@ package ticket
 import (
 	"context"
 	"ddyidc/internal/shared/pointsevents"
+	"ddyidc/internal/shared/richtext"
 	schemamode "ddyidc/internal/shared/schema"
 	dom "ddyidc/internal/ticket/domain"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -41,7 +43,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_type (id bigint unsigned NOT NULL, name varchar(64) NOT NULL, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(id), UNIQUE KEY uk_name(name)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS ticket.ticket (id bigint unsigned NOT NULL, ticket_num varchar(16) NOT NULL, client_id bigint unsigned NOT NULL, title varchar(128) NOT NULL, ticket_type_id bigint unsigned NOT NULL, content text NOT NULL, status bigint unsigned NOT NULL, attachment json DEFAULT NULL, last_reply_time datetime NOT NULL, post_time datetime NOT NULL, admin_id bigint unsigned DEFAULT NULL, last_reply_admin_id bigint unsigned DEFAULT NULL, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(id), UNIQUE KEY uk_ticket_num(ticket_num), KEY idx_client_status(client_id,status), KEY idx_admin_status(admin_id,status), KEY idx_update(update_time)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_host_link (id bigint unsigned NOT NULL, ticket_id bigint unsigned NOT NULL, host_id bigint unsigned NOT NULL, PRIMARY KEY(id), UNIQUE KEY uk_ticket_host(ticket_id,host_id), KEY idx_host(host_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
-		`CREATE TABLE IF NOT EXISTS ticket.ticket_reply (id bigint unsigned NOT NULL, ticket_id bigint unsigned NOT NULL, type varchar(16) NOT NULL, rel_id bigint unsigned NOT NULL, content text NOT NULL, attachment json DEFAULT NULL, quote_reply_id bigint unsigned DEFAULT NULL, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(id), KEY idx_ticket_id(ticket_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+		`CREATE TABLE IF NOT EXISTS ticket.ticket_reply (id bigint unsigned NOT NULL, ticket_id bigint unsigned NOT NULL, type varchar(16) NOT NULL, rel_id bigint unsigned NOT NULL, content text NOT NULL, rich_content json DEFAULT NULL, reply_seq bigint unsigned NOT NULL AUTO_INCREMENT UNIQUE, attachment json DEFAULT NULL, quote_reply_id bigint unsigned DEFAULT NULL, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(id), KEY idx_ticket_id(ticket_id,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_notes (id bigint unsigned NOT NULL, ticket_id bigint unsigned NOT NULL, content text NOT NULL, admin_id bigint unsigned NOT NULL, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(id), KEY idx_ticket(ticket_id,create_time)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_type_admin_link (ticket_type_id bigint unsigned NOT NULL, admin_id bigint unsigned NOT NULL, PRIMARY KEY(ticket_type_id,admin_id), KEY idx_admin(admin_id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
 		`CREATE TABLE IF NOT EXISTS ticket.ticket_prereply (id bigint unsigned NOT NULL, content text NOT NULL, sort int NOT NULL DEFAULT 0, create_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, update_time datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, PRIMARY KEY(id), KEY idx_sort(sort,id)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
@@ -53,6 +55,11 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 	for _, statement := range statements {
 		if err := r.db.WithContext(ctx).Exec(statement).Error; err != nil {
 			return fmt.Errorf("ticket schema: %w", err)
+		}
+	}
+	if !r.db.WithContext(ctx).Migrator().HasColumn(&dom.Reply{}, "rich_content") {
+		if err := r.db.WithContext(ctx).Exec("ALTER TABLE ticket.ticket_reply ADD COLUMN rich_content JSON DEFAULT NULL").Error; err != nil {
+			return err
 		}
 	}
 	defaults := []dom.Status{
@@ -88,6 +95,9 @@ func (r *Repository) CreateTicket(tx *gorm.DB, ticket *dom.Ticket, reply *dom.Re
 	}
 	ticket.AttachmentJSON = canonical
 	reply.AttachmentJSON = canonical
+	if err := validateRichAttachments(reply.RichContent, canonical); err != nil {
+		return err
+	}
 	if err := tx.Table(ticket.TableName()).Where("id=?", ticket.ID).Update("attachment", canonical).Error; err != nil {
 		return err
 	}
@@ -202,7 +212,15 @@ func (r *Repository) TicketMeta(ctx context.Context, v *dom.Ticket) (Meta, error
 
 func (r *Repository) ListReplies(ctx context.Context, ticketID, since int64) ([]dom.Reply, error) {
 	var out []dom.Reply
-	err := r.db.WithContext(ctx).Table((dom.Reply{}).TableName()).Where("ticket_id = ? AND id > ?", ticketID, since).Order("id ASC").Find(&out).Error
+	q := r.db.WithContext(ctx).Table((dom.Reply{}).TableName()).Where("ticket_id = ?", ticketID)
+	if since != 0 {
+		anchor, err := r.FindReply(ctx, ticketID, since)
+		if err != nil {
+			return nil, err
+		}
+		q = q.Where("reply_seq > ?", anchor.Sequence)
+	}
+	err := q.Order("reply_seq ASC, create_time ASC, id ASC").Find(&out).Error
 	return out, err
 }
 func (r *Repository) FindReply(ctx context.Context, ticketID, id int64) (*dom.Reply, error) {
@@ -212,12 +230,12 @@ func (r *Repository) FindReply(ctx context.Context, ticketID, id int64) (*dom.Re
 }
 func (r *Repository) LastReplyID(ctx context.Context, ticketID int64) int64 {
 	var id int64
-	r.db.WithContext(ctx).Table((dom.Reply{}).TableName()).Where("ticket_id = ?", ticketID).Select("COALESCE(MAX(id),0)").Scan(&id)
+	r.db.WithContext(ctx).Table((dom.Reply{}).TableName()).Where("ticket_id = ?", ticketID).Order("reply_seq DESC, create_time DESC, id DESC").Limit(1).Select("id").Scan(&id)
 	return id
 }
 func (r *Repository) UnreadCount(ctx context.Context, ticketID int64, actorType string, actorID int64) int64 {
 	var count int64
-	r.db.WithContext(ctx).Table("ticket.ticket_reply AS r").Joins("LEFT JOIN ticket.ticket_reads AS rd ON rd.ticket_id=r.ticket_id AND rd.actor_type=? AND rd.actor_id=?", actorType, actorID).Where("r.ticket_id=? AND r.type<>? AND r.id>COALESCE(rd.last_reply_id,0)", ticketID, actorType).Count(&count)
+	r.db.WithContext(ctx).Table("ticket.ticket_reply AS r").Joins("LEFT JOIN ticket.ticket_reads AS rd ON rd.ticket_id=r.ticket_id AND rd.actor_type=? AND rd.actor_id=?", actorType, actorID).Joins("LEFT JOIN ticket.ticket_reply AS anchor ON anchor.ticket_id=r.ticket_id AND anchor.id=rd.last_reply_id").Where("r.ticket_id=? AND r.type<>? AND r.reply_seq>COALESCE(anchor.reply_seq,0)", ticketID, actorType).Count(&count)
 	return count
 }
 func (r *Repository) MarkRead(ctx context.Context, ticketID int64, actorType string, actorID, lastReplyID int64) error {
@@ -235,6 +253,9 @@ func (r *Repository) CreateReply(ctx context.Context, reply *dom.Reply, ticketFi
 			return err
 		}
 		reply.AttachmentJSON = canonical
+		if err := validateRichAttachments(reply.RichContent, canonical); err != nil {
+			return err
+		}
 		if err := tx.Table(reply.TableName()).Create(reply).Error; err != nil {
 			return err
 		}
@@ -449,4 +470,21 @@ func (r *Repository) ListAdmins(ctx context.Context) ([]map[string]any, error) {
 		out = append(out, map[string]any{"id": fmt.Sprint(v.ID), "name": v.Name})
 	}
 	return out, err
+}
+
+// Recheck with canonical uploaded metadata after ownership/transaction binding.
+func validateRichAttachments(raw, attachments json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var rows []dom.Attachment
+	if err := json.Unmarshal(attachments, &rows); err != nil {
+		return err
+	}
+	ids := map[string]bool{}
+	for _, a := range rows {
+		ids[a.ID] = a.ContentType == "image/png" || a.ContentType == "image/jpeg" || a.ContentType == "image/gif" || a.ContentType == "image/webp"
+	}
+	_, _, err := richtext.Validate(raw, ids)
+	return err
 }

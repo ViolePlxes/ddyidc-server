@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"crypto/rand"
+	"ddyidc/internal/shared/richtext"
 	dom "ddyidc/internal/ticket/domain"
 	repo "ddyidc/internal/ticket/repository"
 	types "ddyidc/internal/ticket/types"
@@ -101,6 +102,18 @@ func (s *Service) newTicketNumber(ctx context.Context) (string, error) {
 
 func (s *Service) Create(ctx context.Context, clientID int64, input types.CreateInput) (*types.DetailView, error) {
 	input.Title = strings.TrimSpace(input.Title)
+	if len(input.RichContent) > 0 {
+		images := map[string]bool{}
+		for _, a := range input.Attachments {
+			images[a.ID] = a.ContentType == "image/png" || a.ContentType == "image/jpeg" || a.ContentType == "image/gif" || a.ContentType == "image/webp"
+		}
+		raw, plain, err := richtext.Validate(input.RichContent, images)
+		if err != nil {
+			return nil, err
+		}
+		input.RichContent = raw
+		input.Content = plain
+	}
 	input.Content = strings.TrimSpace(input.Content)
 	if input.Title == "" || len([]rune(input.Title)) > 128 {
 		return nil, errors.New("标题长度应为 1-128 个字符")
@@ -129,7 +142,7 @@ func (s *Service) Create(ctx context.Context, clientID int64, input types.Create
 	}
 	now := time.Now()
 	ticket := dom.Ticket{TicketNum: number, ClientID: clientID, Title: input.Title, TicketTypeID: input.TicketTypeID, Content: input.Content, StatusID: dom.StatusPending, AttachmentJSON: marshalAttachments(input.Attachments), LastReplyTime: now, PostTime: now, CreatedAt: now, UpdatedAt: now}
-	reply := dom.Reply{Type: dom.ActorClient, RelID: clientID, Content: input.Content, AttachmentJSON: ticket.AttachmentJSON, CreatedAt: now}
+	reply := dom.Reply{Type: dom.ActorClient, RelID: clientID, Content: input.Content, RichContent: input.RichContent, AttachmentJSON: ticket.AttachmentJSON, CreatedAt: now}
 	log := dom.Log{ActorType: dom.ActorClient, ActorID: clientID, Action: "create", Detail: "客户创建工单", CreatedAt: now}
 	if err = s.repo.Transaction(ctx, func(tx *gorm.DB) error { return s.repo.CreateTicket(tx, &ticket, &reply, input.HostID, &log) }); err != nil {
 		return nil, err
@@ -201,7 +214,7 @@ func (s *Service) ticketView(ctx context.Context, v *dom.Ticket, actorType strin
 func (s *Service) replyViews(ctx context.Context, replies []dom.Reply, actorType string) ([]types.ReplyView, error) {
 	out := make([]types.ReplyView, 0, len(replies))
 	for _, v := range replies {
-		item := types.ReplyView{ID: v.ID, Type: v.Type, RelID: v.RelID, Content: v.Content, Attachments: decorateAttachments(unmarshalAttachments(v.AttachmentJSON), v.TicketID, actorType), QuoteReplyID: v.QuoteReplyID, CreatedAt: v.CreatedAt}
+		item := types.ReplyView{ID: v.ID, Type: v.Type, RelID: v.RelID, Content: v.Content, RichContent: v.RichContent, Attachments: decorateAttachments(unmarshalAttachments(v.AttachmentJSON), v.TicketID, actorType), QuoteReplyID: v.QuoteReplyID, CreatedAt: v.CreatedAt}
 		if v.QuoteReplyID != nil {
 			quote, err := s.repo.FindReply(ctx, v.TicketID, *v.QuoteReplyID)
 			if err == nil {
@@ -314,6 +327,18 @@ func (s *Service) Reply(ctx context.Context, actorType string, actorID, ticketID
 	if ticket.StatusID == dom.StatusClosed {
 		return nil, ErrClosed
 	}
+	if len(input.RichContent) > 0 {
+		images := map[string]bool{}
+		for _, a := range input.Attachments {
+			images[a.ID] = a.ContentType == "image/png" || a.ContentType == "image/jpeg" || a.ContentType == "image/gif" || a.ContentType == "image/webp"
+		}
+		raw, plain, err := richtext.Validate(input.RichContent, images)
+		if err != nil {
+			return nil, err
+		}
+		input.RichContent = raw
+		input.Content = plain
+	}
 	input.Content = strings.TrimSpace(input.Content)
 	if input.Content == "" || len([]rune(input.Content)) > 20000 {
 		return nil, errors.New("回复内容长度应为 1-20000 个字符")
@@ -332,7 +357,7 @@ func (s *Service) Reply(ctx context.Context, actorType string, actorID, ticketID
 		}
 	}
 	now := time.Now()
-	reply := dom.Reply{TicketID: ticketID, Type: actorType, RelID: actorID, Content: input.Content, AttachmentJSON: marshalAttachments(input.Attachments), QuoteReplyID: input.QuoteReplyID, CreatedAt: now}
+	reply := dom.Reply{TicketID: ticketID, Type: actorType, RelID: actorID, Content: input.Content, RichContent: input.RichContent, AttachmentJSON: marshalAttachments(input.Attachments), QuoteReplyID: input.QuoteReplyID, CreatedAt: now}
 	status := dom.StatusUserReply
 	fields := map[string]any{"status": status, "last_reply_time": now, "post_time": now}
 	detail := "客户回复工单"
