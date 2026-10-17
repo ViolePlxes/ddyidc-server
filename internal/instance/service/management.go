@@ -174,11 +174,25 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 				return err
 			}
 			if in.ProductOnly && product.ModuleType != current.ModuleType {
-				return errors.New("商品模块不一致，请完成原任务后使用完整编辑")
+				// Imported instances retain their legacy lifecycle marker. Compare
+				// the two catalogue modules, without changing that instance marker.
+				var previous struct{ ModuleType string }
+				if current.ModuleType != "legacy_snapshot" {
+					return errors.New("商品模块不一致，请完成原任务后使用完整编辑")
+				}
+				if err := tx.Table("product.products").Clauses(clause.Locking{Strength: "UPDATE"}).Select("module_type").Where("id=?", current.ProductID).Take(&previous).Error; err != nil {
+					return err
+				}
+				if previous.ModuleType == "" || previous.ModuleType != product.ModuleType {
+					return errors.New("商品模块不一致，请完成原任务后使用完整编辑")
+				}
 			}
 			updates["product_id"] = product.ID
 			updates["product_name"] = upstreamProduct.Name
 			updates["module_type"] = product.ModuleType
+			if in.ProductOnly {
+				updates["module_type"] = current.ModuleType
+			}
 			if !in.ProductOnly && (target != h.UpstreamInstanceID || product.ID != current.ProductID || product.ModuleType != current.ModuleType) {
 				if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
 					return err

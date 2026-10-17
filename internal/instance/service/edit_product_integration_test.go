@@ -165,6 +165,37 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 			t.Fatal("product-only changed machine")
 		}
 	})
+	run("product-only imported instance preserves legacy module marker", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		if e := f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("module_type", "legacy_snapshot").Error; e != nil {
+			t.Fatal(e)
+		}
+		f.p.detail.ID = f.host.UpstreamInstanceID
+		oid := snowflake.GenID()
+		f.db.Exec("INSERT INTO `order`.orders(id,status) VALUES(?,2)", oid)
+		f.db.Exec("INSERT INTO instance.instance_renewals(instance_id,order_id,state) VALUES(?,?,'uncertain')", f.host.ID, oid)
+		id := f.host.UpstreamInstanceID
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id, ProductOnly: true}); e != nil {
+			t.Fatal(e)
+		}
+		h := f.load(t)
+		if h.ProductID != target.ID || h.ModuleType != "legacy_snapshot" || h.OwnershipVersion != f.host.OwnershipVersion || h.ConfigSnapshot != f.host.ConfigSnapshot {
+			t.Fatal("legacy marker or metadata changed")
+		}
+	})
+	run("product-only legacy repair rejects a different catalogue module", func(t *testing.T, f *editProductFixture) {
+		f.mapProduct(t, 404)
+		f.p.product.Type = "different-module"
+		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("module_type", "legacy_snapshot")
+		f.p.detail.ID = f.host.UpstreamInstanceID
+		id := f.host.UpstreamInstanceID
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id, ProductOnly: true}); e == nil {
+			t.Fatal("cross-module repair permitted")
+		}
+		if f.load(t).ProductID != f.host.ProductID {
+			t.Fatal("failed repair changed product")
+		}
+	})
 	run("empty old binding can be repaired using entered identity", func(t *testing.T, f *editProductFixture) {
 		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("upstream_instance_id", "")
 		if e := f.edit(); e != nil {
