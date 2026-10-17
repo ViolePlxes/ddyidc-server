@@ -19,3 +19,6 @@ richContent={version:1,doc:<白名单Tiptap JSON>}。创建/回复输入可选�
 VM go build ./...、go vet ./...、go test ./...、releasecheck通过；npm ci、TypeScript、生产构建通过（24.63秒）。隔离MySQL迁移重复执行、富文本落库、MIME拒绝与回滚、随机ID倒序增量查询用例通过。候选服务真实HTTP通过创建首条唯一、服务器生成纯文本摘要、引用/回复重载、图片上传/下载、跨用户403、用户不能调用后台、内部备注/日志隔离、非法文档422、关闭后拒绝回复。无真实客户消息/支付/机器操作。
 浏览器360/390手机无横向溢出；1440×900页面高度=900，用户回复区288px；后台三分区底部876px，边框完整。用户和后台草稿分别恢复，后台内部备注切换不丢公开草稿。浅暗色此前预览验证保留。手机真实软键盘和所有浏览器组合未逐台实测，不将此声明为全设备保证。
 证据：deploy-notes/ticket-release-{go-test-final,web-build-final,npm-ci-final,isolated}.log、ticket-release-http-result.json。发布目标前端v0.1.166、后端v0.1.134，待线上更新完成后记录生产验证。
+
+
+2026-10-18 CI补充：全新数据库离线迁移中，Gorm HasColumn 对 ticket.ticket_reply 跨库模型误判，导致重复增加rich_content。EnsureSchema改为显式information_schema限定库/表/列，仍仅离线迁移可执行；新增与旧库两条路径均验证。v0.1.134未安装生产，修正版本递增v0.1.135，不重写已有tag。

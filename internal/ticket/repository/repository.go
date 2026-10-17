@@ -57,7 +57,11 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 			return fmt.Errorf("ticket schema: %w", err)
 		}
 	}
-	if !r.db.WithContext(ctx).Migrator().HasColumn(&dom.Reply{}, "rich_content") {
+	var richColumns int64
+	if err := r.db.WithContext(ctx).Raw("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA='ticket' AND TABLE_NAME='ticket_reply' AND COLUMN_NAME='rich_content'").Scan(&richColumns).Error; err != nil {
+		return err
+	}
+	if richColumns == 0 {
 		if err := r.db.WithContext(ctx).Exec("ALTER TABLE ticket.ticket_reply ADD COLUMN rich_content JSON DEFAULT NULL").Error; err != nil {
 			return err
 		}
