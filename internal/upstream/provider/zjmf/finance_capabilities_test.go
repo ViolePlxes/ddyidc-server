@@ -19,18 +19,6 @@ func TestRescueFormAndCapabilityDeclarations(t *testing.T) {
 		t.Fatal("capability declaration ignored")
 	}
 }
-func TestUpgradeDiscountUsesExactMoneyAndRejectsUnverifiedRates(t *testing.T) {
-	cost, _ := billing.ParseMoney("15.58")
-	got, e := undiscountedUpgrade(cost, "6.5")
-	if e != nil || got.String() != "23.97" {
-		t.Fatalf("rounded original=%s error=%v", got.String(), e)
-	}
-	for _, rate := range []string{"", "0", "-1", "10.1", "NaN"} {
-		if _, e := undiscountedUpgrade(cost, rate); e == nil {
-			t.Fatalf("accepted invalid rate %q", rate)
-		}
-	}
-}
 
 func TestUpgradePlansAcceptFinanceProductFieldNames(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

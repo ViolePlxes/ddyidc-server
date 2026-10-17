@@ -657,5 +657,10 @@
   "ddyidc/internal/upstream/service/TestAdapterStaticReleaseRecoveryMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run test_adapter_modules.sh with disposable MySQL; static incompatible/compatible upgrade, rollback, dependency guard, uninstall/reinstall preserve state revision and audit. Not runtime hot unloading. Skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestRenewalTodoAppearsOnceMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "test_manual_product_display.sh verifies one renewal behavior once, independent purchase retained, manual renewal state unchanged."
   }
 }

@@ -41,32 +41,43 @@ func decodeQuoteMoney(raw json.RawMessage) (billing.Money, error) {
 	return billing.ParseMoney(v)
 }
 func decodePublicQuote(body []byte, cycle string) (*contracts.QuoteResult, error) {
-	total, e := purchaseQuoteAmount(body, cycle)
-	if e != nil {
-		return nil, e
-	}
 	var data struct {
 		Products struct {
-			Renewal         json.RawMessage      `json:"sale_signal_price"`
+			Cycle           string               `json:"billingcycle"`
+			Total           json.RawMessage      `json:"total"`
+			SaleTotal       json.RawMessage      `json:"sale_total"`
 			OriginalRenewal json.RawMessage      `json:"signal_price"`
-			Setup           json.RawMessage      `json:"product_sale_setup_fee"`
+			Setup           json.RawMessage      `json:"product_setup_fee"`
+			SaleSetup       json.RawMessage      `json:"product_sale_setup_fee"`
 			Type            financeQuoteDiscount `json:"type"`
 		} `json:"products"`
 	}
-	if json.Unmarshal(body, &data) != nil {
-		return nil, fmt.Errorf("报价格式无效")
+	if json.Unmarshal(body, &data) != nil || data.Products.Cycle != cycle {
+		return nil, fmt.Errorf("报价格式或周期无效")
 	}
-	renewalRaw := data.Products.Renewal
-	if data.Products.Type.Type != 1 {
-		renewalRaw = data.Products.OriginalRenewal
+	// Standard-mode no-discount responses may omit duplicate original-total/setup keys.
+	// Discounted responses must carry explicit originals; never reuse the cost decoder.
+	discount, de := decodeQuoteMoney(data.Products.Type.Discount)
+	noDiscount := data.Products.Type.Type == 0 && de == nil && discount == 0
+	totalRaw := data.Products.Total
+	if len(totalRaw) == 0 && noDiscount {
+		totalRaw = data.Products.SaleTotal
 	}
-	renewal, e := decodeQuoteMoney(renewalRaw)
+	total, e := decodeQuoteMoney(totalRaw)
+	if e != nil || total <= 0 {
+		return nil, fmt.Errorf("商品完整原价未确认")
+	}
+	renewal, e := decodeQuoteMoney(data.Products.OriginalRenewal)
 	if e != nil || renewal < 0 {
-		return nil, fmt.Errorf("续费报价未确认")
+		return nil, fmt.Errorf("续费完整原价未确认")
 	}
-	setup, e := decodeQuoteMoney(data.Products.Setup)
+	setupRaw := data.Products.Setup
+	if len(setupRaw) == 0 && noDiscount {
+		setupRaw = data.Products.SaleSetup
+	}
+	setup, e := decodeQuoteMoney(setupRaw)
 	if e != nil || setup < 0 {
-		return nil, fmt.Errorf("安装费报价未确认")
+		return nil, fmt.Errorf("安装费原价未确认")
 	}
 	return &contracts.QuoteResult{Total: total.String(), RenewalUnit: renewal.String(), SetupUnit: setup.String(), Currency: "CNY"}, nil
 }

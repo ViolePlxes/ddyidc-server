@@ -21,4 +21,4 @@ done
 mysqladmin --no-defaults --socket="$root/mysql.sock" -uroot ping >/dev/null
 mysql --no-defaults --socket="$root/mysql.sock" -uroot -e 'CREATE DATABASE IF NOT EXISTS `system`; CREATE DATABASE IF NOT EXISTS instance; CREATE DATABASE IF NOT EXISTS customer; CREATE DATABASE IF NOT EXISTS common; CREATE DATABASE IF NOT EXISTS `order`; CREATE DATABASE IF NOT EXISTS product; CREATE TABLE system.id_registry(id BIGINT UNSIGNED PRIMARY KEY); CREATE TABLE system.id_sequences(name VARCHAR(32) PRIMARY KEY,high_water BIGINT NOT NULL);'
 export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
-go test -race -v ./internal/admintodo -run '^(TestManualProductDisplayMySQL|TestManualBillingURL|TestManualProductMarkAndReadOnlyRefreshMySQL|TestManualProductCompleteRenewalMatchMySQL)$' -count=1
+go test -race -v ./internal/admintodo -run '^(TestManualProductDisplayMySQL|TestRenewalTodoAppearsOnceMySQL|TestManualBillingURL|TestManualProductMarkAndReadOnlyRefreshMySQL|TestManualProductCompleteRenewalMatchMySQL)$' -count=1

@@ -5,7 +5,6 @@ import (
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
 	"fmt"
-	"math/big"
 	"net/url"
 	"strconv"
 )
@@ -59,22 +58,7 @@ func (p *Provider) UpgradePlans(id int64) ([]contracts.UpgradePlan, error) {
 	}
 	return out, nil
 }
-func undiscountedUpgrade(cost billing.Money, bates string) (billing.Money, error) {
-	rate, ok := new(big.Rat).SetString(bates)
-	if !ok || rate.Sign() <= 0 || rate.Cmp(big.NewRat(10, 1)) > 0 {
-		return 0, fmt.Errorf("产品升级折扣依据无效")
-	}
-	value := new(big.Rat).Quo(new(big.Rat).Mul(new(big.Rat).SetInt64(int64(cost)), big.NewRat(10, 1)), rate)
-	amount := new(big.Int).Quo(value.Num(), value.Denom())
-	if new(big.Int).Mod(value.Num(), value.Denom()).Sign() > 0 {
-		amount.Add(amount, big.NewInt(1))
-	}
-	if !amount.IsInt64() || amount.Sign() <= 0 || amount.Int64() > int64(billing.MaxMoney) {
-		return 0, fmt.Errorf("产品升级原价无效")
-	}
-	return billing.Money(amount.Int64()), nil
-}
-func (p *Provider) QuoteUpgrade(id int64, pid, cycle string) (contracts.UpgradeQuote, error) {
+func (p *Provider) quoteUpgradeBasis(id int64, pid, cycle, basis string) (contracts.UpgradeQuote, error) {
 	var out contracts.UpgradeQuote
 	plans, e := p.UpgradePlans(id)
 	if e != nil {
@@ -98,11 +82,11 @@ func (p *Provider) QuoteUpgrade(id int64, pid, cycle string) (contracts.UpgradeQ
 	// It is separate from invoice checkout and cannot pay or execute a module.
 	q := *p
 	q.procurementContext = true
-	_, e = q.authorizedFormPost("/servicedetail?id="+strconv.FormatInt(id, 10)+"&action=upgrade", url.Values{"hid": {strconv.FormatInt(id, 10)}, "pid": {pid}, "billingcycle": {cycle}})
+	_, e = q.authorizedFormPost("/servicedetail?id="+strconv.FormatInt(id, 10)+"&action=upgrade", url.Values{"hid": {strconv.FormatInt(id, 10)}, "pid": {pid}, "billingcycle": {cycle}, "price_basis": {basis}})
 	if e != nil {
 		return out, e
 	}
-	b, e := q.authorizedGet("/upgrade/upgrade_product_page?hid=" + strconv.FormatInt(id, 10))
+	b, e := q.authorizedGet("/upgrade/upgrade_product_page?hid=" + strconv.FormatInt(id, 10) + "&price_basis=" + basis)
 	if e != nil {
 		return out, e
 	}
@@ -112,19 +96,32 @@ func (p *Provider) QuoteUpgrade(id int64, pid, cycle string) (contracts.UpgradeQ
 	}
 	old := nestedMap(d, "old_host")
 	currency := nestedMap(d, "currency")
-	discount := nestedMap(d, "type")
-	if firstMapString(old, "id") != strconv.FormatInt(id, 10) || firstMapString(d, "new_pid") != pid || firstMapString(d, "billingcycle") != cycle || firstMapString(currency, "code") != "CNY" || firstMapString(discount, "type") != "1" {
+	if firstMapString(old, "id") != strconv.FormatInt(id, 10) || firstMapString(d, "new_pid") != pid || firstMapString(d, "billingcycle") != cycle || firstMapString(currency, "code") != "CNY" {
 		return out, fmt.Errorf("升级报价的实例、产品、周期或货币未确认")
 	}
 	cost, e := billing.ParseMoney(firstMapString(d, "amount_total"))
 	if e != nil || cost <= 0 {
 		return out, fmt.Errorf("当前方案无有效正数差价；涉及返款的降配请人工核查")
 	}
-	original, e := undiscountedUpgrade(cost, firstMapString(discount, "bates"))
-	if e != nil {
-		return out, e
+	return contracts.UpgradeQuote{HostID: strconv.FormatInt(id, 10), ProductID: pid, Cycle: cycle, Cost: cost.String(), OriginalAmount: cost.String()}, nil
+}
+func (p *Provider) QuoteUpgrade(id int64, pid, cycle string) (contracts.UpgradeQuote, error) {
+	// Leave the isolated quote selection in agent mode for a later procurement checkout.
+	standard, err := p.quoteUpgradeBasis(id, pid, cycle, "standard")
+	if err != nil {
+		return contracts.UpgradeQuote{}, err
 	}
-	return contracts.UpgradeQuote{HostID: strconv.FormatInt(id, 10), ProductID: pid, Cycle: cycle, Cost: cost.String(), OriginalAmount: original.String()}, nil
+	agent, err := p.quoteUpgradeBasis(id, pid, cycle, "agent")
+	if err != nil {
+		return agent, err
+	}
+	cost, e1 := billing.ParseMoney(agent.Cost)
+	original, e2 := billing.ParseMoney(standard.OriginalAmount)
+	if e1 != nil || e2 != nil || original < cost {
+		return contracts.UpgradeQuote{}, fmt.Errorf("上游升级原价未确认")
+	}
+	agent.OriginalAmount = standard.OriginalAmount
+	return agent, nil
 }
 func (p *Provider) CreateUpgradeInvoice(id int64, pid, cycle, expected string) (string, string, error) {
 	quote, e := p.QuoteUpgrade(id, pid, cycle)

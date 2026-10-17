@@ -18,7 +18,15 @@ func TestRenewalOriginalPriceRemainsSeparateFromProcurement(t *testing.T) {
 					http.NotFound(w, r)
 					return
 				}
-				fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","price":"5.00","saleproducts":%s,"amount":"8.00","duration":2592000}]}}`, original)
+				amount := `"8.00"`
+				if r.URL.Query().Get("price_basis") == "standard" {
+					if original == `"2.00"` {
+						amount = `"10.00"`
+					} else {
+						amount = original
+					}
+				}
+				fmt.Fprintf(w, `{"status":200,"data":{"cycle":[{"billingcycle":"monthly","amount":%s,"duration":2592000}]}}`, amount)
 			}))
 			defer server.Close()
 			p := New(contracts.Supplier{URL: server.URL, Username: "isolated", Token: "isolated"})

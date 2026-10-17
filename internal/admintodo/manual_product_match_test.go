@@ -62,14 +62,17 @@ func TestManualProductCompleteRenewalMatchMySQL(t *testing.T) {
 	if ok, e := manualProductMatches(tx, entry, host, facts); e != nil || !ok {
 		t.Fatal("provider duration in seconds ignored", e)
 	}
-	// Renewal order items resolve the existing machine and show its IP.
+	// Renewal orders retain their association, but only the instance is listed.
 	if e := tx.Exec("INSERT INTO `order`.orders VALUES(703,77,2,'REN-FIXTURE',NOW(),NOW())").Error; e != nil {
 		t.Fatal(e)
 	}
 	if e := tx.Exec("INSERT INTO `order`.order_items VALUES(7031,703,101,'renewal',3,NOW())").Error; e != nil {
 		t.Fatal(e)
 	}
-	item, e := manualProductEntry(context.Background(), tx, "order", 7031)
+	if _, err := manualProductEntry(context.Background(), tx, "order", 7031); err == nil {
+		t.Fatal("duplicate renewal order exposed")
+	}
+	item, e := manualProductEntry(context.Background(), tx, "instance", 903)
 	if e != nil || item.IPAddress != "192.0.2.3" {
 		t.Fatal("renewal IP missing", item, e)
 	}

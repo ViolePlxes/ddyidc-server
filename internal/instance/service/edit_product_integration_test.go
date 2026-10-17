@@ -133,6 +133,38 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 	run := func(name string, fn func(*testing.T, *editProductFixture)) {
 		t.Run(name, func(t *testing.T) { tx := db.Begin(); defer tx.Rollback(); fn(t, newEditProductFixture(t, tx)) })
 	}
+	run("product-only repair preserves pending manual renewal and local expiry", func(t *testing.T, f *editProductFixture) {
+		target := f.mapProduct(t, 404)
+		f.p.detail.ID = f.host.UpstreamInstanceID
+		localExpiry := time.Now().UTC().Truncate(time.Second)
+		remoteExpiry := localExpiry.AddDate(0, 1, 0)
+		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Updates(map[string]any{"expires_at": localExpiry, "primary_ip": "192.0.2.9"})
+		f.p.detail.ExpiresAt = &remoteExpiry
+		oid := snowflake.GenID()
+		if e := f.db.Exec("INSERT INTO `order`.orders(id,status) VALUES(?,2)", oid).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := f.db.Exec("INSERT INTO instance.instance_renewals(instance_id,order_id,state) VALUES(?,?,'uncertain')", f.host.ID, oid).Error; e != nil {
+			t.Fatal(e)
+		}
+		id := f.host.UpstreamInstanceID
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id, ProductOnly: true}); e != nil {
+			t.Fatal(e)
+		}
+		h := f.load(t)
+		if h.ProductID != target.ID || h.ProductName != f.p.product.Name || h.OwnershipVersion != f.host.OwnershipVersion || h.ExpiresAt == nil || !h.ExpiresAt.Equal(localExpiry) || h.ConfigSnapshot != f.host.ConfigSnapshot || h.PrimaryIP != "192.0.2.9" {
+			t.Fatalf("product-only changed lifecycle: %+v", h)
+		}
+		var state string
+		f.db.Table("instance.instance_renewals").Select("state").Where("instance_id=? AND order_id=?", f.host.ID, oid).Scan(&state)
+		if state != "uncertain" {
+			t.Fatal("manual renewal settled")
+		}
+		changed := "56078"
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &changed, ProductOnly: true}); e == nil {
+			t.Fatal("product-only changed machine")
+		}
+	})
 	run("empty old binding can be repaired using entered identity", func(t *testing.T, f *editProductFixture) {
 		f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("upstream_instance_id", "")
 		if e := f.edit(); e != nil {

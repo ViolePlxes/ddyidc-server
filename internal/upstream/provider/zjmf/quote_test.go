@@ -24,7 +24,7 @@ func TestPublicQuoteUsesOnlyReadOnlyCalculation(t *testing.T) {
 		if r.Form.Get("checkout") != "" || r.Form.Get("price_basis") != "standard" || r.Form.Get("configoption[9881]") != "63036" {
 			t.Error("wrong quote form")
 		}
-		fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"45.50","sale_signal_price":"45.50","product_sale_setup_fee":"0.00","type":{"type":1}}}`)
+		fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","total":"45.50","sale_total":"35.00","signal_price":"45.50","sale_signal_price":"35.00","product_setup_fee":"0.00","product_sale_setup_fee":"0.00","type":{"type":1,"bates":"10.00"}}}`)
 	}))
 	defer srv.Close()
 	p := New(contracts.Supplier{URL: srv.URL, Username: "isolated", Token: "isolated"})
@@ -115,5 +115,17 @@ func TestPurchaseBudgetRejectsBeforeCartMutation(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "超过成交预算") || calls != before+1 {
 			t.Fatalf("ceiling=%q err=%v calls=%d", ceiling, err, calls-before)
 		}
+	}
+}
+
+func TestPublicQuoteNeverUsesAgentPriceAsRetail(t *testing.T) {
+	body := []byte(`{"products":{"billingcycle":"monthly","total":"40.00","signal_price":"40.00","product_setup_fee":"0.00","sale_total":"36.00","sale_signal_price":"36.00","product_sale_setup_fee":"0.00","type":{"type":1,"bates":"9"}}}`)
+	q, e := decodePublicQuote(body, "monthly")
+	if e != nil || q.Total != "40.00" || q.RenewalUnit != "40.00" {
+		t.Fatalf("retail quote %+v: %v", q, e)
+	}
+	body = []byte(`{"products":{"billingcycle":"monthly","sale_total":"36.00","sale_signal_price":"36.00","product_sale_setup_fee":"0.00","type":{"type":1,"bates":"9"}}}`)
+	if _, e := decodePublicQuote(body, "monthly"); e == nil {
+		t.Fatal("agent price accepted without original")
 	}
 }

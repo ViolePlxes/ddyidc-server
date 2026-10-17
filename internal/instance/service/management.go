@@ -17,6 +17,7 @@ import (
 func (s *Service) SetManagement(db *gorm.DB) { s.db = db }
 
 type EditInput struct {
+	ProductOnly        bool    `json:"productOnly"`
 	UpstreamInstanceID *string `json:"upstreamInstanceId"`
 	CreatedAt          *string `json:"createdAt"`
 	ActivatedAt        *string `json:"activatedAt"`
@@ -40,6 +41,9 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		return e
 	} else if locked {
 		return ErrTradingLocked
+	}
+	if in.ProductOnly && (in.UpstreamInstanceID == nil || *in.UpstreamInstanceID != h.UpstreamInstanceID || in.CreatedAt != nil || in.ActivatedAt != nil) {
+		return errors.New("仅修正商品关联时不得改变机器或日期")
 	}
 	updates := map[string]any{}
 	var upstreamProduct *contracts.UpstreamProductDetail
@@ -97,19 +101,24 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 			return errors.New("读取实例所属商品失败，未修改绑定")
 		}
 
-		raw, _ := json.Marshal(snapshotFromUpstream(detail))
-		updates["upstream_instance_id"] = detail.ID
-		updates["config_snapshot"] = string(raw)
-		updates["primary_ip"] = detail.PrimaryIP
-		updates["subnet_mask"] = detail.SubnetMask
-		updates["gateway"] = detail.Gateway
-		updates["operating_system"] = detail.OperatingSystem
-		updates["status"] = statusCode(detail.Status, h.Status)
-		updates["power_status"] = detail.PowerStatus
-		updates["expires_at"] = detail.ExpiresAt
-		updates["last_synced_at"] = time.Now()
-		if in.ActivatedAt == nil && detail.ActivatedAt != nil {
-			updates["activated_at"] = detail.ActivatedAt
+		if !in.ProductOnly {
+			raw, _ := json.Marshal(snapshotFromUpstream(detail))
+			updates["upstream_instance_id"] = detail.ID
+			updates["config_snapshot"] = string(raw)
+			updates["primary_ip"] = detail.PrimaryIP
+			updates["subnet_mask"] = detail.SubnetMask
+			updates["gateway"] = detail.Gateway
+			updates["operating_system"] = detail.OperatingSystem
+			updates["status"] = statusCode(detail.Status, h.Status)
+			updates["power_status"] = detail.PowerStatus
+			updates["expires_at"] = detail.ExpiresAt
+			updates["last_synced_at"] = time.Now()
+			if in.ActivatedAt == nil && detail.ActivatedAt != nil {
+				updates["activated_at"] = detail.ActivatedAt
+			}
+		}
+		if in.ProductOnly {
+			updates["upstream_instance_id"] = detail.ID
 		}
 	}
 	if len(updates) == 0 {
@@ -149,7 +158,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e := tx.Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("r.instance_id=? AND r.state NOT IN ? AND o.status IN (1,2)", id, []string{"completed", "cancelled"}).Count(&active).Error; e != nil {
 			return e
 		}
-		if active > 0 {
+		if active > 0 && !in.ProductOnly {
 			return errors.New("存在未结束的续费订单，不能修改实例")
 		}
 		if target, ok := updates["upstream_instance_id"]; ok {
@@ -164,10 +173,13 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 			if err != nil {
 				return err
 			}
+			if in.ProductOnly && product.ModuleType != current.ModuleType {
+				return errors.New("商品模块不一致，请完成原任务后使用完整编辑")
+			}
 			updates["product_id"] = product.ID
 			updates["product_name"] = upstreamProduct.Name
 			updates["module_type"] = product.ModuleType
-			if target != h.UpstreamInstanceID || product.ID != current.ProductID || product.ModuleType != current.ModuleType {
+			if !in.ProductOnly && (target != h.UpstreamInstanceID || product.ID != current.ProductID || product.ModuleType != current.ModuleType) {
 				if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
 					return err
 				}
@@ -177,7 +189,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e := tx.Model(&current).Updates(updates).Error; e != nil {
 			return e
 		}
-		response := map[string]any{"saved": true}
+		response := map[string]any{"saved": true, "productOnly": in.ProductOnly}
 		for _, key := range []string{"upstream_instance_id", "product_id"} {
 			if value, ok := updates[key]; ok {
 				response[key] = value
