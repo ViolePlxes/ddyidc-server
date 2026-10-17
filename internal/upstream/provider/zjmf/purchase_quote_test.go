@@ -6,6 +6,7 @@ func TestPurchaseQuoteStrictFinanceAmounts(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{`{"products":{"billingcycle":"monthly","sale_total":"21.00","total":"30.00","type":{"type":1,"bates":"70.00"}}}`, "21.00"},
 		{`{"products":{"billingcycle":"monthly","sale_total":"30.00","type":{"type":0,"bates":"9.00"}}}`, "21.00"},
+		{`{"products":{"billingcycle":"monthly","sale_total":"45.50","type":false}}`, "45.50"},
 		{`{"products":{"billingcycle":"annually","sale_total":"21.00","type":{"type":1}}}`, ""},
 		{`{"products":{"billingcycle":"monthly","total":"30.00","type":{"type":1}}}`, ""},
 		{`{"products":{"billingcycle":"monthly","sale_total":"0","type":{"type":1}}}`, ""},

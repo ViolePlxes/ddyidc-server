@@ -13,6 +13,7 @@ type Handler struct{ Store *service.Store }
 
 func RegisterHandlers(server *rest.Server, store *service.Store) {
 	h := &Handler{Store: store}
+	server.AddRoute(rest.Route{Method: http.MethodPost, Path: "/api/v1/upstream/quote", Handler: h.quote})
 	server.AddRoute(rest.Route{Method: http.MethodGet, Path: "/admin/v1/upstream/config/loss-guard", Handler: func(w http.ResponseWriter, r *http.Request) {
 		v, e := store.LossGuard()
 		respond(w, map[string]bool{"enabled": v}, e)

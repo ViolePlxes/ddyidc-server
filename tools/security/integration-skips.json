@@ -636,5 +636,26 @@
   "ddyidc/internal/adminread/TestOrderInstanceLinksMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "隔离测试、本地联调用。CI runs deploy/linux/tests/test_admin_order_links.sh against disposable FOUNDATION_MYSQL_SOCKET; verifies purchase and renewal ownership, multiple machines, duplicate item references and soft-deleted/transferred exclusions. Normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/upstream/service/TestAdapterModuleLifecycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_adapter_modules.sh against disposable FOUNDATION_MYSQL_SOCKET. Module audit, dependency guards, legacy aliases and state revisions must pass; normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/upstream/service/TestAdapterModuleConcurrentAdmissionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Run deploy/linux/tests/test_adapter_modules.sh with disposable FOUNDATION_MYSQL_SOCKET. Real MySQL shared admission lock must serialize lifecycle changes; stopped sales deny later admissions while maintenance remains available. No supplier I/O. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/upstream/api/TestAdapterModuleHTTPPermissionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "隔离测试、本地联调用。Run test_adapter_modules.sh with disposable MySQL and Redis; anonymous/customer/ordinary admin/super admin HTTP authorization matrix, mandatory reason. Default skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestCreateRequestIdempotencyMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run test_adapter_modules.sh on disposable MySQL; 20 concurrent requests, transaction rollback, persistent replay, payload conflict and customer isolation. Skip is not a pass."
+  },
+  "ddyidc/internal/upstream/service/TestAdapterStaticReleaseRecoveryMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run test_adapter_modules.sh with disposable MySQL; static incompatible/compatible upgrade, rollback, dependency guard, uninstall/reinstall preserve state revision and audit. Not runtime hot unloading. Skip is not a pass."
   }
 }

@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -15,6 +16,8 @@ type Supplier struct {
 	Status                                       int
 	// Catalogue imports opt in; user machine operations stay unthrottled.
 	LimitRequests bool
+	// AuthorizeRequest rechecks module and account state before every external attempt.
+	AuthorizeRequest func(method, path string) error `json:"-"`
 }
 type UpstreamProduct struct {
 	ID                 int             `json:"id,string"`
@@ -47,27 +50,35 @@ type UpstreamProductDetail struct {
 // ConfigOption describes a selectable or quantity based upstream purchase
 // option. It deliberately represents the upstream shape rather than a UI
 // component, so every provider can expose its native ordering constraints.
+type ConfigCondition struct {
+	OptionID int      `json:"optionId,string"`
+	Values   []string `json:"values"`
+}
 type ConfigOption struct {
-	ID         int                 `json:"id,string"`
-	Name       string              `json:"name"`
-	Field      string              `json:"field"`
-	OptionType string              `json:"optionType"`
-	Required   bool                `json:"required"`
-	Options    []ConfigOptionValue `json:"options"`
-	Min        float64             `json:"min"`
-	Max        float64             `json:"max"`
-	Step       float64             `json:"step"`
-	Unit       string              `json:"unit"`
-	Default    string              `json:"default"`
+	VisibleWhen []ConfigCondition   `json:"visibleWhen,omitempty"`
+	SourceType  string              `json:"sourceType,omitempty"`
+	ID          int                 `json:"id,string"`
+	Name        string              `json:"name"`
+	Field       string              `json:"field"`
+	OptionType  string              `json:"optionType"`
+	Required    bool                `json:"required"`
+	Options     []ConfigOptionValue `json:"options"`
+	Min         float64             `json:"min"`
+	Max         float64             `json:"max"`
+	Step        float64             `json:"step"`
+	Unit        string              `json:"unit"`
+	Default     string              `json:"default"`
 }
 
 type ConfigOptionValue struct {
-	ID    int     `json:"id,string"`
-	Name  string  `json:"name"`
-	Price float64 `json:"price"`
-	Min   float64 `json:"min,omitempty"`
-	Max   float64 `json:"max,omitempty"`
-	Step  float64 `json:"step,omitempty"`
+	Children   []ConfigOptionValue `json:"children,omitempty"`
+	ID         int                 `json:"id,string"`
+	Name       string              `json:"name"`
+	Price      float64             `json:"price"`
+	PriceKnown *bool               `json:"priceKnown,omitempty"`
+	Min        float64             `json:"min,omitempty"`
+	Max        float64             `json:"max,omitempty"`
+	Step       float64             `json:"step,omitempty"`
 }
 
 // ImageGroup preserves the finance order-page operating-system hierarchy.
@@ -86,7 +97,16 @@ type CycleItem struct {
 
 // OrderPage is a provider-neutral ordering schema. OptionalProvider keeps
 // existing providers source-compatible when they cannot offer configuration.
+type CustomField struct {
+	ID         int      `json:"id,string"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Required   bool     `json:"required"`
+	Choices    []string `json:"choices,omitempty"`
+	Validation string   `json:"validation,omitempty"`
+}
 type OrderPage struct {
+	CustomFields    []CustomField       `json:"customFields,omitempty"`
 	Product         UpstreamProduct     `json:"product"`
 	DataCenters     []ConfigOptionValue `json:"dataCenters"`
 	Images          []ConfigOptionValue `json:"images"`
@@ -98,22 +118,23 @@ type OrderPage struct {
 }
 type ProductResource struct{ Name, Version, DownloadURL string }
 type OrderInfo struct {
-	OrderID          string
-	ProductID        int
-	Quantity         int
-	Cycle            string
-	Amount           float64
-	CustomerID       string
-	ConfigOptions    map[string]string `json:"configOptions"`
-	CustomFields     map[string]string `json:"customFields"`
-	Hostname         string            `json:"hostname"`
-	Password         string            `json:"password"`
-	DataCenterID     int               `json:"dataCenterId"`
-	ImageID          int               `json:"imageId"`
-	NetworkType      string            `json:"networkType"`
-	DownstreamURL    string            `json:"downstreamUrl"`
-	DownstreamToken  string            `json:"downstreamToken"`
-	DownstreamHostID string            `json:"downstreamHostId"`
+	ProcurementCeiling string `json:"-"`
+	OrderID            string
+	ProductID          int
+	Quantity           int
+	Cycle              string
+	Amount             float64
+	CustomerID         string
+	ConfigOptions      map[string]string `json:"configOptions"`
+	CustomFields       map[string]string `json:"customFields"`
+	Hostname           string            `json:"hostname"`
+	Password           string            `json:"password"`
+	DataCenterID       int               `json:"dataCenterId"`
+	ImageID            int               `json:"imageId"`
+	NetworkType        string            `json:"networkType"`
+	DownstreamURL      string            `json:"downstreamUrl"`
+	DownstreamToken    string            `json:"downstreamToken"`
+	DownstreamHostID   string            `json:"downstreamHostId"`
 	// Checkpoint must persist remote identifiers before the next financial step.
 	Checkpoint func(stage, invoiceID, hostID string) error `json:"-"`
 }
@@ -288,4 +309,22 @@ type RenewalProvider interface {
 	RenewalQuotes(int64) ([]RenewalQuote, error)
 	CreateRenewalInvoice(int64, string, int64) (string, string, error)
 	PayRenewalInvoice(string) error
+}
+
+// QuoteProvider has no procurement/cart mutation side effects. Decimal strings are yuan.
+type QuoteRequest struct {
+	ProductID     int
+	Cycle         string
+	Quantity      int
+	ConfigOptions map[string]string
+	CustomFields  map[string]string
+}
+type QuoteResult struct {
+	Total       string
+	RenewalUnit string
+	SetupUnit   string
+	Currency    string
+}
+type QuoteProvider interface {
+	Quote(context.Context, QuoteRequest) (*QuoteResult, error)
 }

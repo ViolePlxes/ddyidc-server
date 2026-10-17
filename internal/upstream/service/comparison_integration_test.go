@@ -33,7 +33,11 @@ func TestComparisonCatalogAndConnectMySQL(t *testing.T) {
 		t.Fatal(tx.Error)
 	}
 	defer tx.Rollback()
-	provider.Register("comparison-fixture", func(contracts.Supplier) contracts.Provider { return comparisonProviderFixture{} })
+	if _, registered := provider.ModuleForVariant("comparison-fixture"); !registered {
+		if err := provider.RegisterModule(provider.ModuleRegistration{Manifest: provider.Module{ID: "comparison-fixture", Name: "隔离模块", Version: "1", ContractVersion: 1, Capabilities: map[string]string{"purchase": "implemented"}}, Constructors: map[string]provider.Constructor{"comparison-fixture": func(contracts.Supplier) contracts.Provider { return comparisonProviderFixture{} }}}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	store := NewStore(tx, []byte("12345678901234567890123456789012"))
 	cipher, e := store.encrypt("isolated")
 	if e != nil {

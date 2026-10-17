@@ -15,6 +15,10 @@ type ConfigOptionInput struct {
 
 // CreateOrderInput 下单请求（订单确认页）。
 type CreateOrderInput struct {
+	RequestID     string                       `json:"requestId,omitempty"`
+	CustomFields  map[string]string            `json:"customFields,omitempty"`
+	VerifiedQuote *VerifiedQuoteEvidence       `json:"-"`
+	QuoteToken    string                       `json:"quoteToken,omitempty"`
 	ProductID     string                       `json:"productId"`
 	SpecID        string                       `json:"specId,omitempty"`
 	DurationMonth int                          `json:"durationMonth"`
@@ -91,4 +95,13 @@ type RechargeView struct {
 type PayOrderInput struct {
 	Method string `json:"method"` // alipay | wechat | balance
 	Mode   string `json:"mode"`   // page | wap
+}
+
+// VerifiedQuoteEvidence is produced only by server-side revalidation.
+type VerifiedQuoteEvidence struct {
+	ProcurementCeiling string `json:"procurementCeiling"`
+	RetailUnit         string `json:"retailUnit"`
+	RenewalTotal       string `json:"renewalTotal"`
+	Currency           string `json:"currency"`
+	VerifiedAt         int64  `json:"verifiedAt"`
 }

@@ -36,12 +36,9 @@ func (p *Provider) purchaseQuote(order contracts.OrderInfo) (billing.Money, erro
 func purchaseQuoteAmount(body []byte, cycle string) (billing.Money, error) {
 	var r struct {
 		Products struct {
-			Cycle string          `json:"billingcycle"`
-			Total json.RawMessage `json:"sale_total"`
-			Type  struct {
-				Type     int             `json:"type"`
-				Discount json.RawMessage `json:"bates"`
-			} `json:"type"`
+			Cycle string               `json:"billingcycle"`
+			Total json.RawMessage      `json:"sale_total"`
+			Type  financeQuoteDiscount `json:"type"`
 		} `json:"products"`
 	}
 	invalid := errors.New("供应商配置报价不完整或无效，未创建订单")

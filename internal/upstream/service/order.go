@@ -16,6 +16,8 @@ import (
 )
 
 type ProvisionInput struct {
+	CustomFields                                            map[string]string
+	ProcurementCeiling                                      string
 	OrderID, LocalProductID, CustomerID, InstanceID, UnitID string
 	Quantity                                                int
 	Cycle                                                   string
@@ -96,7 +98,7 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 		return nil, fmt.Errorf("供应商尚未支持有界采购")
 	}
 	result, err := contextProvider.CreateOrderContext(ctx, provider.OrderInfo{
-		OrderID: in.OrderID, ProductID: product.UpstreamProductID, Quantity: in.Quantity,
+		CustomFields: in.CustomFields, ProcurementCeiling: in.ProcurementCeiling, OrderID: in.OrderID, ProductID: product.UpstreamProductID, Quantity: in.Quantity,
 		Cycle: in.Cycle, Amount: product.UpstreamPrice, CustomerID: in.CustomerID,
 		ConfigOptions: in.ConfigOptions, Hostname: in.Hostname, Password: in.Password,
 		DownstreamURL:    strings.TrimSpace(os.Getenv("DDYIDC_UPSTREAM_CALLBACK_URL")),
@@ -130,6 +132,16 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 }
 
 func (s *Store) findProductByLocalID(localProductID string) (model.UpstreamProduct, error) {
+	if s.isMemory() {
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		for _, candidate := range s.products {
+			if candidate.ProductID == localProductID {
+				return candidate, nil
+			}
+		}
+		return model.UpstreamProduct{}, fmt.Errorf("upstream product not found")
+	}
 	var value model.UpstreamProduct
 	err := s.db.Table(value.TableName()).Where("product_id = ?", localProductID).First(&value).Error
 	if err == gorm.ErrRecordNotFound {

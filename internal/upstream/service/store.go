@@ -18,6 +18,9 @@ import (
 // Store persists upstream resources. The maps only exist when NewMemoryStore is
 // explicitly chosen by a test; production must use NewStore after db.Init.
 type Store struct {
+	quoteFlightMu sync.Mutex
+	quoteFlights  map[string]*quoteFlight
+	quoteSlots    chan struct{}
 	db            *gorm.DB
 	aesKey        []byte
 	mu            sync.RWMutex
@@ -28,17 +31,18 @@ type Store struct {
 	taskCancels   map[string]context.CancelFunc
 	taskSuppliers map[string]string
 	connectors    map[string]bool
+	moduleStates  map[string]ModuleState
 	taskSem       chan struct{}
 }
 
 func NewStore(database *gorm.DB, aesKey []byte) *Store {
-	return &Store{db: database, aesKey: append([]byte(nil), aesKey...), taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, taskSem: make(chan struct{}, 2)}
+	return &Store{quoteSlots: make(chan struct{}, 4), db: database, aesKey: append([]byte(nil), aesKey...), taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, moduleStates: map[string]ModuleState{}, taskSem: make(chan struct{}, 2)}
 }
 
 func NewDefaultStore(aesKey []byte) *Store { return NewStore(db.G, aesKey) }
 
 func NewMemoryStore(aesKey []byte) *Store {
-	return &Store{aesKey: append([]byte(nil), aesKey...), suppliers: map[string]model.Supplier{}, products: map[string]model.UpstreamProduct{}, orders: map[string]model.UpstreamOrder{}, hosts: map[string]model.UpstreamHost{}, taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, taskSem: make(chan struct{}, 2)}
+	return &Store{quoteSlots: make(chan struct{}, 4), aesKey: append([]byte(nil), aesKey...), suppliers: map[string]model.Supplier{}, products: map[string]model.UpstreamProduct{}, orders: map[string]model.UpstreamOrder{}, hosts: map[string]model.UpstreamHost{}, taskCancels: map[string]context.CancelFunc{}, taskSuppliers: map[string]string{}, connectors: map[string]bool{}, moduleStates: map[string]ModuleState{}, taskSem: make(chan struct{}, 2)}
 }
 
 func (s *Store) isMemory() bool { return s.db == nil }
