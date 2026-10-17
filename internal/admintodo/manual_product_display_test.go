@@ -34,6 +34,10 @@ func TestManualProductDisplayMySQL(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A case-only different opaque host must not be attached to this instance.
+	if err := tx.Exec("INSERT INTO `order`.upstream_orders(id,order_id,supplier_id,upstream_order_id,upstream_host_id) VALUES(99010,99003,99004,'946273','Remote1')").Error; err != nil {
+		t.Fatal(err)
+	}
 	rows := []Entry{{Source: "instance", ID: "99001", InstanceID: "99001", CustomerID: "99002"}, {Source: "instance", ID: "99001", InstanceID: "99001", CustomerID: "99006"}}
 	if err := enrichManualProductDisplay(context.Background(), tx, rows); err != nil {
 		t.Fatal(err)

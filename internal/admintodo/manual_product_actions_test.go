@@ -21,10 +21,10 @@ func manualProductFixtureDB(t *testing.T) *gorm.DB {
 		"CREATE TABLE IF NOT EXISTS customer.customer_realname(id BIGINT,customer_id BIGINT,name VARCHAR(64),status INT,updated_at DATETIME)",
 		"CREATE TABLE IF NOT EXISTS common.suppliers(id BIGINT,url VARCHAR(255))",
 		"CREATE TABLE IF NOT EXISTS `order`.unit_procurements(id BIGINT,order_id BIGINT,supplier_id BIGINT,upstream_order_id VARCHAR(100))",
-		"CREATE TABLE IF NOT EXISTS `order`.upstream_orders(id BIGINT,order_id BIGINT,supplier_id BIGINT,upstream_order_id VARCHAR(100),upstream_host_id VARCHAR(100))",
+		"CREATE TABLE IF NOT EXISTS `order`.upstream_orders(id BIGINT,order_id BIGINT,supplier_id BIGINT,upstream_order_id VARCHAR(100),upstream_host_id VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci)",
 
 		"CREATE TABLE IF NOT EXISTS customer.customers(id BIGINT,username VARCHAR(64))",
-		"CREATE TABLE IF NOT EXISTS instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,order_item_id BIGINT,product_id BIGINT DEFAULT 0,module_type VARCHAR(32) DEFAULT 'cloud',config_snapshot JSON,primary_ip VARCHAR(45) DEFAULT '',expires_at DATETIME(3),ownership_version BIGINT,upstream_provider_id BIGINT,upstream_instance_id VARCHAR(64),product_name VARCHAR(128),instance_no VARCHAR(64),created_at DATETIME(3),updated_at DATETIME(3),deleted_at DATETIME NULL)",
+		"CREATE TABLE IF NOT EXISTS instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,order_item_id BIGINT,product_id BIGINT DEFAULT 0,module_type VARCHAR(32) DEFAULT 'cloud',config_snapshot JSON,primary_ip VARCHAR(45) DEFAULT '',expires_at DATETIME(3),ownership_version BIGINT,upstream_provider_id BIGINT,upstream_instance_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,product_name VARCHAR(128),instance_no VARCHAR(64),created_at DATETIME(3),updated_at DATETIME(3),deleted_at DATETIME NULL)",
 		"CREATE TABLE IF NOT EXISTS instance.instance_events(id BIGINT,instance_id BIGINT,status INT,event_type VARCHAR(32),updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(id BIGINT,instance_id BIGINT,order_id BIGINT,customer_id BIGINT,ownership_version BIGINT,supplier_id BIGINT,host_id VARCHAR(64),cycle VARCHAR(32),duration BIGINT,base_expiry DATETIME(3),state VARCHAR(32),updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS system.todo_event_resolutions(event_id BIGINT)",

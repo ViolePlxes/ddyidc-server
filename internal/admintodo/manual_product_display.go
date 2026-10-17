@@ -46,8 +46,9 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 			return err
 		}
 		// Legacy invoices are matched to the exact supplier+remote host, never just an order.
+		// Remote IDs are opaque: compare bytes across legacy/new column collations.
 		if len(bills) == 0 && len(hosts) == 1 {
-			if err := db.WithContext(ctx).Table("`order`.upstream_orders p").Joins("JOIN instance.instances h ON h.order_id=p.order_id AND h.upstream_provider_id=p.supplier_id AND h.upstream_instance_id=p.upstream_host_id").Joins("JOIN common.suppliers s ON s.id=p.supplier_id").Select("DISTINCT p.upstream_order_id id,s.url base_url").Where("h.id=? AND h.customer_id=? AND h.deleted_at IS NULL AND p.upstream_order_id<>'' AND p.upstream_order_id<>'pending'", hosts[0].ID, e.CustomerID).Limit(2).Scan(&bills).Error; err != nil {
+			if err := db.WithContext(ctx).Table("`order`.upstream_orders p").Joins("JOIN instance.instances h ON h.order_id=p.order_id AND h.upstream_provider_id=p.supplier_id AND CAST(h.upstream_instance_id AS BINARY)=CAST(p.upstream_host_id AS BINARY)").Joins("JOIN common.suppliers s ON s.id=p.supplier_id").Select("DISTINCT p.upstream_order_id id,s.url base_url").Where("h.id=? AND h.customer_id=? AND h.deleted_at IS NULL AND p.upstream_order_id<>'' AND p.upstream_order_id<>'pending'", hosts[0].ID, e.CustomerID).Limit(2).Scan(&bills).Error; err != nil {
 				return err
 			}
 		}
