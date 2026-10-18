@@ -1,4 +1,5 @@
 {
+  "ddyidc/internal/admintodo/TestProvisioningQueueMySQL": {"disposition":"isolated_suite_required","label":"隔离测试、本地联调用","verification":"Run deploy/linux/tests/test_provisioning_queue.sh against disposable MySQL; skip is not a pass."},
   "ddyidc/internal/customer/repository/TestIdentityMutationMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET; identity code consumption, uniqueness, transaction rollback and session invalidation require the isolated database suite. Evidence: f02-identity-20260927.log. A normal-suite skip is not a pass."

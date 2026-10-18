@@ -36,6 +36,7 @@ jobs:
           bash deploy/linux/tests/test_instance_edit_product.sh > instance-edit-product.log 2>&1
           bash deploy/linux/tests/test_admin_order_links.sh > admin-order-links.log 2>&1
           bash deploy/linux/tests/test_manual_product_display.sh > manual-product-display.log 2>&1
+          bash deploy/linux/tests/test_provisioning_queue.sh > provisioning-queue.log 2>&1
           bash deploy/linux/tests/test_adapter_modules.sh > adapter-modules.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
           python3 -m unittest discover -s deploy/linux -p 'test_production_preflight.py'
@@ -54,6 +55,7 @@ jobs:
           path: |
             go-test.jsonl
             go-test-summary.json
+            provisioning-queue.log
             source-vulns.json
             binary-vulns.json
             order-transactions.log

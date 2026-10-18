@@ -80,7 +80,7 @@ func projection(kind string) (string, error) {
 	case "offline-transfers":
 		return `SELECT CAST(r.id AS CHAR) id,'offline' source,CAST(r.customer_id AS CHAR) customer_id,'线下转账到账审核' title,r.request_id number,r.status,r.amount,CAST(r.order_id AS CHAR) order_id,'' instance_id,r.created_at,r.updated_at FROM payment.offline_transfers r WHERE r.status IN ('pending','processing','unknown')`, nil
 	case "provisioning", "expiring":
-		where := "i.status IN (1,2)"
+		where := provisioningPredicate
 		if kind == "expiring" {
 			where = `i.status IN (1,2,3,4) AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND i.expires_at>UTC_TIMESTAMP() AND i.expires_at<=DATE_ADD(UTC_DATE(), INTERVAL 8 DAY)-INTERVAL 1 SECOND`
 		}
@@ -118,7 +118,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 			sql = strings.Replace(sql, "WHERE (r.status IN ('pending','failed','unknown') OR p.status='received_review')", "WHERE (r.payment_id IS NOT NULL OR p.status='received_review')", 1)
 			sql = strings.Replace(sql, "m.status='refund_pending'", "m.status IN ('refund_pending','refunded')", 1)
 		case "provisioning":
-			sql = strings.Replace(sql, "i.status IN (1,2)", "i.status IN (1,2,3,4,5,6)", 1)
+			sql = strings.Replace(sql, provisioningPredicate, "i.status IN (1,2,3,4,5,6)", 1)
 		case "manual-products":
 			sql = strings.Replace(sql, "AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=e.id)", "", 1)
 		case "expiring":

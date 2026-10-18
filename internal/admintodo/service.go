@@ -41,7 +41,7 @@ var definitions = []definition{
 	{"certifications", "待处理实名", "当前待人工审核的实名申请。", "SELECT COUNT(*) FROM customer.customer_realname WHERE status=1"},
 	{"withdrawals", "待处理提现", "账户余额及交易市场待审核、待汇款提现。", ""},
 	{"recommendations", "待确认推介", "现有积分、注册优惠码体系中的待审核优惠码申请。", ""},
-	{"provisioning", "开通中产品数量", "未删除的待开通、开通中实例。", "SELECT COUNT(*) FROM instance.instances WHERE deleted_at IS NULL AND status IN (1,2)"},
+	{"provisioning", "开通中产品数量", "首次交付尚未完成的待开通、开通中实例，排除重装、重启等后续操作。", "SELECT COUNT(*) FROM instance.instances i WHERE i.deleted_at IS NULL AND " + provisioningPredicate},
 	{"offline-transfers", "待处理线下转账", "待核对实际到账凭证的线下转账申请。", ""},
 	{"manual-products", "待手动处理产品", "已付款待人工开通商品及交付、续费和操作异常；尚未生成实例的商品按订单商品列出。", ""},
 	{"expiring", "即将到期产品", "未来三天（72小时）内到期的有效实例，排除已到期、已删除及永久产品。", ""},
