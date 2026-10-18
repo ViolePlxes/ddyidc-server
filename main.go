@@ -501,6 +501,8 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	jwt.SetSessionObserver(func(kind auth.SessionKind, id int64) {
 		if kind == auth.SessionUser {
 			_ = inbox.Hub.Publish(context.Background(), id)
+		} else if kind == auth.SessionAdmin {
+			_ = inbox.Hub.PublishActor(context.Background(), id)
 		}
 	})
 	if err := notification.InstallBridge(db.G); err != nil {

@@ -211,6 +211,7 @@ func (m *Manager) issueSession(ctx context.Context, kind SessionKind, userID int
 	if err := cache.RDB.Set(ctx, sessionKey(kind, userID), encoded, m.security.SessionTTL).Err(); err != nil {
 		return "", fmt.Errorf("store session: %w", err)
 	}
+	m.sessionChanged(kind, userID)
 	return token, nil
 }
 

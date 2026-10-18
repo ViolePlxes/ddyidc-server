@@ -492,3 +492,43 @@ drainHints:
 	}
 	t.Log("migration replay, 100 concurrent duplicate sends, snapshot read-all, foreign ownership, idempotent read/delete, rollback, event-key conflicts, paginated replay and slow commits verified")
 }
+
+func TestActorSessionHintsAreScoped(t *testing.T) {
+	h := NewHub()
+	a, stop, e := h.SubscribeFor(101, 900)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer stop()
+	b, end, e := h.SubscribeFor(102, 901)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer end()
+	direct, closeDirect, e := h.Subscribe(103)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer closeDirect()
+	_ = h.PublishActor(context.Background(), 900)
+	select {
+	case <-a:
+	default:
+		t.Fatal("delegated session not woken")
+	}
+	select {
+	case <-b:
+		t.Fatal("unrelated administrator stream woken")
+	default:
+	}
+	select {
+	case <-direct:
+		t.Fatal("ordinary customer stream woken")
+	default:
+	}
+	h.DisconnectAll()
+	if len(h.actors) != 0 {
+		t.Fatal("actor index retained after disconnect")
+	}
+	_ = h.PublishActor(context.Background(), 900)
+}

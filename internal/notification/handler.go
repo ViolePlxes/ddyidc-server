@@ -318,7 +318,7 @@ func (h *handler) events(w http.ResponseWriter, r *http.Request) {
 		handleErr(w, ErrInput)
 		return
 	}
-	ch, closeSub, e := h.s.Hub.Subscribe(c.UserID)
+	ch, closeSub, e := h.s.Hub.SubscribeFor(c.UserID, c.ActorID)
 	if e != nil {
 		fail(w, 429, e.Error())
 		return

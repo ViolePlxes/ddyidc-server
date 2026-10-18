@@ -142,3 +142,42 @@ func TestLegacyRecordAndExpiredTokenAreRejected(t *testing.T) {
 		t.Fatal("expired token issued")
 	}
 }
+
+func TestSessionObserverFollowsDurableReplacement(t *testing.T) {
+	isolatedSessionRedis(t)
+	ctx := context.Background()
+	m := NewManager("test-only-access", "test-only-refresh", 3600, 3600)
+	m.accountState = func(context.Context, SessionKind, int64) (uint64, error) { return 0, nil }
+	events := 0
+	m.SetSessionObserver(func(kind SessionKind, id int64) {
+		events++
+		if kind != SessionAdmin || id != 11 {
+			t.Error("wrong session identity")
+		}
+		if _, err := cache.RDB.Get(ctx, sessionKey(kind, id)).Result(); err != nil {
+			t.Error("observer ran before session was stored")
+		}
+	})
+	first, err := m.IssueSession(ctx, SessionAdmin, 11, "fixture", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.IssueSession(ctx, SessionAdmin, 11, "fixture", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if events != 2 {
+		t.Fatal("session replacement did not signal", events)
+	}
+	if _, err = m.ParseAccessTokenFor(ctx, SessionAdmin, first); err == nil {
+		t.Fatal("old session survived replacement")
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err = m.IssueSession(cancelled, SessionAdmin, 11, "fixture", "admin"); err == nil {
+		t.Fatal("cancelled session issued")
+	}
+	if events != 2 {
+		t.Fatal("failed issue emitted notification")
+	}
+}

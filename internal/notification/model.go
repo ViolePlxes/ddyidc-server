@@ -187,12 +187,16 @@ type Publisher interface {
 	Publish(context.Context, int64) error
 }
 type Hub struct {
-	mu    sync.Mutex
-	users map[int64]map[chan struct{}]bool
+	mu     sync.Mutex
+	users  map[int64]map[chan struct{}]bool
+	actors map[int64]map[chan struct{}]bool
 }
 
-func NewHub() *Hub { return &Hub{users: make(map[int64]map[chan struct{}]bool)} }
-func (h *Hub) Subscribe(id int64) (<-chan struct{}, func(), error) {
+func NewHub() *Hub {
+	return &Hub{users: make(map[int64]map[chan struct{}]bool), actors: make(map[int64]map[chan struct{}]bool)}
+}
+func (h *Hub) Subscribe(id int64) (<-chan struct{}, func(), error) { return h.SubscribeFor(id, 0) }
+func (h *Hub) SubscribeFor(id, actor int64) (<-chan struct{}, func(), error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(h.users[id]) >= 8 {
@@ -203,9 +207,21 @@ func (h *Hub) Subscribe(id int64) (<-chan struct{}, func(), error) {
 	}
 	ch := make(chan struct{}, 1)
 	h.users[id][ch] = true
+	if actor > 0 {
+		if h.actors[actor] == nil {
+			h.actors[actor] = map[chan struct{}]bool{}
+		}
+		h.actors[actor][ch] = true
+	}
 	return ch, func() {
 		h.mu.Lock()
 		delete(h.users[id], ch)
+		if actor > 0 {
+			delete(h.actors[actor], ch)
+			if len(h.actors[actor]) == 0 {
+				delete(h.actors, actor)
+			}
+		}
 		if len(h.users[id]) == 0 {
 			delete(h.users, id)
 		}
@@ -240,7 +256,22 @@ func (h *Hub) DisconnectAll() {
 		}
 	}
 	h.users = make(map[int64]map[chan struct{}]bool)
+	h.actors = make(map[int64]map[chan struct{}]bool)
 	h.mu.Unlock()
 }
 
 const summaryColumns = "inbox_seq,id,recipient_id,type,scene,title,summary,business_type,business_id,source_occurred_at,created_revision,read_at,created_at"
+
+// Administrative session replacement/revocation only wakes streams delegated by
+// that administrator. Their next frame checks the existing actor authorization.
+func (h *Hub) PublishActor(_ context.Context, id int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for ch := range h.actors[id] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+	return nil
+}
