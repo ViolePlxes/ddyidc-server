@@ -1,0 +1,42 @@
+name: Verified Codeup mirror
+on:
+  workflow_run:
+    workflows: [Foundation core checks, External configuration focused checks]
+    types: [completed]
+    branches: [main]
+  push:
+    tags: ['v0.1.*']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: verified-codeup-mirror
+  cancel-in-progress: false
+jobs:
+  mirror:
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    if: >-
+      vars.CODEUP_MIRROR_ENABLED == 'true' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Never execute an untrusted PR checkout with mirror write credentials.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check mirror gate locally
+        run: python3 -m unittest discover -s tools/release -p 'test_*.py'
+      - name: Publish only CI-verified main and immutable release tags
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CODEUP_REPOSITORY_URL: ${{ vars.CODEUP_REPOSITORY_URL }}
+          CODEUP_USERNAME: ${{ secrets.CODEUP_USERNAME }}
+          CODEUP_TOKEN: ${{ secrets.CODEUP_TOKEN }}
+        run: python3 tools/release/codeup_mirror.py

@@ -61,7 +61,7 @@ func (m *Manager) preflight(ctx context.Context, name string) ([]CheckResult, er
 		}
 		return "分支 " + target.Branch + "，工作区干净", nil
 	})
-	run("GitHub 连通", func() (string, error) {
+	run("Git 远端连通", func() (string, error) {
 		output, e := m.fetch(ctx, target)
 		if e != nil {
 			return "", e
