@@ -32,6 +32,7 @@ type Claims struct {
 
 // Manager JWT 管理器
 type Manager struct {
+	sessionObserver  func(SessionKind, int64)
 	sessionValidator func(context.Context, SessionKind, *Claims) error
 	devicesEnabled   bool
 	accounts         *gorm.DB
@@ -146,4 +147,12 @@ func (m *Manager) parseAccessToken(tokenStr string) (*Claims, error) {
 		return nil, errors.New("invalid token")
 	}
 	return claims, nil
+}
+
+// SetSessionObserver installs a transport-neutral revocation listener at startup.
+func (m *Manager) SetSessionObserver(f func(SessionKind, int64)) { m.sessionObserver = f }
+func (m *Manager) sessionChanged(kind SessionKind, id int64) {
+	if m.sessionObserver != nil {
+		m.sessionObserver(kind, id)
+	}
 }

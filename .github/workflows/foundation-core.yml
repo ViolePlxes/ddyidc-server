@@ -32,6 +32,7 @@ jobs:
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
           bash deploy/linux/tests/test_foundation_modules.sh > foundation-modules.log 2>&1
           bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1
+          bash deploy/linux/tests/test_notification_inbox.sh > notification-inbox.log 2>&1
           bash deploy/linux/tests/test_finance_recovery.sh > finance-recovery.log 2>&1
           bash deploy/linux/tests/test_instance_edit_product.sh > instance-edit-product.log 2>&1
           bash deploy/linux/tests/test_admin_order_links.sh > admin-order-links.log 2>&1
@@ -64,6 +65,7 @@ jobs:
             order-transactions.log
             foundation-modules.log
             schema-contracts.log
+            notification-inbox.log
             finance-recovery.log
             instance-edit-product.log
             admin-order-links.log

@@ -296,7 +296,11 @@ func (m *Manager) RevokeSession(ctx context.Context, kind SessionKind, userID in
 	if cache.RDB == nil {
 		return errors.New("redis is not initialized")
 	}
-	return cache.RDB.Del(ctx, sessionKey(kind, userID)).Err()
+	err := cache.RDB.Del(ctx, sessionKey(kind, userID)).Err()
+	if err == nil {
+		m.sessionChanged(kind, userID)
+	}
+	return err
 }
 
 func sessionKey(kind SessionKind, userID int64) string {

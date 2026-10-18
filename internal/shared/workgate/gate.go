@@ -5,6 +5,7 @@ package workgate
 import (
 	"context"
 	"database/sql"
+	"ddyidc/internal/notification"
 	"errors"
 	"log"
 	"net/http"
@@ -109,6 +110,7 @@ func (g *Gate) Pause(ctx context.Context, reason string) error {
 	if n != 1 {
 		return ErrPaused
 	}
+	notification.DisconnectRealtime()
 	return nil
 }
 
@@ -117,6 +119,21 @@ func Middleware(next http.HandlerFunc) http.HandlerFunc {
 		if r.URL.Path == "/health" || r.URL.Path == "/health/live" || r.URL.Path == "/health/ready" {
 			next(w, r)
 			return
+		}
+
+		if r.URL.Path == "/api/v1/notifications/events" && r.Method == http.MethodGet {
+			// Admit the stream without holding a database connection or the
+			// maintenance row for its entire lifetime. Every catch-up read is
+			// separately admitted by the notification service.
+			if err := Run(r.Context(), func(context.Context) error { return nil }); err != nil {
+				http.Error(w, "系统维护中，请稍后重试", http.StatusServiceUnavailable)
+				return
+			}
+			next(w, r)
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			defer notification.Wake()
 		}
 		// Authentication is still handled by existing middleware. A maintenance
 		// response never acknowledges a payment notification as successfully applied.

@@ -66,6 +66,18 @@ def main():
                 privileges = "SELECT,INSERT"
             elif name in ("order.create_requests", "payment.offline_transfers", "payment.balance_withdrawals", "system.cdnsell_usage_windows", "system.cdnsell_usage_allocations", "system.cdnsell_usage_cursors"):
                 privileges = "SELECT,INSERT,UPDATE"
+            elif name == "system.notification_messages":
+                privileges = "SELECT,INSERT,UPDATE(read_at,deleted_at)"
+            elif name == "system.notification_changes":
+                privileges = "SELECT,INSERT,DELETE,UPDATE(push_status)"
+            elif name == "system.notification_permissions":
+                privileges = "SELECT"
+            elif name == "system.notification_broadcasts":
+                privileges = "SELECT,INSERT,UPDATE(status,total,succeeded,failed,skipped,finished_at)"
+            elif name == "system.notification_broadcast_targets":
+                privileges = "SELECT,INSERT,UPDATE(status,attempts,last_error_code,updated_at)"
+            elif name in ("system.notification_user_states", "system.notification_outbox", "system.notification_preferences", "system.notification_ticket_reads"):
+                privileges = "SELECT,INSERT,UPDATE"
             elif name == "billing.accounts":
                 privileges = "SELECT,INSERT,UPDATE(balance,frozen_balance,total_recharge,total_consume,total_refund,total_withdraw,version,updated_at)"
             elif name == "system.id_sequences":

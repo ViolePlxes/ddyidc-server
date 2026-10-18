@@ -1,9 +1,29 @@
 {
-  "ddyidc/internal/upstream/service/TestSupplierSnapshotConcurrencyMySQL": {"disposition": "isolated_suite_required", "label": "隔离测试、本地联调用", "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."},
-  "ddyidc/internal/upstream/api/TestSupplierSnapshotHTTPPermissionsMySQL": {"disposition": "isolated_suite_required", "label": "隔离测试、本地联调用", "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."},
-  "ddyidc/internal/instance/service/TestSupplierReadSnapshotMySQL": {"disposition": "isolated_suite_required", "label": "隔离测试、本地联调用", "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."},
-  "ddyidc/internal/order/service/TestSupplierAdmissionMySQL": {"disposition":"isolated_suite_required","label":"隔离测试、本地联调用","verification":"Run deploy/linux/tests/test_adapter_modules.sh with official migrations and initialized Store; skip is not a pass."},
-  "ddyidc/internal/admintodo/TestProvisioningQueueMySQL": {"disposition":"isolated_suite_required","label":"隔离测试、本地联调用","verification":"Run deploy/linux/tests/test_provisioning_queue.sh against disposable MySQL; skip is not a pass."},
+  "ddyidc/internal/upstream/service/TestSupplierSnapshotConcurrencyMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."
+  },
+  "ddyidc/internal/upstream/api/TestSupplierSnapshotHTTPPermissionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestSupplierReadSnapshotMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."
+  },
+  "ddyidc/internal/order/service/TestSupplierAdmissionMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_adapter_modules.sh with official migrations and initialized Store; skip is not a pass."
+  },
+  "ddyidc/internal/admintodo/TestProvisioningQueueMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_provisioning_queue.sh against disposable MySQL; skip is not a pass."
+  },
   "ddyidc/internal/customer/repository/TestIdentityMutationMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run with disposable FOUNDATION_MYSQL_SOCKET; identity code consumption, uniqueness, transaction rollback and session invalidation require the isolated database suite. Evidence: f02-identity-20260927.log. A normal-suite skip is not a pass."
@@ -672,5 +692,9 @@
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "Run deploy/linux/tests/test_certification_queue.sh with disposable MySQL. Verify manual/Alipay/company and legacy channel matrix, count/list/detail agreement and historical visibility. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/notification/TestInboxMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_notification_inbox.sh with disposable FOUNDATION_MYSQL_SOCKET. Verifies concurrency, rollback, read-all cutoff, ownership, source adapters and broadcast idempotence. A normal-suite skip is not a pass."
   }
 }

@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"ddyidc/internal/notification"
 	"ddyidc/internal/shared/distsync"
 	"errors"
 	"fmt"
@@ -520,6 +521,12 @@ func (m *Manager) notifyContactWithRetry(ctx context.Context, scene string, cont
 }
 
 func (m *Manager) ScanExpiring(ctx context.Context) (int, error) {
+	if repo, ok := m.repo.(*Repository); ok {
+		if err := notification.EmitExpiry(repo.db.WithContext(ctx)); err != nil {
+			logx.Error("inapp_expiry_enqueue_failed; original mail/SMS scan continues")
+		}
+	}
+
 	if m.digest != nil {
 		return m.digest.Scan(ctx)
 	}

@@ -24,6 +24,17 @@ def free_port():
 
 class Probe(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.split("?")[0] == "/api/v1/notifications/events":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache, no-store")
+            self.end_headers()
+            self.wfile.write(b"event: probe\ndata: first\n\n")
+            self.wfile.flush()
+            time.sleep(2)
+            self.wfile.write(b"event: probe\ndata: second\n\n")
+            self.wfile.flush()
+            return
         if self.path.split("?")[0].endswith("/vnc/ws"):
             if self.headers.get("Upgrade", "").lower() != "websocket":
                 self.send_error(400)
@@ -96,6 +107,18 @@ class NginxProxyTest(unittest.TestCase):
                     conn.request("GET", path)
                     self.assertEqual(conn.getresponse().status, 204, path)
                     conn.close()
+                conn = http.client.HTTPSConnection("127.0.0.1", tls_port, context=ssl._create_unverified_context(), timeout=4)
+                started = time.monotonic()
+                conn.request("GET", "/api/v1/notifications/events?cursor=TEST_ONLY_DO_NOT_LOG", headers={"Accept": "text/event-stream"})
+                stream = conn.getresponse()
+                self.assertEqual(stream.status, 200)
+                self.assertEqual(stream.readline(), b"event: probe\n")
+                self.assertEqual(stream.readline(), b"data: first\n")
+                self.assertLess(time.monotonic()-started, 1.0, "SSE was buffered until upstream completed")
+                self.assertEqual(stream.readline(), b"\n")
+                self.assertEqual(stream.readline(), b"event: probe\n")
+                self.assertEqual(stream.readline(), b"data: second\n")
+                conn.close()
             finally:
                 process.terminate()
                 process.wait(timeout=5)

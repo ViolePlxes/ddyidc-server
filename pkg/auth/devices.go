@@ -261,7 +261,7 @@ func (m *Manager) RevokeDevice(ctx context.Context, claims *Claims, id string) e
 	if err := m.validateSession(ctx, SessionUser, claims); err != nil {
 		return err
 	}
-	return m.accounts.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	err := m.accounts.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockDeviceAccount(tx, claims.UserID, claims.AuthVersion); err != nil {
 			return err
 		}
@@ -274,6 +274,10 @@ func (m *Manager) RevokeDevice(ctx context.Context, claims *Claims, id string) e
 		}
 		return nil
 	})
+	if err == nil {
+		m.sessionChanged(SessionUser, claims.UserID)
+	}
+	return err
 }
 func (m *Manager) revokeAllDevices(ctx context.Context, userID int64) error {
 	return m.accounts.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

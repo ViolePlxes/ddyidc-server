@@ -22,6 +22,7 @@ import (
 	marketingservice "ddyidc/internal/marketing/service"
 	"ddyidc/internal/marketplace"
 	"ddyidc/internal/navigation"
+	"ddyidc/internal/notification"
 	"ddyidc/internal/notify"
 	orderhandler "ddyidc/internal/order/handler"
 	orderrepo "ddyidc/internal/order/repository"
@@ -326,6 +327,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Database migration preflight failed:", err)
 			os.Exit(2)
 		}
+		if err := notification.VerifyRuntimeAccess(ctx, db.DB); err != nil {
+			fmt.Fprintln(os.Stderr, "Inbox runtime preflight failed:", err)
+			os.Exit(2)
+		}
 		if err := upstreamservice.NewDefaultStore(nil).ValidateRetainedModules(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Adapter compatibility preflight failed:", err)
 			os.Exit(2)
@@ -358,6 +363,9 @@ func main() {
 			panic(err)
 		}
 		if *migrationSocket != "" {
+			if err := notification.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 			if err := notify.ApplyDigestRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
@@ -485,6 +493,24 @@ func initRepositories() {
 }
 
 func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context), paths runtimepaths.Paths) {
+	if err := notification.VerifyRuntimeAccess(context.Background(), db.DB); err != nil {
+		panic(err)
+	}
+	inbox := notification.New(db.G, snapshotKey)
+	inbox.Admit = workgate.Run
+	jwt.SetSessionObserver(func(kind auth.SessionKind, id int64) {
+		if kind == auth.SessionUser {
+			_ = inbox.Hub.Publish(context.Background(), id)
+		}
+	})
+	if err := notification.InstallBridge(db.G); err != nil {
+		panic(err)
+	}
+	notification.Register(server, inbox, jwt)
+	inboxCtx, stopInbox := context.WithCancel(context.Background())
+	proc.AddShutdownListener(stopInbox)
+	go inbox.Run(inboxCtx)
+
 	// 健康检查
 	server.AddRoute(rest.Route{
 		Method:  http.MethodGet,
