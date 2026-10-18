@@ -456,9 +456,11 @@ func parseID(raw string) (int64, error) {
 // PreparedOrder contains validated configuration; it is opaque to callers.
 // Preparation may read a supplier. Persistence never performs network I/O.
 type PreparedOrder struct {
-	order    *dom.Order
-	item     *dom.OrderItem
-	couponID int64
+	order             *dom.Order
+	item              *dom.OrderItem
+	couponID          int64
+	supplierID        string
+	upstreamProductID int
 }
 
 func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*PreparedOrder, error) {
@@ -570,7 +572,7 @@ func (s *Service) PrepareOrder(ctx context.Context, customerID int64, input *Cre
 	if strings.TrimSpace(input.Remark) != "" {
 		orderRow.CustomerRemark = strings.TrimSpace(input.Remark)
 	}
-	return &PreparedOrder{order: orderRow, item: item, couponID: couponID}, nil
+	return &PreparedOrder{order: orderRow, item: item, couponID: couponID, supplierID: product.SupplierID, upstreamProductID: product.UpstreamProductID}, nil
 }
 
 func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *CreateOrderInput) (*OrderView, error) {
@@ -605,17 +607,8 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		if e := certification.CheckPurchase(tx, customerID); e != nil {
 			return e
 		}
-		if upstream.Default != nil {
-			var binding struct{ SupplierID string }
-			err := tx.Table("product.products").Select("supplier_id").Where("id=?", productID).Take(&binding).Error
-			if err != nil {
-				return err
-			}
-			if binding.SupplierID != "" && binding.SupplierID != "0" {
-				if err := upstream.Default.CheckSupplierCapabilityTx(ctx, tx, binding.SupplierID, "sales"); err != nil {
-					return err
-				}
-			}
+		if err := s.checkPreparedSupplierTx(ctx, tx, prepared); err != nil {
+			return err
 		}
 		if e := s.repo.CreateOrderTx(ctx, tx, orderRow); e != nil {
 			return e

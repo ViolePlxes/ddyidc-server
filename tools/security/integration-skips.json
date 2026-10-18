@@ -1,4 +1,5 @@
 {
+  "ddyidc/internal/order/service/TestSupplierAdmissionMySQL": {"disposition":"isolated_suite_required","label":"隔离测试、本地联调用","verification":"Run deploy/linux/tests/test_adapter_modules.sh with official migrations and initialized Store; skip is not a pass."},
   "ddyidc/internal/admintodo/TestProvisioningQueueMySQL": {"disposition":"isolated_suite_required","label":"隔离测试、本地联调用","verification":"Run deploy/linux/tests/test_provisioning_queue.sh against disposable MySQL; skip is not a pass."},
   "ddyidc/internal/customer/repository/TestIdentityMutationMySQL": {
     "disposition": "isolated_suite_required",

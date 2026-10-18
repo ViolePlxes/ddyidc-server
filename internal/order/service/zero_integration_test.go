@@ -8,6 +8,7 @@ import (
 	orderrepo "ddyidc/internal/order/repository"
 	ordersvc "ddyidc/internal/order/service"
 	"ddyidc/internal/shared/snowflake"
+	upstream "ddyidc/internal/upstream/service"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -45,6 +46,9 @@ func TestZeroPayableMySQL(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	previous := upstream.Default
+	upstream.Default = upstream.NewStore(database, []byte("0123456789abcdef0123456789abcdef"))
+	defer func() { upstream.Default = previous }()
 	service := ordersvc.NewService(orderrepo.NewRepository(database), marketingapi.NewOrderHooks(marketingsvc.NewService(database, marketingrepo.NewRepository(database))))
 	input := &ordersvc.CreateOrderInput{ProductID: "91001", DurationMonth: 1, Quantity: 1, UserCouponID: "91004", BillingCycle: "monthly"}
 	order, err := service.CreateOrder(ctx, 77, input)

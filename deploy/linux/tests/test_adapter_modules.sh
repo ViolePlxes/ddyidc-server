@@ -23,7 +23,7 @@ go test -race -v . -run '^TestOfflineMigrationMySQL$' -count=1
 go test -race -v ./internal/upstream/service -run 'TestAdapterModuleLifecycleMySQL|TestAdapterModuleConcurrentAdmissionMySQL|TestAdapterStaticReleaseRecoveryMySQL|TestComparisonCatalogAndConnectMySQL|TestProductDisconnectHistoryMySQL' -count=1
 go test -race -v ./internal/upstream/api -run '^TestAdapterModuleHTTPPermissionsMySQL$' -count=1
 
-go test -race -v ./internal/order/service -run '^TestCreateRequestIdempotencyMySQL$' -count=1
+go test -race -v ./internal/order/service -run '^(TestCreateRequestIdempotencyMySQL|TestSupplierAdmissionMySQL|TestZeroPayableMySQL)$' -count=1
 
 # Remaining packages run their unit tests; their MySQL suites own separate database lifecycles.
 unset FOUNDATION_MYSQL_SOCKET

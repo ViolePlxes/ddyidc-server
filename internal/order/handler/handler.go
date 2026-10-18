@@ -117,7 +117,7 @@ func (h *orderHandler) createOrder(w http.ResponseWriter, r *http.Request) {
 	}
 	view, err := h.service.CreateOrder(r.Context(), customerID, &input)
 	if err != nil {
-		writeError(w, http.StatusOK, err.Error())
+		writeError(w, http.StatusOK, orderCreationMessage(err, w.Header().Get("X-Request-ID")))
 		return
 	}
 	writeJSON(w, view)

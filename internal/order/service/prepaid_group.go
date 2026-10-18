@@ -26,6 +26,9 @@ func (s *Service) CommitGroupOrderTx(ctx context.Context, tx *gorm.DB, p *Prepar
 	if err := certification.CheckPurchase(tx, order.CustomerID); err != nil {
 		return 0, err
 	}
+	if err := s.checkPreparedSupplierTx(ctx, tx, p); err != nil {
+		return 0, err
+	}
 	now := time.Now()
 	payType := uint8(3)
 	order.TotalAmount = price
