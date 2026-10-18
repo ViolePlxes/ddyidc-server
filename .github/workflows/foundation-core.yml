@@ -37,6 +37,7 @@ jobs:
           bash deploy/linux/tests/test_admin_order_links.sh > admin-order-links.log 2>&1
           bash deploy/linux/tests/test_manual_product_display.sh > manual-product-display.log 2>&1
           bash deploy/linux/tests/test_provisioning_queue.sh > provisioning-queue.log 2>&1
+          bash deploy/linux/tests/test_certification_queue.sh > certification-queue.log 2>&1
           bash deploy/linux/tests/test_adapter_modules.sh > adapter-modules.log 2>&1
           python3 -m unittest discover -s tools/security -p 'test_*.py'
           PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tools/release -p 'test_*.py'
@@ -57,6 +58,7 @@ jobs:
             go-test.jsonl
             go-test-summary.json
             provisioning-queue.log
+            certification-queue.log
             source-vulns.json
             binary-vulns.json
             order-transactions.log

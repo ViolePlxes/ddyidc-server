@@ -663,5 +663,10 @@
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "test_manual_product_display.sh verifies one renewal behavior once, independent purchase retained, manual renewal state unchanged."
+  },
+  "ddyidc/internal/admintodo/TestCertificationQueueMySQL": {
+    "disposition": "isolated_suite_required",
+    "label": "隔离测试、本地联调用",
+    "verification": "Run deploy/linux/tests/test_certification_queue.sh with disposable MySQL. Verify manual/Alipay/company and legacy channel matrix, count/list/detail agreement and historical visibility. A normal-suite skip is not a pass."
   }
 }

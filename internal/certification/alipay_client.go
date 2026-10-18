@@ -190,5 +190,13 @@ func (c *alipayClient) query(ctx context.Context, id string) (bool, error) {
 	if err := c.execute(ctx, "alipay.user.certify.open.query", map[string]string{"certify_id": id}, &result); err != nil {
 		return false, err
 	}
-	return result.Passed == "T", nil
+	switch result.Passed {
+	case "T":
+		return true, nil
+	case "F":
+		// Not passed is not enough evidence to reject a pending local record.
+		return false, nil
+	default:
+		return false, errors.New("支付宝未返回明确认证结果，请稍后重试")
+	}
 }

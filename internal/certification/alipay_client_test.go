@@ -38,6 +38,7 @@ func TestAlipaySignedProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	tamper := false
+	passedValue := "T"
 	client.http.Transport = alipayTestTransport(func(r *http.Request) (*http.Response, error) {
 		if r.URL.String() != alipayGateway {
 			t.Fatal("unexpected gateway")
@@ -72,7 +73,7 @@ func TestAlipaySignedProtocol(t *testing.T) {
 			t.Fatal("invalid business")
 		}
 		method := r.Form.Get("method")
-		raw := `{"code":"10000", "passed":"T"}`
+		raw := `{"code":"10000", "passed":"` + passedValue + `"}`
 		if strings.HasSuffix(method, "initialize") {
 			if business["outer_order_no"] == nil || business["out_order_no"] != nil || business["identity_param"] == nil || business["merchant_config"] == nil {
 				t.Fatal("incorrect initialize contract")
@@ -98,6 +99,17 @@ func TestAlipaySignedProtocol(t *testing.T) {
 	if err != nil || !passed {
 		t.Fatalf("query: %v", err)
 	}
+	passedValue = "F"
+	if passed, err := client.query(context.Background(), id); err != nil || passed {
+		t.Fatalf("F must remain not passed: %v", err)
+	}
+	for _, value := range []string{"", "UNKNOWN", "t"} {
+		passedValue = value
+		if _, err := client.query(context.Background(), id); err == nil {
+			t.Fatal("ambiguous provider result accepted")
+		}
+	}
+	passedValue = "T"
 	tamper = true
 	if _, err := client.query(context.Background(), id); err == nil {
 		t.Fatal("tampered response accepted")

@@ -22,31 +22,32 @@ func expiryCutoff(now time.Time) time.Time {
 // Entry exposes only safe summary fields. Attachments and business operations
 // remain behind their original services' object authorization.
 type Entry struct {
-	ExpiryNotifications *ExpiryNotifications `json:"expiryNotifications,omitempty" gorm:"-"`
-	ID                  string               `json:"id"`
-	Source              string               `json:"source"`
-	CustomerID          string               `json:"customerId"`
-	CustomerName        string               `json:"customerName"`
-	CustomerRealName    string               `json:"customerRealName,omitempty"`
-	Machines            []RefundMachine      `json:"machines,omitempty" gorm:"-"`
-	Title               string               `json:"title"`
-	Number              string               `json:"number"`
-	Status              string               `json:"status"`
-	RefundableAmount    *string              `json:"refundableAmount,omitempty" gorm:"-"`
-	Amount              string               `json:"amount"`
-	OrderID             string               `json:"orderId"`
-	InstanceID          string               `json:"instanceId"`
-	CreatedAt           time.Time            `json:"createdAt"`
-	UpdatedAt           time.Time            `json:"updatedAt"`
-	Href                string               `json:"href"`
-	LastAdminID         string               `json:"lastAdminId"`
-	Actions             []string             `json:"actions" gorm:"-"`
-	IPAddress           string               `json:"ipAddress,omitempty"`
-	BillingCycle        string               `json:"billingCycle,omitempty" gorm:"-"`
-	ExpiresAt           *time.Time           `json:"expiresAt,omitempty" gorm:"-"`
-	UpstreamOrderID     string               `json:"upstreamOrderId,omitempty" gorm:"-"`
-	UpstreamBillingURL  string               `json:"upstreamBillingUrl,omitempty" gorm:"-"`
-	Revision            string               `json:"revision,omitempty"`
+	ExpiryNotifications    *ExpiryNotifications `json:"expiryNotifications,omitempty" gorm:"-"`
+	AutomaticCertification bool                 `json:"automaticCertification,omitempty"`
+	ID                     string               `json:"id"`
+	Source                 string               `json:"source"`
+	CustomerID             string               `json:"customerId"`
+	CustomerName           string               `json:"customerName"`
+	CustomerRealName       string               `json:"customerRealName,omitempty"`
+	Machines               []RefundMachine      `json:"machines,omitempty" gorm:"-"`
+	Title                  string               `json:"title"`
+	Number                 string               `json:"number"`
+	Status                 string               `json:"status"`
+	RefundableAmount       *string              `json:"refundableAmount,omitempty" gorm:"-"`
+	Amount                 string               `json:"amount"`
+	OrderID                string               `json:"orderId"`
+	InstanceID             string               `json:"instanceId"`
+	CreatedAt              time.Time            `json:"createdAt"`
+	UpdatedAt              time.Time            `json:"updatedAt"`
+	Href                   string               `json:"href"`
+	LastAdminID            string               `json:"lastAdminId"`
+	Actions                []string             `json:"actions" gorm:"-"`
+	IPAddress              string               `json:"ipAddress,omitempty"`
+	BillingCycle           string               `json:"billingCycle,omitempty" gorm:"-"`
+	ExpiresAt              *time.Time           `json:"expiresAt,omitempty" gorm:"-"`
+	UpstreamOrderID        string               `json:"upstreamOrderId,omitempty" gorm:"-"`
+	UpstreamBillingURL     string               `json:"upstreamBillingUrl,omitempty" gorm:"-"`
+	Revision               string               `json:"revision,omitempty"`
 }
 type Filter struct {
 	Page, PageSize                                                  int
@@ -70,7 +71,7 @@ func projection(kind string) (string, error) {
 	case "tickets":
 		return `SELECT CAST(t.id AS CHAR) id,'ticket' source,CAST(t.client_id AS CHAR) customer_id,t.title,t.ticket_num number,CAST(t.status AS CHAR) status,'' amount,'' order_id,'' instance_id,t.create_time created_at,t.update_time updated_at FROM ticket.ticket t JOIN ticket.ticket_status s ON s.id=t.status WHERE s.status=0`, nil
 	case "certifications":
-		return `SELECT CAST(r.id AS CHAR) id,'certification' source,CAST(r.customer_id AS CHAR) customer_id,CASE WHEN r.type=2 THEN '企业实名审核' ELSE '个人实名审核' END title,CAST(r.id AS CHAR) number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at FROM customer.customer_realname r WHERE r.status=1`, nil
+		return `SELECT CAST(r.id AS CHAR) id,'certification' source,CAST(r.customer_id AS CHAR) customer_id,CASE WHEN r.type=2 THEN '企业实名审核' ELSE '个人实名审核' END title,CAST(r.id AS CHAR) number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at,(r.type=1 AND COALESCE(r.certify_channel,'')='alipay') automatic_certification FROM customer.customer_realname r WHERE ` + manualCertificationPredicate, nil
 	case "recommendations":
 		return `SELECT CAST(r.id AS CHAR) id,'invite' source,CAST(r.user_id AS CHAR) customer_id,CONCAT('注册优惠码 · ',r.code) title,r.code number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at FROM marketing.invites r WHERE r.status=0`, nil
 	case "withdrawals":
@@ -105,7 +106,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		case "tickets":
 			sql = strings.Replace(sql, "WHERE s.status=0", "", 1)
 		case "certifications":
-			sql = strings.Replace(sql, "WHERE r.status=1", "", 1)
+			sql = strings.Replace(sql, "WHERE "+manualCertificationPredicate, "", 1)
 		case "recommendations":
 			sql = strings.Replace(sql, "WHERE r.status=0", "", 1)
 		case "withdrawals":

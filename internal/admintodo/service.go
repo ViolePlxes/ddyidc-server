@@ -38,7 +38,7 @@ type definition struct{ key, name, description, sql string }
 var definitions = []definition{
 	{"tickets", "待处理工单", "工单状态配置为未完结的工单。", "SELECT COUNT(*) FROM ticket.ticket t JOIN ticket.ticket_status s ON s.id=t.status WHERE s.status=0"},
 	{"refunds", "待处理退款", "后台审核退款申请，按申请时点核算未使用服务费，仅退入账户余额。", "SELECT COUNT(*) FROM (SELECT CONCAT('payment:',r.payment_id) k FROM payment.original_refunds r WHERE r.status='pending' UNION SELECT CONCAT('payment:',p.id) k FROM system.marketplace_orders m JOIN payment.payments p ON p.biz_type='marketplace' AND p.biz_id=m.id WHERE m.status='refund_pending') q"},
-	{"certifications", "待处理实名", "当前待人工审核的实名申请。", "SELECT COUNT(*) FROM customer.customer_realname WHERE status=1"},
+	{"certifications", "待处理实名", "待人工审核的实名申请，不含支付宝个人认证中。", "SELECT COUNT(*) FROM customer.customer_realname r WHERE " + manualCertificationPredicate},
 	{"withdrawals", "待处理提现", "账户余额及交易市场待审核、待汇款提现。", ""},
 	{"recommendations", "待确认推介", "现有积分、注册优惠码体系中的待审核优惠码申请。", ""},
 	{"provisioning", "开通中产品数量", "首次交付尚未完成的待开通、开通中实例，排除重装、重启等后续操作。", "SELECT COUNT(*) FROM instance.instances i WHERE i.deleted_at IS NULL AND " + provisioningPredicate},
