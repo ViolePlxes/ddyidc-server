@@ -499,6 +499,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	update.RegisterAdminHandlers(server, updateManager, jwt)
 	upstreamapi.RegisterHandlers(server, upstreamservice.Default)
 	upstreamapi.RegisterModuleHandlers(server, upstreamservice.Default, jwt)
+	upstreamapi.RegisterSupplierSnapshotHandlers(server, upstreamservice.Default, jwt)
 	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
 	admintodo.Register(server, db.G, jwt, snapshotKey)
 	admintodo.RegisterExpiryWorkflows(server, db.G, jwt, notifyManager)
@@ -600,6 +601,8 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("payment channel initialization failed: " + err.Error())
 	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
+	upstreamservice.Default.SetSupplierSnapshotWorker(instanceSvc)
+	*cronStarts = append(*cronStarts, upstreamservice.Default.StartSupplierSnapshotScheduler)
 	instanceSvc.SetManagement(db.G)
 	orderSvc.SetRenewalBalancePayer(instanceSvc)
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {

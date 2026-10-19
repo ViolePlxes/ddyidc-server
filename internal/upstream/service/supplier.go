@@ -91,6 +91,7 @@ func (s *Store) ListSuppliers() (out []model.Supplier) {
 		}
 		s.mu.RUnlock()
 		sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+		s.attachSupplierSnapshots(out)
 		return
 	}
 	if s.db.Table((model.Supplier{}).TableName()).Order("created_at DESC").Find(&out).Error != nil {
@@ -99,6 +100,7 @@ func (s *Store) ListSuppliers() (out []model.Supplier) {
 	for i := range out {
 		out[i] = sanitizeSupplier(out[i])
 	}
+	s.attachSupplierSnapshots(out)
 	return
 }
 func (s *Store) GetSupplier(key string) (model.Supplier, error) {

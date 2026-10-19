@@ -43,6 +43,8 @@ type Entry struct {
 	LastAdminID            string               `json:"lastAdminId"`
 	Actions                []string             `json:"actions" gorm:"-"`
 	IPAddress              string               `json:"ipAddress,omitempty"`
+	RenewalSyncedAt        int64                `json:"renewalSyncedAt,omitempty" gorm:"-"`
+	RenewalStale           bool                 `json:"renewalStale,omitempty" gorm:"-"`
 	BillingCycle           string               `json:"billingCycle,omitempty" gorm:"-"`
 	ExpiresAt              *time.Time           `json:"expiresAt,omitempty" gorm:"-"`
 	UpstreamOrderID        string               `json:"upstreamOrderId,omitempty" gorm:"-"`

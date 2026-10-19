@@ -274,6 +274,13 @@ func safeSyncFields(h *dom.Host, detail *contracts.InstanceDetail, now time.Time
 	return fields, nil
 }
 func (s *Service) syncAdminItem(ctx context.Context, t AdminSyncTask, item AdminSyncSelection) error {
+	id, e := strconv.ParseInt(item.ID, 10, 64)
+	if e != nil {
+		return e
+	}
+	return s.withInstanceReadLock(ctx, id, func() error { return s.syncAdminItemLocked(ctx, t, item) })
+}
+func (s *Service) syncAdminItemLocked(ctx context.Context, t AdminSyncTask, item AdminSyncSelection) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	a, e := s.AdminAccess(ctx, t.AdminID)
@@ -312,6 +319,7 @@ func (s *Service) syncAdminItem(ctx context.Context, t AdminSyncTask, item Admin
 	if detail == nil || detail.ID != h.UpstreamInstanceID {
 		return errors.New("供应商资源身份不匹配，未覆盖")
 	}
+	options, quoteErr := s.snapshotRenewalOptions(ctx, h)
 	a, e = s.AdminAccess(ctx, t.AdminID)
 	if e != nil || !a.Sync || !a.Allows(customer) {
 		return ErrForbidden
@@ -321,12 +329,15 @@ func (s *Service) syncAdminItem(ctx context.Context, t AdminSyncTask, item Admin
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_provider_id <=> ? AND upstream_instance_id=? AND status IN (3,4)", id, customer, version, h.UpstreamProviderID, h.UpstreamInstanceID).Take(&current).Error; e != nil {
 			return errors.New("实例归属或资源绑定已变化，未覆盖")
 		}
-		if current.UpdatedAt.After(h.UpdatedAt) {
+		if !sameSyncReadVersion(*h, current) {
 			return errors.New("读取期间实例已更新，请重新同步")
 		}
 		now := time.Now().UTC()
 		fields, e := safeSyncFields(&current, detail, now)
 		if e != nil {
+			return e
+		}
+		if e := applySupplierReadSnapshot(&current, detail, fields, options, quoteErr, now); e != nil {
 			return e
 		}
 		before := adminSyncAudit(current)

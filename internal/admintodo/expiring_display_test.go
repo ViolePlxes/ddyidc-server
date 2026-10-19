@@ -2,6 +2,8 @@ package admintodo
 
 import (
 	"context"
+	"ddyidc/internal/instance/readmodel"
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -10,7 +12,7 @@ func TestExpiringDisplayMySQL(t *testing.T) {
 	tx := manualProductFixtureDB(t).Begin()
 	defer tx.Rollback()
 	for _, sql := range []string{
-		"INSERT INTO instance.instances(id,customer_id,config_snapshot,expires_at,primary_ip) VALUES(99501,99502,'{\"billingCycle\":\"monthly\",\"renewalAmount\":\"999.00\"}',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY),'192.0.2.10'),(99503,99502,'{\"billingCycle\":\"annually\"}',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 DAY),'invalid-ip')",
+		"INSERT INTO instance.instances(id,instance_no,customer_id,order_id,order_item_id,product_id,product_name,module_type,config_snapshot,expires_at,primary_ip) VALUES(99501,'EXPIRY-LOCAL-A',99502,0,0,0,'fixture','cloud','{\"billingCycle\":\"monthly\",\"renewalAmount\":\"999.00\"}',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 DAY),'192.0.2.10'),(99503,'EXPIRY-LOCAL-B',99502,0,0,0,'fixture','cloud','{\"billingCycle\":\"annually\"}',DATE_ADD(UTC_TIMESTAMP(),INTERVAL 2 DAY),'invalid-ip')",
 	} {
 		if err := tx.Exec(sql).Error; err != nil {
 			t.Fatal(err)
@@ -74,6 +76,27 @@ func TestExpiringDisplayMySQL(t *testing.T) {
 	if rows[0].Amount != "" {
 		t.Fatal("stale snapshot renewal price used")
 	}
+	snapshot := readmodel.SupplierSnapshot{CustomerID: 99502, OwnershipVersion: 1, SupplierID: 88, RemoteID: "900", BillingCycle: "monthly", Amount: "40.00", PriceSource: "upstream_original", PriceState: "verified", VerifiedAt: time.Now().Unix()}
+	raw, _ := json.Marshal(map[string]any{"billingCycle": "monthly", readmodel.SnapshotKey: snapshot})
+	if e := tx.Exec("UPDATE instance.instances SET ownership_version=1,upstream_provider_id=88,upstream_instance_id='900',config_snapshot=? WHERE id=99501", string(raw)).Error; e != nil {
+		t.Fatal(e)
+	}
+	if e := enrichExpiringDisplay(context.Background(), tx, rows); e != nil {
+		t.Fatal(e)
+	}
+	if rows[0].Amount != "40.00" || rows[0].RenewalSyncedAt == 0 || rows[0].RenewalStale || rows[2].Amount != "" {
+		t.Fatal("verified local retail missing or leaked")
+	}
+	if e := tx.Exec("UPDATE instance.instances SET ownership_version=2 WHERE id=99501").Error; e != nil {
+		t.Fatal(e)
+	}
+	if e := enrichExpiringDisplay(context.Background(), tx, rows); e != nil {
+		t.Fatal(e)
+	}
+	if rows[0].Amount != "" {
+		t.Fatal("old owner quote reused")
+	}
+
 }
 
 func TestMergeExpiryNotificationStatus(t *testing.T) {
