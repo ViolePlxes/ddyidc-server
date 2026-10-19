@@ -3,10 +3,10 @@ package zjmf
 import (
 	"context"
 	"ddyidc/internal/upstream/provider/contracts"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 )
@@ -112,7 +112,8 @@ func TestPurchaseBudgetRejectsBeforeCartMutation(t *testing.T) {
 	for _, ceiling := range []string{"45.50", "0.00", "invalid"} {
 		before := calls
 		_, err := p.CreateOrder(contracts.OrderInfo{ProductID: 488, Cycle: "monthly", Quantity: 2, ProcurementCeiling: ceiling})
-		if err == nil || !strings.Contains(err.Error(), "超过成交预算") || calls != before+1 {
+		var failure *contracts.ProcurementFailure
+		if !errors.As(err, &failure) || failure.Code != "budget_exceeded" || failure.Stage != "quote" || calls != before+1 {
 			t.Fatalf("ceiling=%q err=%v calls=%d", ceiling, err, calls-before)
 		}
 	}

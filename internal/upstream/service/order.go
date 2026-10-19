@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"ddyidc/internal/upstream/provider/contracts"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -154,7 +156,12 @@ func (s *Store) failProvision(table string, link *model.UpstreamOrder, failure e
 	// A timeout or invalid response is not evidence that the supplier did not charge.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = s.db.WithContext(ctx).Table(table).Where("id = ?", link.ID).Updates(map[string]any{"status": "unknown", "last_error": "采购结果未确认，需核对远端订单，禁止重复下单", "updated_at": now()}).Error
+	evidence := contracts.ClassifyProcurementFailure("provider", failure)
+	err := s.db.WithContext(ctx).Table(table).Where("id = ?", link.ID).Updates(map[string]any{"status": "unknown", "last_error": evidence.Error(), "updated_at": now()}).Error
+	// Only fixed diagnostic fields; never include failure.Error(), URLs,
+	// upstream response text, authentication or the customer's configuration.
+	raw, _ := json.Marshal(map[string]any{"event": "procurement_failed", "order_id": link.OrderID, "procurement_id": link.ID, "supplier_id": link.SupplierID, "stage": evidence.Stage, "code": evidence.Code, "http_status": evidence.HTTPStatus, "supplier_status": evidence.SupplierStatus, "evidence_persisted": err == nil})
+	log.Print(string(raw))
 }
 
 func provisionResult(link model.UpstreamOrder) *ProvisionResult {

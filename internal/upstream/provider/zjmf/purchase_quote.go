@@ -20,12 +20,12 @@ func (p *Provider) purchaseQuote(order contracts.OrderInfo) (billing.Money, erro
 	if err != nil {
 		return 0, err
 	}
-	if err := requireUpstreamSuccess(body, "purchase quote"); err != nil {
+	if err := requireProcurementStatus(body, 200); err != nil {
 		return 0, err
 	}
 	amount, err := purchaseQuoteAmount(body, order.Cycle)
 	if err != nil {
-		return 0, err
+		return 0, &contracts.ProcurementFailure{Code: "quote_invalid", Cause: err}
 	}
 	if err := testpolicy.CheckPayment(p.Supplier.URL, amount); err != nil {
 		return 0, err

@@ -115,8 +115,13 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 		case "/cart/get_total":
 			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
-			fmt.Fprint(w, `{"status":200,"data":{"i":1}}`)
+			// Finance's v10-compatible cart_data protocol does not require i.
+			fmt.Fprint(w, `{"status":200,"data":{}}`)
 		case "/cart/settle":
+			r.ParseForm()
+			if r.Form.Get("cart_data[pid]") != "353" || r.Form.Get("cart_data[billingcycle]") != "monthly" || r.Form.Get("cart_data[qty]") != "1" || len(r.Form["pos[]"]) != 0 {
+				t.Error("settlement lost exact Finance product/cycle or guessed a cart index")
+			}
 			fmt.Fprintf(w, `{"status":200,"data":{"invoiceid":%d,"amount":"1.00"}}`, 200000+invoices.Add(1))
 		case "/apply_credit":
 			n := charges.Add(1)
@@ -170,6 +175,16 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 				before := charges.Load()
 				if service.ProvisionDeliveryUnit(ctx, 77, unit.ID, "alipay") == nil || charges.Load() != before {
 					t.Fatal("unknown unit repurchased")
+				}
+				var evidence struct {
+					Status, LastError, UpstreamOrderID string
+					AttemptCount                       int
+				}
+				if e := database.Table("order.unit_procurements").Where("id=?", unit.ID).Take(&evidence).Error; e != nil {
+					t.Fatal(e)
+				}
+				if evidence.Status != "unknown" || evidence.AttemptCount != 1 || evidence.UpstreamOrderID != "200002" || !strings.Contains(evidence.LastError, "stage=payment") || !strings.Contains(evidence.LastError, "http=500") || strings.Contains(evidence.LastError, "isolated unknown") {
+					t.Fatalf("lost safe procurement failure evidence: %+v", evidence)
 				}
 			} else if err != nil {
 				t.Fatal(err)

@@ -134,6 +134,9 @@ func (p *Provider) Auth() error {
 		return fmt.Errorf("upstream login request: %w", err)
 	}
 	if status != http.StatusOK {
+		if p.procurementContext {
+			return &contracts.ProcurementFailure{Code: "authentication_rejected", HTTPStatus: status}
+		}
 		return fmt.Errorf("upstream login HTTP status %d", status)
 	}
 	var payload struct {
@@ -145,6 +148,9 @@ func (p *Provider) Auth() error {
 		return fmt.Errorf("decode upstream login response: %w", err)
 	}
 	if payload.Status != http.StatusOK || payload.JWT == "" {
+		if p.procurementContext {
+			return &contracts.ProcurementFailure{Code: "authentication_rejected", SupplierStatus: payload.Status}
+		}
 		if payload.Message == "" {
 			payload.Message = "JWT missing from upstream login response"
 		}
@@ -855,9 +861,17 @@ func (p *Provider) authorizedFormPost(path string, form url.Values) ([]byte, err
 		}
 		if status == http.StatusUnauthorized || status == http.StatusMethodNotAllowed {
 			p.clearToken()
+			// Procurement writes are single-attempt, including authentication errors.
+			// Only the read-only quotation may refresh and retry here.
+			if p.procurementContext && path != "/cart/get_total" {
+				return nil, &contracts.ProcurementFailure{Code: "http_rejected", HTTPStatus: status}
+			}
 			continue
 		}
 		if status != http.StatusOK {
+			if p.procurementContext {
+				return nil, &contracts.ProcurementFailure{Code: "http_rejected", HTTPStatus: status}
+			}
 			return nil, fmt.Errorf("upstream request HTTP status %d", status)
 		}
 		return body, nil
@@ -966,6 +980,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil, remoteAudit)
 		retryable := response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 		if scoped && (response.StatusCode == 403 || response.StatusCode == 429) {
+			if p.procurementContext {
+				return payload, response.StatusCode, &contracts.ProcurementFailure{Code: "http_rejected", HTTPStatus: response.StatusCode}
+			}
 			return payload, response.StatusCode, fmt.Errorf("服务请求受限，请稍后再试")
 		}
 		if retryable && attempt+1 < attempts {
@@ -976,6 +993,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			continue
 		}
 		if retryable {
+			if p.procurementContext {
+				return payload, response.StatusCode, &contracts.ProcurementFailure{Code: "http_rejected", HTTPStatus: response.StatusCode}
+			}
 			return payload, response.StatusCode, fmt.Errorf("upstream HTTP status %d after one retry", response.StatusCode)
 		}
 		return payload, response.StatusCode, nil
@@ -1126,11 +1146,35 @@ func unsupported(operation string) error {
 func (p *Provider) GetProductResource(int) (*contracts.ProductResource, error) {
 	return nil, unsupported("resource lookup")
 }
-func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOrderResult, error) {
+func (p *Provider) CreateOrder(order contracts.OrderInfo) (result *contracts.UpstreamOrderResult, failure error) {
+	// The compatibility entry point must have the same single-write policy as
+	// CreateOrderContext, without mutating a shared provider used by readers.
+	copy := *p
+	copy.procurementContext = true
+	p = &copy
+	stage := "validation"
+	defer func() {
+		if failure != nil {
+			failure = contracts.ClassifyProcurementFailure(stage, failure)
+		}
+	}()
+	checkpoint := func(next, invoice, host string) error {
+		stage = next
+		if order.Checkpoint == nil {
+			return nil
+		}
+		if err := order.Checkpoint(next, invoice, host); err != nil {
+			return &contracts.ProcurementFailure{Stage: next, Code: "checkpoint_failed", Cause: err}
+		}
+		return nil
+	}
 	if order.ProductID <= 0 || order.Quantity <= 0 || order.Cycle == "" {
 		return nil, errors.New("product ID, quantity and billing cycle are required")
 	}
 	if err := p.enforceTestProductPolicy(order.ProductID); err != nil {
+		return nil, err
+	}
+	if err := checkpoint("quote", "", ""); err != nil {
 		return nil, err
 	}
 	actualAmount, err := p.purchaseQuote(order)
@@ -1140,67 +1184,79 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if order.ProcurementCeiling != "" {
 		ceiling, err := decodeQuoteMoney(json.RawMessage(strconv.Quote(order.ProcurementCeiling)))
 		if err != nil || ceiling <= 0 || actualAmount > ceiling*billing.Money(order.Quantity) {
-			return nil, errors.New("供应商采购报价超过成交预算，需人工核查，未创建采购订单")
+			return nil, &contracts.ProcurementFailure{Stage: stage, Code: "budget_exceeded"}
 		}
 	}
 	requiredAmount := float64(actualAmount) / 100
 	form := orderForm(order)
+	// v10 Finance adds the cart item without checkout, then settles the exact
+	// cart_data configuration. Some Finance versions do not return a cart index.
+	form.Del("checkout")
+	for key, values := range downstreamForm(order) {
+		form[key] = values
+	}
+	if err := checkpoint("cart_add", "", ""); err != nil {
+		return nil, err
+	}
 	addBody, err := p.authorizedFormPost("/cart/add_to_shop", form)
 	if err != nil {
 		return nil, fmt.Errorf("add upstream cart: %w", err)
 	}
-	if err := requireUpstreamSuccess(addBody, "cart add"); err != nil {
-		return nil, err
-	}
-	if order.Checkpoint != nil {
-		if err := order.Checkpoint("cart_added", "", ""); err != nil {
+	// Never submit another settlement when add unexpectedly returned a bill.
+	if invoice := financeInvoiceReference(addBody); invoice != "" {
+		if err := checkpoint("invoice_created", invoice, ""); err != nil {
 			return nil, err
 		}
+		return nil, &contracts.ProcurementFailure{Stage: "cart_add", Code: "unexpected_invoice"}
 	}
-	cartPosition := firstJSONValue(addBody, "i")
-	if _, err := strconv.ParseUint(cartPosition, 10, 32); err != nil {
-		return nil, errors.New("供应商未返回可确认的购物车位置，停止结算并转人工核对")
+	if err := requireProcurementStatus(addBody, http.StatusOK); err != nil {
+		return nil, err
 	}
-	settleBody, err := p.authorizedFormPost("/cart/settle", settlementForm(order, cartPosition))
+	cartPosition, err := financeCartPosition(addBody)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkpoint("cart_settle", "", ""); err != nil {
+		return nil, err
+	}
+	settleBody, err := p.authorizedFormPost("/cart/settle", financeSettlementForm(order, cartPosition))
 	if err != nil {
 		return nil, fmt.Errorf("settle upstream cart: %w", err)
 	}
 	var settle struct {
-		Status  int    `json:"status"`
-		Message string `json:"msg"`
-		Data    struct {
-			InvoiceID interface{} `json:"invoiceid"`
-			ID        interface{} `json:"id"`
-		} `json:"data"`
+		Status int `json:"status"`
 	}
 	if err := decodeJSON(settleBody, &settle); err != nil {
-		return nil, fmt.Errorf("decode upstream cart settlement: %w", err)
+		return nil, &contracts.ProcurementFailure{Stage: stage, Code: "invalid_response", Cause: err}
 	}
-	if settle.Status != http.StatusOK {
-		return nil, upstreamError("cart settlement", settle.Message)
-	}
-	invoiceID := fmt.Sprint(settle.Data.InvoiceID)
-	if invoiceID == "<nil>" || invoiceID == "" {
-		invoiceID = fmt.Sprint(settle.Data.ID)
-	}
-	if invoiceID == "<nil>" || invoiceID == "" {
-		return nil, errors.New("upstream settlement did not return an invoice ID")
-	}
-	if order.Checkpoint != nil {
-		if err := order.Checkpoint("invoice_created", invoiceID, ""); err != nil {
+	invoiceID := financeInvoiceReference(settleBody, "id")
+	if invoiceID != "" {
+		if err := checkpoint("invoice_created", invoiceID, ""); err != nil {
 			return nil, err
 		}
 	}
+	if settle.Status != http.StatusOK {
+		return nil, &contracts.ProcurementFailure{Stage: "cart_settle", Code: "supplier_rejected", SupplierStatus: settle.Status}
+	}
+	if invoiceID == "" {
+		return nil, &contracts.ProcurementFailure{Stage: "cart_settle", Code: "invoice_missing"}
+	}
 	// Pay once only after the matching configuration quote passed the ceiling.
+	if err := checkpoint("balance_read", invoiceID, ""); err != nil {
+		return nil, err
+	}
 	balance, err := p.GetBalance()
 	if err != nil {
+		return nil, err
+	}
+	if err := checkpoint("payment", invoiceID, ""); err != nil {
 		return nil, err
 	}
 	payBody, err := p.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
 	if err != nil {
 		return nil, fmt.Errorf("pay upstream invoice: %w", err)
 	}
-	if err := requireUpstreamStatus(payBody, "upstream balance payment", 1001); err != nil {
+	if err := requireProcurementStatus(payBody, 1001); err != nil {
 		// An unexpected reply does not prove that credit was not consumed.
 		// Preserve the invoice for reconciliation; do not issue another write.
 		return nil, err
@@ -1213,10 +1269,8 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (*contracts.UpstreamOr
 	if hostID != "" {
 		status = "active"
 	}
-	if order.Checkpoint != nil {
-		if err := order.Checkpoint(status, invoiceID, hostID); err != nil {
-			return nil, err
-		}
+	if err := checkpoint(status, invoiceID, hostID); err != nil {
+		return nil, err
 	}
 	balanceAfter := balance - requiredAmount
 	if value := firstJSONNumber(payBody, "credit", "balance", "remaining_credit"); value >= 0 {
@@ -1292,6 +1346,105 @@ func settlementForm(order contracts.OrderInfo, cartPosition string) url.Values {
 		form.Add("pos[]", cartPosition)
 	}
 	return form
+}
+
+// Finance v10 uses cart_data instead of relying on mutable account cart state.
+// Carry the exact product/cycle/options; never clear the shared supplier cart,
+// settle all items, or guess position zero when a response omitted its index.
+func financeSettlementForm(order contracts.OrderInfo, cartPosition string) url.Values {
+	form := settlementForm(order, cartPosition)
+	data := orderForm(order)
+	data.Del("checkout")
+	for key, values := range downstreamForm(order) {
+		data[key] = values
+	}
+	for key, values := range data {
+		if strings.HasPrefix(key, "upstream_product[") {
+			continue
+		}
+		if strings.HasPrefix(key, "configoption[") {
+			key = "configoptions[" + strings.TrimPrefix(key, "configoption[")
+		}
+		// foo[a][b] becomes cart_data[foo][a][b].
+		parts := strings.SplitN(key, "[", 2)
+		nested := "cart_data[" + parts[0] + "]"
+		if len(parts) == 2 {
+			nested += "[" + parts[1]
+		}
+		for _, value := range values {
+			form.Add(nested, value)
+		}
+	}
+	return form
+}
+
+func financeCartPosition(body []byte) (string, error) {
+	var envelope struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return "", &contracts.ProcurementFailure{Code: "invalid_response"}
+	}
+	if len(envelope.Data) == 0 || string(envelope.Data) == "null" || string(envelope.Data) == "[]" {
+		return "", nil
+	}
+	var data struct {
+		Position json.RawMessage `json:"i"`
+	}
+	if json.Unmarshal(envelope.Data, &data) != nil {
+		return "", &contracts.ProcurementFailure{Code: "invalid_response"}
+	}
+	raw := data.Position
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	value := string(raw)
+	if raw[0] == '"' && json.Unmarshal(raw, &value) != nil {
+		return "", &contracts.ProcurementFailure{Code: "invalid_cart_position"}
+	}
+	n, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || strconv.FormatUint(n, 10) != value {
+		return "", &contracts.ProcurementFailure{Code: "invalid_cart_position"}
+	}
+	return value, nil
+}
+
+func financeInvoiceReference(body []byte, aliases ...string) string {
+	var envelope struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if json.Unmarshal(body, &envelope) != nil {
+		return ""
+	}
+	for _, key := range append([]string{"invoiceid"}, aliases...) {
+		raw := envelope.Data[key]
+		if len(raw) == 0 || string(raw) == "null" {
+			continue
+		}
+		id := string(raw)
+		if raw[0] == '"' && json.Unmarshal(raw, &id) != nil {
+			return ""
+		}
+		n, err := strconv.ParseUint(id, 10, 64)
+		if err != nil || n == 0 || strconv.FormatUint(n, 10) != id {
+			return ""
+		}
+		return id
+	}
+	return ""
+}
+
+func requireProcurementStatus(body []byte, allowed int) error {
+	var response struct {
+		Status int `json:"status"`
+	}
+	if err := decodeJSON(body, &response); err != nil {
+		return &contracts.ProcurementFailure{Code: "invalid_response", Cause: err}
+	}
+	if response.Status != allowed {
+		return &contracts.ProcurementFailure{Code: "supplier_rejected", SupplierStatus: response.Status}
+	}
+	return nil
 }
 
 func applyCreditForm(order contracts.OrderInfo, invoiceID string, useCredit bool) url.Values {

@@ -120,7 +120,7 @@ func TestProcurementCancellationStopsNetworkChain(t *testing.T) {
 	}
 }
 
-func TestProcurementNeverSettlesUnidentifiedCartOrCompensatesUnknownPayment(t *testing.T) {
+func TestProcurementNeverSettlesInvalidCartOrCompensatesUnknownPayment(t *testing.T) {
 	for _, missingPosition := range []bool{true, false} {
 		t.Run(map[bool]string{true: "missing-position", false: "unknown-payment"}[missingPosition], func(t *testing.T) {
 			var settles, pays, otherWrites atomic.Int32
@@ -132,7 +132,7 @@ func TestProcurementNeverSettlesUnidentifiedCartOrCompensatesUnknownPayment(t *t
 					fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 				case "/cart/add_to_shop":
 					if missingPosition {
-						w.Write([]byte(`{"status":200,"data":{}}`))
+						w.Write([]byte(`{"status":200,"data":{"i":"invalid"}}`))
 					} else {
 						w.Write([]byte(`{"status":200,"data":{"i":0}}`))
 					}

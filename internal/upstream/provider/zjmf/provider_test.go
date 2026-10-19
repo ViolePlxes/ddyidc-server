@@ -241,7 +241,7 @@ func TestCreateOrderUsesVerifiedLegacyFinanceChain(t *testing.T) {
 			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"15.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
 			_ = r.ParseForm()
-			if r.Form.Get("pid") != "489" || r.Form.Get("configoption[1941]") != "13150" || r.Form.Get("upstream_product[config_options][1941]") != "13150" || r.Form.Get("checkout") != "1" {
+			if r.Form.Get("pid") != "489" || r.Form.Get("configoption[1941]") != "13150" || r.Form.Get("upstream_product[config_options][1941]") != "13150" || r.Form.Get("checkout") != "" {
 				t.Fatalf("unexpected add form: %v", r.Form)
 			}
 			_, _ = w.Write([]byte(`{"status":200,"data":{"i":3}}`))
