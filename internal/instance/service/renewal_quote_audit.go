@@ -9,6 +9,9 @@ import (
 )
 
 type RenewalQuoteAuditItem struct {
+	EvidenceSource     string `json:"evidenceSource,omitempty"`
+	EvidenceVerifiedAt string `json:"evidenceVerifiedAt,omitempty"`
+	EvidenceExpiresAt  string `json:"evidenceExpiresAt,omitempty"`
 	OrderID            string `json:"orderId"`
 	Supplier           string `json:"supplier"`
 	Cycle              string `json:"cycle"`
@@ -33,13 +36,15 @@ type RenewalQuoteAudit struct {
 
 // AuditRenewalQuotes is an inventory, not a payment authorization or a correction.
 // Local snapshots only flag cases for individual live verification; no HTTP/write occurs.
-func (s *Service) AuditRenewalQuotes(ctx context.Context,access AdminAccess, page int) (RenewalQuoteAudit, error) {
+func (s *Service) AuditRenewalQuotes(ctx context.Context, access AdminAccess, page int) (RenewalQuoteAudit, error) {
 	result := RenewalQuoteAudit{Items: []RenewalQuoteAuditItem{}, Page: page, PageSize: 20, ReadOnly: true, LiveQuote: false}
 	if page < 1 || page > 100000 {
 		return result, fmt.Errorf("分页参数无效")
 	}
 	query := s.db.WithContext(ctx).Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Joins("JOIN instance.instances i ON i.id=r.instance_id").Joins("LEFT JOIN common.suppliers s ON s.id=r.supplier_id").Where("r.state NOT IN ('completed','cancelled')")
- if len(access.CustomerIDs)>0 {query=query.Where("r.customer_id IN ?",access.CustomerIDs)}
+	if len(access.CustomerIDs) > 0 {
+		query = query.Where("r.customer_id IN ?", access.CustomerIDs)
+	}
 	if e := query.Count(&result.Total).Error; e != nil {
 		return result, e
 	}
@@ -49,13 +54,22 @@ func (s *Service) AuditRenewalQuotes(ctx context.Context,access AdminAccess, pag
 		TotalAmount, PayAmount                            int64
 		Status                                            uint8
 		CreatedAt                                         time.Time
+		EvidenceSource                                    string
+		EvidenceVerifiedAt, EvidenceExpiresAt             *time.Time
 		HasEvidence                                       bool
 	}
-	if e := query.Select("r.order_id,r.customer_id,r.ownership_version,r.supplier_id,r.host_id,r.cycle,r.state,i.config_snapshot,s.name supplier,o.total_amount,o.pay_amount,o.status,r.created_at,EXISTS(SELECT 1 FROM instance.instance_renewal_quote_evidence e WHERE e.order_id=r.order_id) has_evidence").Order("r.created_at DESC,r.id DESC").Offset((page - 1) * 20).Limit(20).Scan(&rows).Error; e != nil {
+	if e := query.Select("r.order_id,r.customer_id,r.ownership_version,r.supplier_id,r.host_id,r.cycle,r.state,i.config_snapshot,s.name supplier,o.total_amount,o.pay_amount,o.status,r.created_at,(SELECT e.source_kind FROM instance.instance_renewal_quote_evidence e WHERE e.order_id=r.order_id ORDER BY e.revision DESC LIMIT 1) evidence_source,(SELECT e.quoted_at FROM instance.instance_renewal_quote_evidence e WHERE e.order_id=r.order_id ORDER BY e.revision DESC LIMIT 1) evidence_verified_at,(SELECT e.expires_at FROM instance.instance_renewal_quote_evidence e WHERE e.order_id=r.order_id ORDER BY e.revision DESC LIMIT 1) evidence_expires_at,EXISTS(SELECT 1 FROM instance.instance_renewal_quote_evidence e WHERE e.order_id=r.order_id) has_evidence").Order("r.created_at DESC,r.id DESC").Offset((page - 1) * 20).Limit(20).Scan(&rows).Error; e != nil {
 		return result, e
 	}
 	for _, row := range rows {
 		item := RenewalQuoteAuditItem{OrderID: fmt.Sprint(row.OrderID), Supplier: row.Supplier, Cycle: row.Cycle, Gross: billing.Money(row.TotalAmount).String(), Payable: billing.Money(row.PayAmount).String(), State: row.State, OrderStatus: row.Status, HasEvidence: row.HasEvidence, Finding: "live_verification_required", CreatedAt: row.CreatedAt.Format(time.RFC3339)}
+		item.EvidenceSource = row.EvidenceSource
+		if row.EvidenceVerifiedAt != nil {
+			item.EvidenceVerifiedAt = row.EvidenceVerifiedAt.Format(time.RFC3339)
+		}
+		if row.EvidenceExpiresAt != nil {
+			item.EvidenceExpiresAt = row.EvidenceExpiresAt.Format(time.RFC3339)
+		}
 		if !row.HasEvidence {
 			item.Finding = "quote_evidence_missing"
 		}

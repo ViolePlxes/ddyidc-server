@@ -20,16 +20,17 @@ var ErrConflict = errors.New("消息幂等键与原请求不一致")
 var ErrDisabled = errors.New("消息通知未启用")
 
 type Event struct {
-	Key          string    `json:"key"`
-	RecipientID  int64     `json:"recipientId,string"`
-	Type         string    `json:"type"`
-	Scene        string    `json:"scene"`
-	Title        string    `json:"title"`
-	Summary      string    `json:"summary"`
-	Content      string    `json:"content"`
-	BusinessType string    `json:"businessType"`
-	BusinessID   string    `json:"businessId"`
-	OccurredAt   time.Time `json:"occurredAt"`
+	OwnershipVersion int64     `json:"ownershipVersion,omitempty"`
+	Key              string    `json:"key"`
+	RecipientID      int64     `json:"recipientId,string"`
+	Type             string    `json:"type"`
+	Scene            string    `json:"scene"`
+	Title            string    `json:"title"`
+	Summary          string    `json:"summary"`
+	Content          string    `json:"content"`
+	BusinessType     string    `json:"businessType"`
+	BusinessID       string    `json:"businessId"`
+	OccurredAt       time.Time `json:"occurredAt"`
 }
 
 func (e Event) Validate() error {
@@ -140,6 +141,21 @@ func Enqueue(tx *gorm.DB, e Event) error {
 	}
 	if enabled != "true" && enabled != "1" {
 		return nil
+	}
+	return enqueueDurable(tx, e)
+}
+
+// EnqueueRenewalPause retains a critical billing warning while delivery is disabled.
+// The ordinary publisher still respects the module switch; no transport runs here.
+func EnqueueRenewalPause(tx *gorm.DB, e Event) error {
+	if e.Scene != "renewal_quote_paused" || e.Type != "billing" || e.BusinessType != "instance" || e.OwnershipVersion <= 0 {
+		return ErrInput
+	}
+	return enqueueDurable(tx, e)
+}
+func enqueueDurable(tx *gorm.DB, e Event) error {
+	if err := e.Validate(); err != nil {
+		return err
 	}
 	if e.OccurredAt.IsZero() {
 		e.OccurredAt = time.Now().UTC()

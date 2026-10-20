@@ -4,6 +4,7 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	repo "ddyidc/internal/instance/repository"
+	"ddyidc/internal/notification"
 	order "ddyidc/internal/order/domain"
 	orderrepo "ddyidc/internal/order/repository"
 	ordersvc "ddyidc/internal/order/service"
@@ -90,10 +91,16 @@ func TestRenewalQuoteGateMySQL(t *testing.T) {
 		t.Fatal("repository accepted absent proof")
 	}
 
- if e:=tx.Model(&o).Update("status",2).Error;e!=nil{t.Fatal(e)}
- handled,deliveryErr:=svc.ProvisionRenewal(ctx,h.CustomerID,o.ID,"alipay")
- if !handled||deliveryErr==nil{t.Fatal("historical paid wrong quote auto-fulfilled")}
- if e:=tx.Model(&o).Update("status",1).Error;e!=nil{t.Fatal(e)}
+	if e := tx.Model(&o).Update("status", 2).Error; e != nil {
+		t.Fatal(e)
+	}
+	handled, deliveryErr := svc.ProvisionRenewal(ctx, h.CustomerID, o.ID, "alipay")
+	if !handled || deliveryErr == nil {
+		t.Fatal("historical paid wrong quote auto-fulfilled")
+	}
+	if e := tx.Model(&o).Update("status", 1).Error; e != nil {
+		t.Fatal(e)
+	}
 	// Fixture-only correction creates the positive scenario; production orders are never changed this way.
 	if e := tx.Model(&o).Updates(map[string]any{"total_amount": 3000, "pay_amount": 2900, "discount_amount": 100, "coupon_amount": 100}).Error; e != nil {
 		t.Fatal(e)
@@ -113,8 +120,14 @@ func TestRenewalQuoteGateMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 
- scoped,scopeErr:=svc.AuditRenewalQuotes(ctx,AdminAccess{CustomerIDs:[]int64{h.CustomerID+1}},1);if scopeErr!=nil||scoped.Total!=0{t.Fatal("renewal audit escaped customer scope",scopeErr)}
- scoped,scopeErr=svc.AuditRenewalQuotes(ctx,AdminAccess{CustomerIDs:[]int64{h.CustomerID}},1);if scopeErr!=nil||scoped.Total!=1||!scoped.ReadOnly||scoped.LiveQuote{t.Fatal("scoped local audit invalid",scopeErr)}
+	scoped, scopeErr := svc.AuditRenewalQuotes(ctx, AdminAccess{CustomerIDs: []int64{h.CustomerID + 1}}, 1)
+	if scopeErr != nil || scoped.Total != 0 {
+		t.Fatal("renewal audit escaped customer scope", scopeErr)
+	}
+	scoped, scopeErr = svc.AuditRenewalQuotes(ctx, AdminAccess{CustomerIDs: []int64{h.CustomerID}}, 1)
+	if scopeErr != nil || scoped.Total != 1 || !scoped.ReadOnly || scoped.LiveQuote {
+		t.Fatal("scoped local audit invalid", scopeErr)
+	}
 	pr := payment.NewRepository(tx)
 	if _, e := pr.PrepareOrder(ctx, h.CustomerID, o.ID, "wechat", time.Now().Add(time.Minute)); e == nil {
 		t.Fatal("online entry bypassed proof")
@@ -166,8 +179,13 @@ func TestRenewalQuoteGateMySQL(t *testing.T) {
 	if count != 1 {
 		t.Fatal("captured receipt missing")
 	}
- if _,again,e:=pr.Complete(ctx,paydom.VerifiedNotification{Channel:"alipay",OutTradeNo:old.OutTradeNo,TransactionID:"RENEW-GATE-CAPTURE",AmountFen:2900,Currency:"CNY",PaidAt:time.Now()});e!=nil||again{t.Fatal("duplicate reviewed receipt replayed",e)}
- tx.Table("payment.receipts").Where("payment_id=?",old.ID).Count(&count);if count!=1{t.Fatal("review receipt duplicated")}
+	if _, again, e := pr.Complete(ctx, paydom.VerifiedNotification{Channel: "alipay", OutTradeNo: old.OutTradeNo, TransactionID: "RENEW-GATE-CAPTURE", AmountFen: 2900, Currency: "CNY", PaidAt: time.Now()}); e != nil || again {
+		t.Fatal("duplicate reviewed receipt replayed", e)
+	}
+	tx.Table("payment.receipts").Where("payment_id=?", old.ID).Count(&count)
+	if count != 1 {
+		t.Fatal("review receipt duplicated")
+	}
 
 	t.Log("old3177 blocked; coupon gross30/net29 accepted; online bypass rejected; ownership race rejected; unverified captured receipt retained for review")
 }
@@ -284,20 +302,29 @@ func TestAutoRenewalQuotePauseMySQL(t *testing.T) {
 		t.Fatal("unverified auto renewal not paused")
 	}
 
- if e:=svc.SetAutoRenew(ctx,h.CustomerID,h.ID,true);e==nil{t.Fatal("enabled auto without explicit price consent")}
- if e:=svc.SetAutoRenew(ctx,h.CustomerID,h.ID,true,"stale");e==nil{t.Fatal("enabled auto with stale consent")}
-	options,quoteErr:=svc.RenewalOptions(ctx,h.CustomerID,h.ID);if quoteErr!=nil{t.Fatal(quoteErr)}
- if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true,options[0].QuoteRevision); e != nil {
+	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true); e == nil {
+		t.Fatal("enabled auto without explicit price consent")
+	}
+	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true, "stale"); e == nil {
+		t.Fatal("enabled auto with stale consent")
+	}
+	options, quoteErr := svc.RenewalOptions(ctx, h.CustomerID, h.ID)
+	if quoteErr != nil {
+		t.Fatal(quoteErr)
+	}
+	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true, options[0].QuoteRevision); e != nil {
 		t.Fatal(e)
 	}
 	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
 		t.Fatal("fresh exact price not authorized")
 	}
 
- fixture:=svc.providers.(securityResolver).provider.(*gateRenewalFixture)
- fixture.cost="26.00"
- if !svc.autoRenewalQuoteAllowed(ctx,h,"monthly"){t.Fatal("procurement discount changed an unchanged retail authorization")}
- fixture.cost="27.00"
+	fixture := svc.providers.(securityResolver).provider.(*gateRenewalFixture)
+	fixture.cost = "26.00"
+	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
+		t.Fatal("procurement discount changed an unchanged retail authorization")
+	}
+	fixture.cost = "27.00"
 	// A stale task must not disable a user's newer approval.
 	svc.pauseAutoRenewalQuote(ctx, h, "price_changed", "31.77", "30.00", "outdated")
 	tx.Where("instance_id=?", h.ID).Take(&setting)
@@ -316,24 +343,45 @@ func TestAutoRenewalQuotePauseMySQL(t *testing.T) {
 	if count != 1 {
 		t.Fatal("auto price alert was duplicated")
 	}
+	var queued int64
+	if err := tx.Model(&notification.Outbox{}).Where("event_key LIKE ?", fmt.Sprintf("%d:renewal_quote:%d:%%", h.CustomerID, h.ID)).Count(&queued).Error; err != nil || queued != 2 {
+		t.Fatalf("expected two durable distinct alerts, got %d: %v", queued, err)
+	}
 	if svc.AutoRenewalWarning(ctx, h.CustomerID, h.ID) == "" {
 		t.Fatal("paused reason invisible")
 	}
 	t.Log("legacy auto approval paused; explicit fresh approval accepted; changed price pauses without debit; stale worker rejected; alert deduplicated")
 }
 
-func TestRenewalQuoteRuntimePrivilegesMySQL(t *testing.T){
- db:=testenv.MySQL(t);pool,e:=db.DB();if e!=nil{t.Fatal(e)};ctx:=context.Background()
- // Only an explicitly isolated --skip-networking fixture is accepted by testenv.
- if _,e:=pool.Exec("CREATE USER IF NOT EXISTS 'ddyidc_runtime'@'127.0.0.1'");e!=nil{t.Fatal(e)}
- if e:=ApplyRuntimePrivileges(ctx,pool,"wrong_identity","127.0.0.1");e==nil{t.Fatal("unexpected runtime identity accepted")}
- if e:=ApplyRuntimePrivileges(ctx,pool,"ddyidc_runtime","127.0.0.1");e!=nil{t.Fatal(e)}
- for _,table:=range []string{"instance_renewal_quote_evidence","instance_renewal_payment_quotes","instance_renewal_quote_alerts"}{
-  var count int64
-  if e:=db.Raw("SELECT COUNT(*) FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME=? AND PRIVILEGE_TYPE IN ('SELECT','INSERT')","'ddyidc_runtime'@'127.0.0.1'",table).Scan(&count).Error;e!=nil||count!=2{t.Fatal("required read/append grant missing",table,e,count)}
-  if e:=db.Raw("SELECT COUNT(*) FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME=? AND PRIVILEGE_TYPE IN ('UPDATE','DELETE','ALTER','DROP')","'ddyidc_runtime'@'127.0.0.1'",table).Scan(&count).Error;e!=nil||count!=0{t.Fatal("immutable proof grant too broad",table,e,count)}
- }
- var columns int64
- if e:=db.Raw("SELECT COUNT(*) FROM information_schema.COLUMN_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME='instance_renewal_auto_quotes' AND PRIVILEGE_TYPE='UPDATE'","'ddyidc_runtime'@'127.0.0.1'").Scan(&columns).Error;e!=nil||columns!=6{t.Fatal("auto approval column grant mismatch",e,columns)}
- t.Log("runtime can read/append evidence; cannot update/delete proof; auto approval update limited to six columns; wrong identity refused")
+func TestRenewalQuoteRuntimePrivilegesMySQL(t *testing.T) {
+	db := testenv.MySQL(t)
+	pool, e := db.DB()
+	if e != nil {
+		t.Fatal(e)
+	}
+	ctx := context.Background()
+	// Only an explicitly isolated --skip-networking fixture is accepted by testenv.
+	if _, e := pool.Exec("CREATE USER IF NOT EXISTS 'ddyidc_runtime'@'127.0.0.1'"); e != nil {
+		t.Fatal(e)
+	}
+	if e := ApplyRuntimePrivileges(ctx, pool, "wrong_identity", "127.0.0.1"); e == nil {
+		t.Fatal("unexpected runtime identity accepted")
+	}
+	if e := ApplyRuntimePrivileges(ctx, pool, "ddyidc_runtime", "127.0.0.1"); e != nil {
+		t.Fatal(e)
+	}
+	for _, table := range []string{"instance_renewal_quote_evidence", "instance_renewal_payment_quotes", "instance_renewal_quote_alerts"} {
+		var count int64
+		if e := db.Raw("SELECT COUNT(*) FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME=? AND PRIVILEGE_TYPE IN ('SELECT','INSERT')", "'ddyidc_runtime'@'127.0.0.1'", table).Scan(&count).Error; e != nil || count != 2 {
+			t.Fatal("required read/append grant missing", table, e, count)
+		}
+		if e := db.Raw("SELECT COUNT(*) FROM information_schema.TABLE_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME=? AND PRIVILEGE_TYPE IN ('UPDATE','DELETE','ALTER','DROP')", "'ddyidc_runtime'@'127.0.0.1'", table).Scan(&count).Error; e != nil || count != 0 {
+			t.Fatal("immutable proof grant too broad", table, e, count)
+		}
+	}
+	var columns int64
+	if e := db.Raw("SELECT COUNT(*) FROM information_schema.COLUMN_PRIVILEGES WHERE GRANTEE=? AND TABLE_SCHEMA='instance' AND TABLE_NAME='instance_renewal_auto_quotes' AND PRIVILEGE_TYPE='UPDATE'", "'ddyidc_runtime'@'127.0.0.1'").Scan(&columns).Error; e != nil || columns != 6 {
+		t.Fatal("auto approval column grant mismatch", e, columns)
+	}
+	t.Log("runtime can read/append evidence; cannot update/delete proof; auto approval update limited to six columns; wrong identity refused")
 }

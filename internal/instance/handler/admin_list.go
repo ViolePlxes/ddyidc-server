@@ -225,7 +225,8 @@ func (h *handler) adminInstanceRemark(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) adminRenewalQuoteAudit(w http.ResponseWriter, r *http.Request) {
-	access,ok:=h.globalAccess(w,r);if !ok {
+	access, ok := h.globalAccess(w, r)
+	if !ok {
 		return
 	}
 	page := 1
@@ -237,7 +238,7 @@ func (h *handler) adminRenewalQuoteAudit(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	result, e := h.service.AuditRenewalQuotes(r.Context(),access, page)
+	result, e := h.service.AuditRenewalQuotes(r.Context(), access, page)
 	if e != nil {
 		writeError(w, 503, "续费核查暂不可用")
 		return

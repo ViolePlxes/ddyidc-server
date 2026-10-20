@@ -101,6 +101,10 @@ func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID in
 	}
 	rate := selected.ExchangeRate
 	b := renewalBinding(*h)
+	ttl, ttlErr := s.renewalQuoteLifetime(ctx)
+	if ttlErr != nil {
+		return ctx, renewalquote.Unverified()
+	}
 	evidence := renewalquote.Evidence{ID: snowflake.GenID(), RenewalID: r.ID, OrderID: orderID, CustomerID: customer, InstanceID: h.ID, OwnershipVersion: h.OwnershipVersion, BaseExpiry: r.BaseExpiry, SupplierID: r.SupplierID, RemoteHostID: r.HostID, ProductID: h.ProductID, ConfigFingerprint: b.ConfigHash(), Cycle: r.Cycle, Duration: r.Duration, Currency: "CNY", RetailAmount: selected.Amount, ProcurementAmount: selected.Cost.String(), ExchangeRate: rate, SourceKind: "upstream_original", SourceVersion: renewalquote.RuleVersion}
 	if !evidence.Matches(b) {
 		return ctx, renewalquote.Unverified()
@@ -139,7 +143,7 @@ func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID in
 		evidence.Revision = revision + 1
 		now := time.Now()
 		evidence.QuotedAt = now
-		evidence.ExpiresAt = now.Add(renewalquote.Lifetime)
+		evidence.ExpiresAt = now.Add(ttl)
 		evidence.ConfirmedAt = now
 		evidence.CreatedAt = now
 		raw, _ := json.Marshal(evidence)

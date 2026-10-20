@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	dom "ddyidc/internal/instance/domain"
+	"ddyidc/internal/notification"
 	"ddyidc/internal/shared/snowflake"
 	"fmt"
 	"gorm.io/gorm"
@@ -28,7 +29,7 @@ type RenewalQuoteAlert struct {
 
 func (RenewalQuoteAlert) TableName() string { return "instance.instance_renewal_quote_alerts" }
 func (s *Service) approveAutoRenewalTx(tx *gorm.DB, h dom.Host, quote RenewalOption) error {
-	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.AssignmentColumns([]string{"customer_id", "ownership_version", "quote_revision", "amount", "cycle", "updated_at"})}).Create(&AutoRenewalQuote{InstanceID: h.ID, CustomerID: h.CustomerID, OwnershipVersion: h.OwnershipVersion, QuoteRevision: autoRenewalApprovalRevision(h,quote), Amount: quote.Amount, Cycle: quote.Cycle, UpdatedAt: time.Now()}).Error
+	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.AssignmentColumns([]string{"customer_id", "ownership_version", "quote_revision", "amount", "cycle", "updated_at"})}).Create(&AutoRenewalQuote{InstanceID: h.ID, CustomerID: h.CustomerID, OwnershipVersion: h.OwnershipVersion, QuoteRevision: autoRenewalApprovalRevision(h, quote), Amount: quote.Amount, Cycle: quote.Cycle, UpdatedAt: time.Now()}).Error
 }
 func (s *Service) autoRenewalQuoteAllowed(ctx context.Context, h dom.Host, cycle string) bool {
 	var approval AutoRenewalQuote
@@ -45,11 +46,14 @@ func (s *Service) autoRenewalQuoteAllowed(ctx context.Context, h dom.Host, cycle
 	}
 	for _, q := range options {
 		if q.Cycle == cycle {
-			if approval.Cycle == cycle && approval.QuoteRevision == autoRenewalApprovalRevision(h,q) {
+			if approval.Cycle == cycle && approval.QuoteRevision == autoRenewalApprovalRevision(h, q) {
 				return true
 			}
-			reason:="quote_changed";if approval.Amount!=q.Amount{reason="price_changed"}
- s.pauseAutoRenewalQuote(ctx, h, reason, approval.Amount, q.Amount, approval.QuoteRevision)
+			reason := "quote_changed"
+			if approval.Amount != q.Amount {
+				reason = "price_changed"
+			}
+			s.pauseAutoRenewalQuote(ctx, h, reason, approval.Amount, q.Amount, approval.QuoteRevision)
 			return false
 		}
 	}
@@ -57,7 +61,7 @@ func (s *Service) autoRenewalQuoteAllowed(ctx context.Context, h dom.Host, cycle
 	return false
 }
 func (s *Service) pauseAutoRenewalQuote(ctx context.Context, h dom.Host, reason, oldAmount, newAmount, expectedRevision string) {
-	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s:%s", h.OwnershipVersion, reason, oldAmount, newAmount,expectedRevision))))
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s:%s:%s", h.OwnershipVersion, reason, oldAmount, newAmount, expectedRevision))))
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Match owner/version atomically; never disable the new owner's preferences.
 		var current dom.Host
@@ -86,8 +90,16 @@ func (s *Service) pauseAutoRenewalQuote(ctx context.Context, h dom.Host, reason,
 			return e
 		}
 		alert := RenewalQuoteAlert{ID: snowflake.GenID(), CustomerID: h.CustomerID, InstanceID: h.ID, Fingerprint: fingerprint, Reason: reason, OldAmount: oldAmount, NewAmount: newAmount, State: "pending", CreatedAt: time.Now()}
-		return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error
+		if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error; e != nil {
+			return e
+		}
+		content := "自动续费已暂停：续费价格或配置需要重新核验，请进入产品详情核对后重新开启。"
+		if reason == "price_changed" {
+			content = fmt.Sprintf("自动续费已暂停：原确认金额%s元，最新报价%s元。请核对后重新开启，系统不会自动按新价格扣款。", oldAmount, newAmount)
+		}
+		return notification.EnqueueRenewalPause(tx, notification.Event{Key: fmt.Sprintf("renewal_quote:%d:%s", h.ID, fingerprint), RecipientID: h.CustomerID, Type: "billing", Scene: "renewal_quote_paused", Title: "自动续费已暂停", Summary: content, Content: content, BusinessType: "instance", BusinessID: fmt.Sprint(h.ID), OwnershipVersion: h.OwnershipVersion})
 	})
+	notification.Wake()
 	// Failed persistence remains retryable by the existing bounded scheduler.
 	if err != nil {
 		return
@@ -110,7 +122,8 @@ func (s *Service) AutoRenewalWarning(ctx context.Context, user, id int64) string
 
 // Supplier cost/discount changes do not change the customer's approved retail.
 // Procurement independently verifies the actual cost when creating/paying an order.
-func autoRenewalApprovalRevision(h dom.Host,q RenewalOption)string{
- q.Cost=0;q.ExchangeRate=""
- return renewalIntentRevision(h,q)
+func autoRenewalApprovalRevision(h dom.Host, q RenewalOption) string {
+	q.Cost = 0
+	q.ExchangeRate = ""
+	return renewalIntentRevision(h, q)
 }

@@ -78,6 +78,10 @@ def main():
                 privileges = "SELECT,INSERT,UPDATE(status,attempts,last_error_code,updated_at)"
             elif name in ("system.notification_user_states", "system.notification_outbox", "system.notification_preferences", "system.notification_ticket_reads"):
                 privileges = "SELECT,INSERT,UPDATE"
+            elif name in ("instance.instance_renewal_quote_evidence", "instance.instance_renewal_payment_quotes", "instance.instance_renewal_quote_alerts"):
+                privileges = "SELECT,INSERT"
+            elif name == "instance.instance_renewal_auto_quotes":
+                privileges = "SELECT,INSERT,UPDATE(customer_id,ownership_version,quote_revision,amount,cycle,updated_at)"
             elif name == "billing.accounts":
                 privileges = "SELECT,INSERT,UPDATE(balance,frozen_balance,total_recharge,total_consume,total_refund,total_withdraw,version,updated_at)"
             elif name == "system.id_sequences":

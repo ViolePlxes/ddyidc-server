@@ -36,6 +36,8 @@ type ProviderResolver interface {
 }
 
 type Service struct {
+	quoteReads *renewalQuoteReads
+
 	renewalReplacementCancel func(context.Context, *gorm.DB, int64, int64) error
 
 	repo      repo.Repository
@@ -45,7 +47,7 @@ type Service struct {
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
-	return &Service{repo: repository, providers: providers}
+	return &Service{repo: repository, providers: providers, quoteReads: &renewalQuoteReads{}}
 }
 
 func (s *Service) SetRemoteConsole(registry *remoteconsole.Registry) { s.remote = registry }

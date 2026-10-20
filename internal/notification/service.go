@@ -213,6 +213,19 @@ func (s *Service) step(ctx context.Context) (bool, error) {
 		if err = json.Unmarshal([]byte(row.Payload), &e); err != nil {
 			return err
 		} // delivery is in this same transaction
+		if e.Scene == "renewal_quote_paused" {
+			var host struct {
+				CustomerID       int64
+				OwnershipVersion int64
+			}
+			err := tx.Table("instance.instances").Select("customer_id,ownership_version").Where("id=? AND deleted_at IS NULL", e.BusinessID).Take(&host).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && (host.CustomerID != e.RecipientID || host.OwnershipVersion != e.OwnershipVersion)) {
+				return tx.Model(&row).Update("status", "skipped").Error
+			}
+			if err != nil {
+				return err
+			}
+		}
 		if e.Scene == "expiry" {
 			var host struct {
 				CustomerID int64

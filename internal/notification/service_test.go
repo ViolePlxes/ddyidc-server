@@ -490,6 +490,60 @@ drainHints:
 	if count < 120 {
 		t.Fatal("retention removed inbox")
 	}
+
+	t.Run("durable renewal pause delivery", func(t *testing.T) {
+		must(db.Exec("ALTER TABLE instance.instances ADD ownership_version BIGINT NOT NULL DEFAULT 1").Error)
+		must(db.Table("system.system_configs").Where("`key`=?", "notification.inapp.enabled").Update("value", "false").Error)
+		event := Event{Key: "renewal_quote:701:proof", RecipientID: 401, Type: "billing", Scene: "renewal_quote_paused", Title: "自动续费已暂停", Summary: "价格变化请重新确认", Content: "价格变化请重新确认", BusinessType: "instance", BusinessID: "701", OwnershipVersion: 1}
+		rollback := db.Begin()
+		must(EnqueueRenewalPause(rollback, event))
+		must(rollback.Rollback().Error)
+		must(db.Model(&Outbox{}).Where("event_key=?", "401:"+event.Key).Count(&count).Error)
+		if count != 0 {
+			t.Fatal("rolled back alert escaped")
+		}
+		must(db.Transaction(func(tx *gorm.DB) error { return EnqueueRenewalPause(tx, event) }))
+		must(db.Transaction(func(tx *gorm.DB) error { return EnqueueRenewalPause(tx, event) }))
+		must(db.Model(&Outbox{}).Where("event_key=? AND status='pending'", "401:"+event.Key).Count(&count).Error)
+		if count != 1 {
+			t.Fatal("disabled warning lost or duplicated")
+		}
+		must(db.Table("system.system_configs").Where("`key`=?", "notification.inapp.enabled").Update("value", "true").Error)
+		drain := func() {
+			for n := 0; n < 100; n++ {
+				worked, e := svc.step(ctx)
+				must(e)
+				if !worked {
+					return
+				}
+			}
+			t.Fatal("outbox failed to drain")
+		}
+		drain()
+		must(db.Model(&Message{}).Where("recipient_id=? AND source_event_key=?", 401, event.Key).Count(&count).Error)
+		if count != 1 {
+			t.Fatal("warning not delivered exactly once")
+		}
+		hints, stop, e := svc.Hub.Subscribe(401)
+		must(e)
+		defer stop()
+		must(svc.flush(ctx))
+		select {
+		case <-hints:
+		default:
+			t.Fatal("live notification missing")
+		}
+		next := event
+		next.Key = "renewal_quote:701:transferred"
+		must(db.Transaction(func(tx *gorm.DB) error { return EnqueueRenewalPause(tx, next) }))
+		must(db.Table("instance.instances").Where("id=?", 701).Updates(map[string]any{"customer_id": 402, "ownership_version": 2}).Error)
+		drain()
+		must(db.Model(&Outbox{}).Where("event_key=? AND status='skipped'", "401:"+next.Key).Count(&count).Error)
+		if count != 1 {
+			t.Fatal("transferred instance alert exposed")
+		}
+		t.Log("disabled alert retained; rollback atomic; duplicate deduped; inbox delivered; live hint published; transferred owner fenced")
+	})
 	t.Log("migration replay, 100 concurrent duplicate sends, snapshot read-all, foreign ownership, idempotent read/delete, rollback, event-key conflicts, paginated replay and slow commits verified")
 }
 

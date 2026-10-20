@@ -153,14 +153,14 @@ func (h *handler) autoRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Enabled *bool `json:"enabled"`
- QuoteRevision string `json:"quoteRevision"`
+		Enabled       *bool  `json:"enabled"`
+		QuoteRevision string `json:"quoteRevision"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil || in.Enabled == nil {
 		writeError(w, 400, "缺少开关状态")
 		return
 	}
-	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled,in.QuoteRevision); e != nil {
+	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled, in.QuoteRevision); e != nil {
 		writeServiceError(w, e)
 		return
 	}

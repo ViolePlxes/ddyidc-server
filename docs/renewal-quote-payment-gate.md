@@ -1,6 +1,6 @@
 # Renewal original-price payment gate
 
-Status: local candidate, not released. This change does not alter paid orders, balances or supplier machines. Message-center realtime delivery is a separate unmerged dependency; no claim of delivered alerts is made.
+Status: local candidate, not released. This change does not alter paid orders, balances or supplier machines. The local integration branch includes the previously developed message center; production remains unchanged.
 
 ## Payment and price contract
 
@@ -22,11 +22,11 @@ An unpaid wrong-price order is not silently overwritten. Without confirmed conse
 
 ## Auto renewal
 
-An explicitly approved quote is stored per instance and ownership version. The maintenance job compares current price/cycle/binding before creating or paying; missing legacy approval or changed pricing pauses auto renewal without a debit. A stale job cannot override a newer approval. Reasons persist as deduplicated pending alerts and appear in instance details. Realtime inbox/Toast delivery is NOT wired in this candidate because the message-center branch is not in this main baseline; pending alerts must not be labelled sent. Do not publish the complete task as finished until that dependency is integrated and verified.
+An explicitly approved quote is stored per instance and ownership version. The maintenance job compares current price/cycle/binding before creating or paying; missing legacy approval or changed pricing pauses auto renewal without a debit. A stale job cannot override a newer approval. Reasons persist as deduplicated pending alerts and appear in instance details. The same transaction enqueues a durable billing warning through the message module. Its publisher sends an SSE change hint and the client uses the existing Kumo Toast. Critical warnings remain pending while delivery is disabled; duplicate event keys are idempotent. Delivery checks the instance owner and ownership version again. The instance alert remains an audit fact, not proof of inbox delivery or human receipt.
 
 ## Schema and rollout
 
-New immutable migration `053_renewal_quote_evidence.sql`, registered in `tools/architecture/schema-checksums.json`, adds four instance-owned tables: quote evidence, checkout references, auto-quote approvals, pending alerts. No existing money columns are rewritten. The existing offline socket migration grants read/append only for immutable proofs and alerts; auto approval updates are restricted to its six mutable columns. Runtime receives no DDL or proof rewrite/delete rights. Numbers050–052 are reserved for the separately developed message-center migration.
+New immutable migration `053_renewal_quote_evidence.sql`, registered in `tools/architecture/schema-checksums.json`, adds four instance-owned tables: quote evidence, checkout references, auto-quote approvals, pending alerts. No existing money columns are rewritten. The existing offline socket migration grants read/append only for immutable proofs and alerts; auto approval updates are restricted to its six mutable columns. Runtime receives no DDL or proof rewrite/delete rights. Migrations050–052 belong to the integrated message center.
 
 Ship backend and frontend together: old clients lacking quote revisions are rejected and must refresh. Use the existing official offline migration and online updater; do not manually update financial rows. Rolling back to a version without the payment gate is unsafe for legacy wrong-price orders. Existing channel receipts can still arrive and must be recorded/reviewed even when a payment is blocked.
 
@@ -35,3 +35,26 @@ Ship backend and frontend together: old clients lacking quote revisions are reje
 Use `deploy/linux/tests/test_renewal_quote_gate.sh` against a dedicated disposable MySQL socket. It applies official migrations and runs real transaction tests, explicit price/cost fixtures, coupon-net validation, permission scope, expiry/rate/ownership races, duplicate callbacks, paid legacy fulfillment rejection, safe replacement and auto-renew consent. The finance recovery CI job includes these cases. Browser evidence uses the real frontend component with isolated in-memory responses; it cannot pay and is not presented as live supplier fulfillment.
 
 Detailed dated reports remain in deploy-notes and the Obsidian development map. No private customer identifiers or credentials belong in repository docs.
+
+## Admin inventory and concurrent reads
+
+The admin product navigation links to `/instances/renewal-quote-audit`. It shows the stored evidence source, verification and expiration times, local snapshot and review hint, with manual refresh and twenty-row pagination. These are historical observations, never payment authorization.
+
+Overlapping renewal-option reads share work only within one customer and instance. The leader remains inside the admitted HTTP request; no detached financial goroutine is added. A cancelled waiter does not cancel the leader. Surviving waiters can retry when a cancelled leader exits. No completed quote is cached, and the actual payment transaction still validates its immutable binding.
+
+Evidence validity defaults to five minutes. The existing system configuration key `instance.renewal.quote_ttl_seconds` accepts integer seconds30–900; an invalid explicit value blocks payment instead of silently extending validity. It is an operational setting, with no new client cache or polling. The original channel shutdown remains conservatively manual whenever any channel payment exists. Actual supplier fulfillment and historical compensation are outside local fixture verification.
+
+## Route coverage
+
+| Entry | Gate |
+|---|---|
+| GET `/api/v1/instance/:instanceId/renewal-options` and admin customer-instance equivalent | Explicit current original, quote revision |
+| POST same base `/renewals` | Current revision, safe prior-order reuse/replacement |
+| POST same base `/renewals/pay` | Live preflight and transaction evidence before BalanceService.Change |
+| PUT same base `/auto-renew` | Explicit enable consent; scheduler rechecks before order/debit |
+| POST `/api/v1/orders/:id/pay` with balance | Order service delegates renewal payments to the same instance gate |
+| POST `/api/v1/orders/:id/pay` with channel, or `/api/v1/payment/order/:orderId/create` | Payment service preflight, repository transaction check and exact checkout binding |
+| POST `/api/v1/payment/notify/wechat` and `/notify/alipay` | Real signed receipt preserved; incompatible proof enters received_review |
+| Renewal durable task and reconciliation | Existing invoice/unknown fences retained; no unaudited legacy execution |
+
+The admin customer-instance equivalent base is `/admin/v1/customers/:customerId/instances/:instanceId`. Source routes are `internal/instance/handler/management.go`, `internal/order/handler/handler.go` and `internal/payment/handler/handler.go`. There is no newly added bypass or admin forced-price payment endpoint.

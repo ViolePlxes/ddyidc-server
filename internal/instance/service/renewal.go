@@ -120,6 +120,9 @@ func retailRenewal(cost balance.Money, rate, profit string, kind int) (balance.M
 	return balance.Money(whole.Int64()), nil
 }
 func (s *Service) RenewalOptions(ctx context.Context, customer, id int64) ([]RenewalOption, error) {
+	return s.joinRenewalQuoteRead(ctx, fmt.Sprintf("%d:%d", customer, id), func(shared context.Context) ([]RenewalOption, error) { return s.renewalOptions(shared, customer, id) })
+}
+func (s *Service) renewalOptions(ctx context.Context, customer, id int64) ([]RenewalOption, error) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	h, e := s.owned(ctx, customer, id)
@@ -405,7 +408,7 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	}
 	return nil
 }
-func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool,expectedRevision ...string) error {
+func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool, expectedRevision ...string) error {
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return e
@@ -426,7 +429,9 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 		if approved == nil {
 			return renewalquote.Unverified()
 		}
-        if len(expectedRevision)!=1||expectedRevision[0]==""||expectedRevision[0]!=approved.QuoteRevision{return &renewalquote.Error{Code:"RENEWAL_QUOTE_EXPIRED"}}
+		if len(expectedRevision) != 1 || expectedRevision[0] == "" || expectedRevision[0] != approved.QuoteRevision {
+			return &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
+		}
 
 		if h.ExpiresAt == nil {
 			return errors.New("缺少到期时间")

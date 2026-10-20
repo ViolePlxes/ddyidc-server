@@ -139,7 +139,7 @@ func (p *Provider) renewalOriginalProduct(id int) (*contracts.UpstreamProductDet
 			Product financeProduct `json:"product"`
 		} `json:"data"`
 	}
-	if json.Unmarshal(body, &response) != nil || response.Status != 200 || response.Data.Product.ID!=id {
+	if json.Unmarshal(body, &response) != nil || response.Status != 200 || response.Data.Product.ID != id {
 		return nil, fmt.Errorf("完整商品原价未确认")
 	}
 	return response.Data.Product.toContract(id), nil
