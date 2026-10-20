@@ -64,3 +64,12 @@ The admin customer-instance equivalent base is `/admin/v1/customers/:customerId/
 The ordinary renewal/payment flow is restored. InstanceRenewal fetches a current revision internally and shows only the actual order amount. CorrectUnpaidRenewalPriceTx is the order module owner API; instance rows and price evidence remain instance-owned. Existing paid orders, payment attempts, supplier invoice/unknown states and malformed discount records are not repriced. Price correction appends system audit amounts in yuan, without any balance write. Payment checkout responses now include amount (yuan string), so QR/checkout labels use the gateway's actual amount rather than a stale page prop. Source: internal/order/service/renewal_price_correction.go, internal/instance/service/renewal_price_correction.go, payment/types and frontendPaymentDialog.
 
 TestRenewalQuoteCorrectionMySQL exercises same-order31.77→30 correction, idempotent audit, exact30 gateway amount, refusal after a checkout exists, and preserving a one-yuan coupon without hook/ledger movements. This supersedes the earlier extra confirmation UX, not the receipt/locking protections.
+
+## Evidence timestamp precision
+
+Evidence.Stamp truncates verification timestamps to the schema's DATETIME(3)
+precision before fingerprinting and persistence. Otherwise MySQL can round a
+nanosecond timestamp upward, and a fast transaction can read a newly verified
+quote as being in the future. Strict future/expiry checks remain unchanged;
+normalization never extends the configured validity period. The precision
+boundary unit test and the real-MySQL financial regression cover this case.

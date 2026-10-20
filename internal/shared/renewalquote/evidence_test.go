@@ -5,6 +5,25 @@ import (
 	"time"
 )
 
+func TestEvidenceValidityAfterMillisecondStorage(t *testing.T) {
+	now := time.Date(2026, 10, 20, 12, 0, 0, 999999, time.UTC)
+	e := Evidence{ID: 1, Revision: 1, Currency: "CNY", SourceVersion: RuleVersion, Fingerprint: "proof"}
+	e.Stamp(now, Lifetime)
+	// DATETIME(3) rounds fractional values on ordinary MySQL installations.
+	e.QuotedAt = e.QuotedAt.Round(time.Millisecond)
+	e.ExpiresAt = e.ExpiresAt.Round(time.Millisecond)
+	if !e.Valid(now) {
+		t.Fatal("storage precision rejected an immediately verified quote")
+	}
+	if e.ExpiresAt.After(now.Add(Lifetime)) || e.Valid(e.ExpiresAt) {
+		t.Fatal("storage normalization extended quote validity")
+	}
+	e.QuotedAt = now.Add(time.Second)
+	if e.Valid(now) {
+		t.Fatal("a genuinely future quote was accepted")
+	}
+}
+
 func TestEvidenceBindingAndValidity(t *testing.T) {
 	supplier := int64(9)
 	now := time.Now()

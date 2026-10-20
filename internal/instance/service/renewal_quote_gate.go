@@ -150,11 +150,7 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 			return e
 		}
 		evidence.Revision = revision + 1
-		now := time.Now()
-		evidence.QuotedAt = now
-		evidence.ExpiresAt = now.Add(ttl)
-		evidence.ConfirmedAt = now
-		evidence.CreatedAt = now
+		evidence.Stamp(time.Now(), ttl)
 		raw, _ := json.Marshal(evidence)
 		evidence.Fingerprint = fmt.Sprintf("%x", sha256.Sum256(raw))
 		if e := tx.Create(&evidence).Error; e != nil {

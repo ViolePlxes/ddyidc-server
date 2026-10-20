@@ -70,6 +70,14 @@ type Evidence struct {
 
 func (Evidence) TableName() string { return "instance.instance_renewal_quote_evidence" }
 
+// Stamp uses the DATETIME(3) storage precision before hashing or validating.
+// Letting MySQL round nanoseconds can put a freshly read quote in the future.
+func (e *Evidence) Stamp(now time.Time, ttl time.Duration) {
+	now = now.Truncate(time.Millisecond)
+	e.QuotedAt, e.ConfirmedAt, e.CreatedAt = now, now, now
+	e.ExpiresAt = now.Add(ttl)
+}
+
 type Binding struct {
 	ID                 int64
 	CustomerID         int64
