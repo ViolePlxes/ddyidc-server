@@ -21,6 +21,7 @@ import (
 func (h *handler) adminListRoutes() []rest.Route {
 	return []rest.Route{
 		{Method: http.MethodGet, Path: "/admin/v1/instances", Handler: h.adminInstances},
+		{Method: http.MethodGet, Path: "/admin/v1/instances/renewal-quote-audit", Handler: h.adminRenewalQuoteAudit},
 		{Method: http.MethodGet, Path: "/admin/v1/instances/filter-options", Handler: h.adminInstanceOptions},
 		{Method: http.MethodGet, Path: "/admin/v1/instances/export", Handler: h.adminInstanceExport},
 		{Method: http.MethodPost, Path: "/admin/v1/instances/sync", Handler: h.adminInstanceSync},
@@ -221,4 +222,25 @@ func (h *handler) adminInstanceRemark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"saved": true})
+}
+
+func (h *handler) adminRenewalQuoteAudit(w http.ResponseWriter, r *http.Request) {
+	access,ok:=h.globalAccess(w,r);if !ok {
+		return
+	}
+	page := 1
+	if raw := r.URL.Query().Get("page"); raw != "" {
+		var e error
+		page, e = strconv.Atoi(raw)
+		if e != nil {
+			writeError(w, 400, "分页参数无效")
+			return
+		}
+	}
+	result, e := h.service.AuditRenewalQuotes(r.Context(),access, page)
+	if e != nil {
+		writeError(w, 503, "续费核查暂不可用")
+		return
+	}
+	writeJSON(w, result)
 }

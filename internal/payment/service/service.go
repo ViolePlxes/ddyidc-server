@@ -105,6 +105,8 @@ func (s *Service) CreateMarketplace(ctx context.Context, customerID, orderID int
 }
 
 type Service struct {
+	renewalPreflight func(context.Context, int64, int64) (context.Context, error)
+
 	renewalRecovery        func(context.Context, int64, int64, string, string) error
 	remoteDeliveryRecovery func(context.Context, int64, int64, string, string, string) error
 	repo                   rep.Repository
@@ -112,6 +114,10 @@ type Service struct {
 	channels               map[string]Channel
 	dispatcher             Dispatcher
 	now                    func() time.Time
+}
+
+func (s *Service) SetRenewalPreflight(fn func(context.Context, int64, int64) (context.Context, error)) {
+	s.renewalPreflight = fn
 }
 
 func (s *Service) SetRenewalRecovery(fn func(context.Context, int64, int64, string, string) error) {
@@ -159,6 +165,14 @@ func BuildChannels(ctx context.Context, config Config) (map[string]Channel, erro
 }
 
 func (s *Service) CreateOrder(ctx context.Context, customerID, orderID int64, channelName, mode string) (*types.CheckoutResponse, error) {
+	if s.renewalPreflight != nil {
+		var e error
+		ctx, e = s.renewalPreflight(ctx, customerID, orderID)
+		if e != nil {
+			return nil, e
+		}
+	}
+
 	channelName, channel, err := s.channel(channelName)
 	if err != nil {
 		return nil, err

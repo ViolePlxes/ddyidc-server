@@ -36,6 +36,8 @@ type ProviderResolver interface {
 }
 
 type Service struct {
+	renewalReplacementCancel func(context.Context, *gorm.DB, int64, int64) error
+
 	repo      repo.Repository
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
@@ -112,6 +114,7 @@ type DetailView struct {
 	InvoiceID          string                         `json:"invoiceId,omitempty"`
 	FirstPayment       string                         `json:"firstPayment,omitempty"`
 	RenewalAmount      string                         `json:"renewalAmount,omitempty"`
+	AutoRenewWarning   string                         `json:"autoRenewWarning,omitempty"`
 	AutoRenew          bool                           `json:"autoRenew"`
 	ID                 string                         `json:"id"`
 	Name               string                         `json:"name"`
@@ -382,6 +385,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		var settings RenewalSettings
 		s.db.WithContext(ctx).Where("instance_id=? AND customer_id=?", host.ID, customerID).Take(&settings)
 		result.AutoRenew = settings.Enabled
+		result.AutoRenewWarning = s.AutoRenewalWarning(ctx, customerID, host.ID)
 	}
 	result.Capabilities = detail.Capabilities
 	result.IPs = detail.IPs

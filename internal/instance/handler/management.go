@@ -98,12 +98,17 @@ func (h *handler) createRenewal(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Cycle string `json:"cycle"`
+		svc.RenewalIntent
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil || in.Cycle == "" {
 		writeError(w, 400, "请选择续费周期")
 		return
 	}
-	out, e := h.service.CreateRenewal(r.Context(), customer, id, in.Cycle)
+	if in.QuoteRevision == "" {
+		writeError(w, 409, "续费报价需要重新确认，请刷新后重试")
+		return
+	}
+	out, e := h.service.CreateRenewalIntent(r.Context(), customer, id, in.Cycle, in.RenewalIntent)
 	if e != nil {
 		writeServiceError(w, e)
 		return
@@ -149,12 +154,13 @@ func (h *handler) autoRenew(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Enabled *bool `json:"enabled"`
+ QuoteRevision string `json:"quoteRevision"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil || in.Enabled == nil {
 		writeError(w, 400, "缺少开关状态")
 		return
 	}
-	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled); e != nil {
+	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled,in.QuoteRevision); e != nil {
 		writeServiceError(w, e)
 		return
 	}

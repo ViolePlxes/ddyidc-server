@@ -33,7 +33,7 @@ go test -race -v ./internal/order/service -run '^TestZeroPayableMySQL$' -count=1
 go test -race -v ./internal/order/service -run '^TestDeliveryUnitsMySQL$' -count=1
 go test -race -v ./internal/order/inventory -run '^TestStockReservationsMySQL$' -count=1
 
-go test -race -v ./internal/instance/service -run '^TestRenewalQueueMySQL$' -count=1
+go test -race -v ./internal/instance/service -run '^(TestRenewalQueueMySQL|TestRenewalQuoteGateMySQL|TestRenewalQuoteReplacementMySQL|TestAutoRenewalQuotePauseMySQL|TestRenewalQuoteRuntimePrivilegesMySQL)$' -count=1
 
 go test -race -v ./internal/instance/service -run '^TestWebhookIsolationMySQL$' -count=1
 go test -race -v ./internal/shared/workgate -run '^TestTwoPoolsDrainBeforePauseMySQL$' -count=1

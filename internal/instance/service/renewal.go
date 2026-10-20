@@ -6,6 +6,7 @@ import (
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
+	"ddyidc/internal/shared/renewalquote"
 	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/tasks"
@@ -76,6 +77,10 @@ func (s *Service) EnsureManagementSchema(ctx context.Context) error {
 }
 
 type RenewalOption struct {
+	ExchangeRate string `json:"-"`
+
+	QuoteRevision string `json:"quoteRevision"`
+
 	Cycle    string        `json:"cycle"`
 	Label    string        `json:"label"`
 	Amount   string        `json:"amount"`
@@ -162,11 +167,22 @@ func (s *Service) RenewalOptions(ctx context.Context, customer, id int64) ([]Ren
 		if e != nil {
 			return nil, e
 		}
-		out = append(out, RenewalOption{Cycle: q.Cycle, Label: q.Label, Amount: amount.String(), Cost: cost, Duration: q.Duration})
+		option := RenewalOption{ExchangeRate: price.Rate, Cycle: q.Cycle, Label: q.Label, Amount: amount.String(), Cost: cost, Duration: q.Duration}
+		option.QuoteRevision = renewalIntentRevision(*h, option)
+		out = append(out, option)
 	}
 	return out, nil
 }
+
+type RenewalIntent struct {
+	QuoteRevision  string `json:"quoteRevision"`
+	ReplaceOrderID string `json:"replaceOrderId,omitempty"`
+}
+
 func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle string) (*RenewalOrder, error) {
+	return s.CreateRenewalIntent(ctx, customer, id, cycle, RenewalIntent{})
+}
+func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, cycle string, intent RenewalIntent) (*RenewalOrder, error) {
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return nil, e
@@ -195,6 +211,10 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 	if selected == nil {
 		return nil, errors.New("请选择有效续费周期")
 	}
+	if intent.QuoteRevision != "" && intent.QuoteRevision != selected.QuoteRevision {
+		return nil, &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
+	}
+
 	p, _ := s.provider(h)
 	real, e := p.GetInstanceDetail(parseHostID(h.UpstreamInstanceID))
 	if e != nil || real == nil || real.ID != h.UpstreamInstanceID || real.ExpiresAt == nil {
@@ -206,7 +226,18 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 	expiry := *real.ExpiresAt
 	amount, _ := balance.ParseMoney(selected.Amount)
 	var result RenewalOrder
+	var priorOrder int64
+	if e = s.db.WithContext(ctx).Model(&Renewal{}).Where("instance_id=? AND state NOT IN ?", id, []string{"completed", "cancelled"}).Order("created_at DESC").Limit(1).Select("order_id").Scan(&priorOrder).Error; e != nil {
+		return nil, e
+	}
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// All payment and replacement paths lock order before renewal/instance.
+		if priorOrder > 0 {
+			var locked order.Order
+			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", priorOrder, customer).Take(&locked).Error; e != nil {
+				return e
+			}
+		}
 		var current dom.Host
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customer).Take(&current).Error; e != nil {
 			return ErrNotFound
@@ -240,13 +271,31 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 		var previous Renewal
 		err := tx.Where("instance_id=? AND state NOT IN ?", id, []string{"completed", "cancelled"}).Order("created_at DESC").Take(&previous).Error
 		if err == nil {
+			// A concurrent creator won the instance lock. Retry outside this tx;
+			// never acquire its order lock while holding an instance row lock.
+			if previous.OrderID != priorOrder {
+				return &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
+			}
 			var o order.Order
 			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", previous.OrderID).Take(&o).Error; e != nil {
 				return e
 			}
 			if o.Status != order.OrderStatusCancelled {
-				result = RenewalOrder{ID: strconv.FormatInt(previous.ID, 10), OrderID: strconv.FormatInt(o.ID, 10), OrderNo: o.OrderNo, Amount: previous.Amount.String(), State: previous.State}
-				return nil
+				if previous.OwnershipVersion != h.OwnershipVersion || previous.SupplierID != *h.UpstreamProviderID || previous.HostID != h.UpstreamInstanceID {
+					return renewalquote.Unverified()
+				}
+				mismatch := previous.Cycle != cycle || previous.Duration != selected.Duration || previous.Cost != selected.Cost || o.TotalAmount != int64(amount)
+				if o.Status == 1 && mismatch {
+					if intent.ReplaceOrderID != strconv.FormatInt(o.ID, 10) || intent.QuoteRevision != selected.QuoteRevision || previous.State != "unpaid" || previous.InvoiceID != "" || s.renewalReplacementCancel == nil {
+						return &renewalquote.Error{Code: "RENEWAL_PRICE_CHANGED", OldOrderID: strconv.FormatInt(o.ID, 10), OldAmount: balance.Money(o.TotalAmount).String(), NewAmount: selected.Amount}
+					}
+					if e := s.renewalReplacementCancel(ctx, tx, customer, o.ID); e != nil {
+						return e
+					}
+				} else {
+					result = RenewalOrder{ID: strconv.FormatInt(previous.ID, 10), OrderID: strconv.FormatInt(o.ID, 10), OrderNo: o.OrderNo, Amount: previous.Amount.String(), State: previous.State}
+					return nil
+				}
 			}
 			if e := tx.Model(&previous).Update("state", "cancelled").Error; e != nil {
 				return e
@@ -260,7 +309,7 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 		if e := tx.Create(&o).Error; e != nil {
 			return e
 		}
-		snapshot, _ := json.Marshal(map[string]any{"billingCycle": cycle, "instanceId": strconv.FormatInt(id, 10), "type": "instance_renewal"})
+		snapshot, _ := json.Marshal(map[string]any{"billingCycle": cycle, "instanceId": strconv.FormatInt(id, 10), "type": "instance_renewal", "replacesOrderId": intent.ReplaceOrderID})
 		item := order.OrderItem{OrderID: oid, ProductID: h.ProductID, ProductName: h.ProductName + "（续费）", ModuleType: "instance_renewal", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(amount), Subtotal: int64(amount), InstanceID: &id, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
 			return e
@@ -285,6 +334,17 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	if locked {
 		return ErrTradingLocked
 	}
+	var paid order.Order
+	if e = s.db.WithContext(ctx).Where("id=? AND customer_id=?", orderID, customer).Take(&paid).Error; e != nil {
+		return e
+	}
+	if paid.Status == 2 || paid.Status == 6 {
+		return nil
+	}
+	ctx, e = s.VerifyRenewalPayment(ctx, customer, orderID)
+	if e != nil {
+		return e
+	}
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var o order.Order
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", orderID, customer).Take(&o).Error; e != nil {
@@ -300,6 +360,10 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 		if o.Status != 1 || r.State != "unpaid" {
 			return errors.New("续费订单当前不可支付")
 		}
+		if e := renewalquote.CheckTx(ctx, tx, customer, orderID); e != nil {
+			return e
+		}
+
 		var h dom.Host
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=?", id, customer, r.OwnershipVersion, r.HostID).Take(&h).Error; e != nil {
 			return ErrForbidden
@@ -341,15 +405,29 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	}
 	return nil
 }
-func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool) error {
+func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool,expectedRevision ...string) error {
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return e
 	}
+	var approved *RenewalOption
 	if enabled {
-		if _, e = s.RenewalOptions(ctx, customer, id); e != nil {
-			return e
+		quotes, err := s.RenewalOptions(ctx, customer, id)
+		if err != nil {
+			return err
 		}
+		_, snap := parseSnapshot(h.ConfigSnapshot)
+		for i := range quotes {
+			if quotes[i].Cycle == snap.BillingCycle {
+				approved = &quotes[i]
+				break
+			}
+		}
+		if approved == nil {
+			return renewalquote.Unverified()
+		}
+        if len(expectedRevision)!=1||expectedRevision[0]==""||expectedRevision[0]!=approved.QuoteRevision{return &renewalquote.Error{Code:"RENEWAL_QUOTE_EXPIRED"}}
+
 		if h.ExpiresAt == nil {
 			return errors.New("缺少到期时间")
 		}
@@ -363,6 +441,15 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 		if enabled && current.Status == 6 {
 			return ErrUnsupported
 		}
+		if enabled {
+			if approved == nil || renewalIntentRevision(current, *approved) != approved.QuoteRevision {
+				return renewalquote.Unverified()
+			}
+			if e := s.approveAutoRenewalTx(tx, current, *approved); e != nil {
+				return e
+			}
+		}
+
 		if e := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.AssignmentColumns([]string{"customer_id", "enabled", "updated_at"})}).Create(&settings).Error; e != nil {
 			return e
 		}

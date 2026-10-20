@@ -605,6 +605,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	*cronStarts = append(*cronStarts, upstreamservice.Default.StartSupplierSnapshotScheduler)
 	instanceSvc.SetManagement(db.G)
 	orderSvc.SetRenewalBalancePayer(instanceSvc)
+	instanceSvc.SetRenewalReplacementCanceller(orderSvc.CancelRenewalReplacementTx)
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
 		panic("instance management schema failed: " + err.Error())
 	}
@@ -614,6 +615,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)
 	paymentSvc.SetRemoteDeliveryRecovery(orderSvc.ReconcileRemoteDelivery)
 	paymentSvc.SetRenewalRecovery(instanceSvc.ReconcileRenewal)
+	paymentSvc.SetRenewalPreflight(instanceSvc.VerifyRenewalPayment)
 	admintodo.RegisterProductWorkflows(server, db.G, jwt, paymentSvc)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)

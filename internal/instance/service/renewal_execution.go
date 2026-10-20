@@ -8,6 +8,7 @@ import (
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/distsync"
 	"ddyidc/internal/shared/pointsevents"
+	"ddyidc/internal/shared/renewalquote"
 	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
@@ -82,6 +83,16 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 		return true, errors.New("续费结果待核对，请勿重复付款")
 	}
 	if r.State == "unpaid" {
+		// A verified external receipt is retained by payment processing even when
+		// its old renewal price cannot be fulfilled. Never buy against old pricing.
+		var proof renewalquote.Evidence
+		if e := s.db.WithContext(ctx).Where("order_id=? AND renewal_id=?", orderID, r.ID).Order("revision DESC").Take(&proof).Error; e != nil {
+			return true, renewalquote.Unverified()
+		}
+		original, e := billing.ParseMoney(proof.RetailAmount)
+		if e != nil || int64(original) != o.TotalAmount || !proof.Matches(renewalBinding(*h)) || proof.SourceVersion != renewalquote.RuleVersion {
+			return true, renewalquote.Unverified()
+		}
 		// Only one process may create an upstream invoice, even after duplicate callbacks.
 		claim := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='unpaid'", r.ID).Updates(map[string]any{"state": "creating", "updated_at": time.Now()})
 		if claim.Error != nil {
@@ -94,7 +105,7 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 		valid := false
 		if e == nil {
 			for _, q := range quotes {
-				if q.Cycle == r.Cycle && q.Amount == r.Cost.String() && q.Duration == r.Duration {
+				if q.Cycle == r.Cycle && q.Amount == r.Cost.String() && q.Duration == r.Duration && renewalOriginalMatches(q.OriginalAmount, proof.ExchangeRate, proof.RetailAmount) {
 					valid = true
 				}
 			}
@@ -267,6 +278,10 @@ func (s *Service) renewalTick(ctx context.Context) {
 		}
 		_, snap := parseSnapshot(h.ConfigSnapshot)
 		if snap.BillingCycle == "" {
+			continue
+		}
+
+		if !s.autoRenewalQuoteAllowed(ctx, h, snap.BillingCycle) {
 			continue
 		}
 		o, e := s.CreateRenewal(ctx, h.CustomerID, h.ID, snap.BillingCycle)

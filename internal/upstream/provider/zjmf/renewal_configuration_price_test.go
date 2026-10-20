@@ -108,3 +108,42 @@ func TestRenewalRejectsUnverifiedConfigurableFixedPrice(t *testing.T) {
 		t.Fatal("base catalogue price used for configurable fixed contract")
 	}
 }
+
+func TestRenewalOriginalNeverInferredAcrossCycles(t *testing.T) {
+	for _, tc := range []struct{ name, retail, cost, quarterly, annual string }{
+		{"different-contract-discount", "30.00", "27.00", "76.50", "306.00"},
+		{"same-contract-discount", "79.00", "51.35", "154.05", "513.50"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/host/renewpage":
+					quarterly, annual := tc.quarterly, tc.annual
+					if r.URL.Query().Get("price_basis") == "standard" {
+						if tc.retail == "30.00" {
+							quarterly, annual = "90.00", "360.00"
+						} else {
+							quarterly, annual = "237.00", "790.00"
+						}
+					}
+					fmt.Fprintf(w, `{"status":200,"data":{"host":{"flag":1,"productid":1920,"billingcycle":"monthly"},"cycle":[{"billingcycle":"monthly","price":"20.00","amount":%q,"duration":2678400},{"billingcycle":"quarterly","amount":%q,"duration":7948800},{"billingcycle":"annually","amount":%q,"duration":31536000}]}}`, tc.cost, quarterly, annual)
+				case "/api/product/1920":
+					fmt.Fprintf(w, `{"status":200,"data":{"product":{"id":1920,"type":"dcimcloud","product_price":%q,"billingcycle":"monthly","configoptions":[]}}}`, tc.retail)
+				default:
+					t.Errorf("unexpected %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer srv.Close()
+			p := New(contracts.Supplier{URL: srv.URL, Username: "isolated", Token: "isolated"})
+			tokens.Lock()
+			tokens.values[p.tokenKey()] = cachedJWT{token: "isolated", expiresAt: time.Now().Add(time.Hour)}
+			tokens.Unlock()
+			defer p.clearToken()
+			quotes, e := p.RenewalQuotes(123)
+			if e != nil || len(quotes) != 3 || quotes[0].OriginalAmount != tc.retail || quotes[0].Amount != tc.cost {
+				t.Fatalf("quotes=%+v err=%v", quotes, e)
+			}
+		})
+	}
+}

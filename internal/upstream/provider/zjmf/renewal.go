@@ -4,6 +4,7 @@ import (
 	"ddyidc/internal/billing/balance"
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strconv"
@@ -63,7 +64,7 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 			if err != nil || pid <= 0 {
 				return nil, fmt.Errorf("供应商续费商品身份未确认")
 			}
-			detail, err := p.GetProductDetail(pid)
+			detail, err := p.renewalOriginalProduct(pid)
 			if err != nil || detail == nil || detail.ID != pid || detail.Cycle != cycle || detail.HasConfigOptions || detail.Type == "mf_cloud" || detail.Type == "mf_dcim" {
 				return nil, fmt.Errorf("固定合约完整续费原价未确认，请人工设置售价")
 			}
@@ -121,4 +122,25 @@ func (p *Provider) PayRenewalInvoice(invoice string) error {
 		return fmt.Errorf("续费支付结果待核对")
 	}
 	return requireUpstreamStatus(b, "renewal payment", 1001)
+}
+
+// Payment verification must not reuse the ten-minute catalogue display cache.
+func (p *Provider) renewalOriginalProduct(id int) (*contracts.UpstreamProductDetail, error) {
+	if err := p.enforceTestProductPolicy(id); err != nil {
+		return nil, err
+	}
+	body, err := p.authorizedGet(fmt.Sprintf("/api/product/%d?price_basis=standard", id))
+	if err != nil {
+		return nil, err
+	}
+	var response struct {
+		Status int `json:"status"`
+		Data   struct {
+			Product financeProduct `json:"product"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &response) != nil || response.Status != 200 || response.Data.Product.ID!=id {
+		return nil, fmt.Errorf("完整商品原价未确认")
+	}
+	return response.Data.Product.toContract(id), nil
 }

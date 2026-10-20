@@ -4,6 +4,7 @@ import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
 	orderstate "ddyidc/internal/order/repository"
+	"ddyidc/internal/shared/renewalquote"
 	"errors"
 	"fmt"
 	"time"
@@ -135,6 +136,14 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 		if row.Status != 1 || row.PayAmount <= 0 {
 			return ErrNotPayable
 		}
+		if err := renewalquote.CheckTx(ctx, tx, customerID, orderID); err != nil {
+			return err
+		}
+
+		deadline, err := renewalquote.PaymentDeadline(ctx, tx, expireAt)
+		if err != nil {
+			return err
+		}
 		orderIDCopy := row.ID
 		paymentNo := generatePaymentNo()
 		payment := &dom.Payment{
@@ -149,9 +158,13 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 			AmountFen:  row.PayAmount,
 			Currency:   "CNY",
 			Status:     dom.StatusPending,
-			ExpireAt:   expireAt,
+			ExpireAt:   deadline,
 		}
 		if err := r.insertOrReuse(tx, payment); err != nil {
+			return err
+		}
+
+		if err := renewalquote.BindPaymentTx(ctx, tx, customerID, orderID, payment.ID, payment.AmountFen); err != nil {
 			return err
 		}
 		prepared = &Prepared{Payment: payment, Subject: row.Subject}
@@ -321,6 +334,13 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		}
 		switch completed.BizType {
 		case dom.BizOrder:
+			if err := renewalquote.ReceiptAllowedTx(ctx, tx, completed.CustomerID, completed.BizID, completed.ID, completed.AmountFen, paidAt); err != nil {
+				var gate *renewalquote.Error
+				if !errors.As(err, &gate) {
+					return err
+				}
+				return reviewReceipt(tx, &completed, notification, paidAt, "renewal_quote_unverified")
+			}
 			if err := tx.SavePoint("before_order_receipt").Error; err != nil {
 				return err
 			}

@@ -42,8 +42,9 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	if _, err := balance.New(db).Change(ctx, balance.ChangeRequest{CustomerID: 77, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 77, Channel: "admin_manual", RequestID: "isolated-renew-fund", AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试客户可见原因", Notes: "isolated integration funds"}); err != nil {
 		t.Fatal(err)
 	}
-	supplierID := int64(1)
-	host := dom.Host{UpstreamProviderID: &supplierID, ID: 99001, InstanceNo: "RENEW-ISOLATED", CustomerID: 77, ProductID: 91001, ModuleType: "cloud", ConfigSnapshot: "{}", Status: 3, UpstreamInstanceID: "isolated-remote", OwnershipVersion: 1}
+	supplierID := int64(99004)
+	seedGateSupplier(t, db, supplierID, 91001)
+	host := dom.Host{UpstreamProviderID: &supplierID, ID: 99001, InstanceNo: "RENEW-ISOLATED", CustomerID: 77, ProductID: 91001, ModuleType: "cloud", ConfigSnapshot: "{}", Status: 3, UpstreamInstanceID: "99005", OwnershipVersion: 1}
 	if err := db.Create(&host).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -51,11 +52,15 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	if err := db.Create(&o).Error; err != nil {
 		t.Fatal(err)
 	}
+
+	if err := db.Create(&order.OrderItem{OrderID: o.ID, ProductID: host.ProductID, ProductName: "renewal fixture", ModuleType: "instance_renewal", ConfigSnapshot: "{}", Qty: 1, UnitPrice: 100, Subtotal: 100, InstanceID: &host.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
 	r := Renewal{SupplierID: supplierID, ID: 99003, OrderID: o.ID, InstanceID: host.ID, CustomerID: 77, OwnershipVersion: 1, HostID: host.UpstreamInstanceID, Cycle: "monthly", Duration: 1, Amount: 100, Cost: 100, BaseExpiry: time.Now(), State: "unpaid"}
 	if err := db.Create(&r).Error; err != nil {
 		t.Fatal(err)
 	}
-	service := NewService(repo.NewRepository(db), nil)
+	service := NewService(repo.NewRepository(db), securityResolver{provider: &gateRenewalFixture{retail: "1.00", cost: "1.00", duration: 1, expiry: r.BaseExpiry}})
 	service.db = db
 	// Exercise the real joined candidate query without running the renewal loop
 	// or contacting a supplier. Schema-qualified aliases must retain soft deletes.
@@ -120,7 +125,7 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	if debits != 1 || jobs != 1 || state != 2 {
 		t.Fatalf("debits=%d tasks=%d state=%d", debits, jobs, state)
 	}
-	t.Log("12 concurrent balance renewal payments: one BalanceService debit + one durable intention, atomically paid; no supplier configured/called")
+	t.Log("12 concurrent balance renewal payments: one BalanceService debit + one durable intention, atomically paid; read-only fixture quote; no supplier mutation")
 	freshExpiry := r.BaseExpiry.Add(60 * 24 * time.Hour).Truncate(time.Second)
 	if err := db.Model(&dom.Host{}).Where("id=?", host.ID).Update("expires_at", freshExpiry).Error; err != nil {
 		t.Fatal(err)

@@ -2,6 +2,7 @@ package payment
 
 import (
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/shared/renewalquote"
 	"ddyidc/pkg/clientip"
 	"encoding/json"
 	"errors"
@@ -343,6 +344,14 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 }
 
 func writeResult(w http.ResponseWriter, data any, err error) {
+	var gate *renewalquote.Error
+	if errors.As(err, &gate) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 40901, "message": gate.Error(), "data": gate})
+		return
+	}
+
 	if errors.Is(err, balance.ErrLedgerIntegrity) {
 		writeError(w, 409, 40910, balance.ErrLedgerIntegrity.Error())
 		return

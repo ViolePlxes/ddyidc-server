@@ -1,6 +1,7 @@
 package instance
 
 import (
+	"ddyidc/internal/shared/renewalquote"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -278,6 +279,14 @@ func pageParams(r *http.Request) (int, int) {
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
+	var gate *renewalquote.Error
+	if errors.As(err, &gate) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"code": 40901, "message": gate.Error(), "data": gate})
+		return
+	}
+
 	switch {
 	case errors.Is(err, svc.ErrForbidden):
 		writeError(w, http.StatusForbidden, "没有权限访问该实例")
