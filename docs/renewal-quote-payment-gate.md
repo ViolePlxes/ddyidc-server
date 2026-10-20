@@ -13,12 +13,12 @@ Balance renewal, the generic order-balance delegation, and online order checkout
 ## API changes
 
 - Existing GET renewal-options: each item adds `quoteRevision`.
-- Existing POST instance renewals: requires `cycle` and `quoteRevision`; optional `replaceOrderId` is explicit consent to replace the displayed old order.
-- Existing PUT auto-renew: enabling requires `enabled=true` and the displayed `quoteRevision`. Disabling remains permitted without a quote.
+- Existing POST instance renewals: requires `cycle` and `quoteRevision`; optional `replaceOrderId` remains compatible with older clients; current clients need no replacement confirmation.
+- Existing PUT auto-renew: enabling requires `enabled=true` and a current server `quoteRevision`, fetched internally by the existing toggle without an extra dialog. Disabling remains permitted without a quote.
 - Existing renewal/order checkout and pay APIs: quote errors use HTTP409 and data.code (`RENEWAL_PRICE_CHANGED`, `RENEWAL_QUOTE_EXPIRED`, `RENEWAL_QUOTE_UNVERIFIED`, `RENEWAL_PAYMENT_RECONCILING`). Instance and payment handlers return the structured old/new amounts and old order reference where available. Generic order-balance wrapper retains its existing error envelope/message.
 - New GET `/admin/v1/instances/renewal-quote-audit?page=1`: existing instance-list admin permission and customer scope; page size20; local snapshot inventory only, not live price authorization and not a bulk correction API.
 
-An unpaid wrong-price order is not silently overwritten. Without confirmed consent the original is retained. The safe replacement transaction uses the order module cancellation and coupon-release hooks, preserves the old amount, cancels the renewal intention, creates the replacement and stores `replacesOrderId`. Retries return the same current order. Any historical channel payment blocks automatic replacement: a locally closed flag is not evidence of remote closure. Already paid/unknown supplier outcomes never use the replacement path.
+Following the user policy update on2026-10-20, a verified unpaid renewal without any channel transaction is corrected in place under locks and a yuan-denominated before/after audit is appended. The order ID stays unchanged. The already-reserved coupon discount remains unchanged; correction does not release/redeem it or move funded-coupon balances. No price-change comparison or rebuild confirmation is shown. A cycle change can use the existing safe cancellation/replacement API without an extra price-confirmation step. Retries reuse the effective order. Any historical channel payment blocks automatic replacement: a locally closed flag is not evidence of remote closure. Already paid/unknown supplier outcomes never use the replacement path.
 
 ## Auto renewal
 
@@ -58,3 +58,9 @@ Evidence validity defaults to five minutes. The existing system configuration ke
 | Renewal durable task and reconciliation | Existing invoice/unknown fences retained; no unaudited legacy execution |
 
 The admin customer-instance equivalent base is `/admin/v1/customers/:customerId/instances/:instanceId`. Source routes are `internal/instance/handler/management.go`, `internal/order/handler/handler.go` and `internal/payment/handler/handler.go`. There is no newly added bypass or admin forced-price payment endpoint.
+
+##2026-10-20 user flow adjustment
+
+The ordinary renewal/payment flow is restored. InstanceRenewal fetches a current revision internally and shows only the actual order amount. CorrectUnpaidRenewalPriceTx is the order module owner API; instance rows and price evidence remain instance-owned. Existing paid orders, payment attempts, supplier invoice/unknown states and malformed discount records are not repriced. Price correction appends system audit amounts in yuan, without any balance write. Payment checkout responses now include amount (yuan string), so QR/checkout labels use the gateway's actual amount rather than a stale page prop. Source: internal/order/service/renewal_price_correction.go, internal/instance/service/renewal_price_correction.go, payment/types and frontendPaymentDialog.
+
+TestRenewalQuoteCorrectionMySQL exercises same-order31.77→30 correction, idempotent audit, exact30 gateway amount, refusal after a checkout exists, and preserving a one-yuan coupon without hook/ledger movements. This supersedes the earlier extra confirmation UX, not the receipt/locking protections.

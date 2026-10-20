@@ -27,6 +27,9 @@ func renewalBinding(h dom.Host) renewalquote.Binding {
 // VerifyRenewalPayment performs remote reads BEFORE any transaction/row locks.
 // Its request-scoped proof must be rechecked by the actual payment transaction.
 func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID int64) (context.Context, error) {
+	return s.verifyRenewalPayment(ctx, customer, orderID, true)
+}
+func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID int64, canCorrect bool) (context.Context, error) {
 	var r Renewal
 	err := s.db.WithContext(ctx).Where("order_id=? AND customer_id=?", orderID, customer).Take(&r).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -92,6 +95,12 @@ func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID in
 	gross, err := billing.ParseMoney(selected.Amount)
 	if err != nil {
 		return ctx, renewalquote.Unverified()
+	}
+	if canCorrect && (int64(gross) != o.TotalAmount || selected.Duration != r.Duration || selected.Cost != r.Cost) && s.renewalPriceCorrector != nil {
+		if e := s.correctUnpaidRenewal(ctx, r, *h, *selected); e != nil {
+			return ctx, e
+		}
+		return s.verifyRenewalPayment(ctx, customer, orderID, false)
 	}
 	if int64(gross) != o.TotalAmount {
 		return ctx, &renewalquote.Error{Code: "RENEWAL_PRICE_CHANGED", OldOrderID: fmt.Sprint(orderID), OldAmount: billing.Money(o.TotalAmount).String(), NewAmount: selected.Amount}

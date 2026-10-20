@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"strings"
 	"testing"
 	"time"
 )
@@ -235,9 +236,6 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	intent := RenewalIntent{QuoteRevision: options[0].QuoteRevision, ReplaceOrderID: fmt.Sprint(o.ID)}
-	if _, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", RenewalIntent{QuoteRevision: intent.QuoteRevision}); e == nil {
-		t.Fatal("wrong old order reused without confirmation")
-	}
 	if _, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", RenewalIntent{QuoteRevision: "stale", ReplaceOrderID: intent.ReplaceOrderID}); e == nil {
 		t.Fatal("stale price consent accepted")
 	}
@@ -256,7 +254,7 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	if e := tx.Delete(&pending).Error; e != nil {
 		t.Fatal(e)
 	} // only isolated fixture, no real payment is deleted
-	replaced, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", intent)
+	replaced, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", RenewalIntent{QuoteRevision: intent.QuoteRevision})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -273,7 +271,7 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	if count != 1 {
 		t.Fatal("multiple payable renewal intentions")
 	}
-	t.Log("price change requires current explicit consent; any past channel payment blocks; safe replacement atomic, retains original amount and replays idempotently")
+	t.Log("safe repricing requires no extra confirmation; any past channel payment blocks; replacement atomic, retains old audit and replays idempotently")
 }
 
 func TestAutoRenewalQuotePauseMySQL(t *testing.T) {
@@ -384,4 +382,104 @@ func TestRenewalQuoteRuntimePrivilegesMySQL(t *testing.T) {
 		t.Fatal("auto approval column grant mismatch", e, columns)
 	}
 	t.Log("runtime can read/append evidence; cannot update/delete proof; auto approval update limited to six columns; wrong identity refused")
+}
+
+type correctionCouponHooks struct {
+	renewalReplacementHooks
+	charged int
+	gross   int64
+}
+
+func (h *correctionCouponHooks) ChargeCoupon(_ context.Context, _ *gorm.DB, _ int64, _ int64, _ int64, gross int64) (int64, error) {
+	h.charged++
+	h.gross = gross
+	return 100, nil
+}
+func TestRenewalQuoteCorrectionMySQL(t *testing.T) {
+	db := testenv.MySQL(t)
+	tx := db.Begin()
+	defer tx.Rollback()
+	ctx := context.Background()
+	sid := int64(989001)
+	seedGateSupplier(t, tx, sid, 989002)
+	expiry := time.Now().Add(time.Hour).Truncate(time.Second)
+	host := dom.Host{ID: 989003, InstanceNo: "SILENT-PRICE", CustomerID: 989004, ProductID: 989002, ModuleType: "cloud", ConfigSnapshot: `{"billingCycle":"monthly"}`, Status: 3, UpstreamProviderID: &sid, UpstreamInstanceID: "84042", OwnershipVersion: 1, ExpiresAt: &expiry}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(tx.Create(&host).Error)
+	o := order.Order{ID: 989005, OrderNo: "SILENT-RENEW", CustomerID: host.CustomerID, TotalAmount: 3177, PayAmount: 3177, Status: 1}
+	must(tx.Create(&o).Error)
+	item := order.OrderItem{OrderID: o.ID, ProductID: host.ProductID, ProductName: "fixture", ModuleType: "instance_renewal", Qty: 1, UnitPrice: 3177, Subtotal: 3177, InstanceID: &host.ID, ConfigSnapshot: "{}"}
+	must(tx.Create(&item).Error)
+	row := Renewal{ID: 989006, OrderID: o.ID, InstanceID: host.ID, CustomerID: host.CustomerID, OwnershipVersion: 1, SupplierID: sid, HostID: host.UpstreamInstanceID, Cycle: "monthly", Duration: 2678400, Amount: 3177, Cost: 2700, State: "unpaid", BaseExpiry: expiry}
+	must(tx.Create(&row).Error)
+	fixture := &gateRenewalFixture{retail: "30.00", cost: "27.00", duration: row.Duration, expiry: expiry}
+	svc := NewService(repo.NewRepository(tx), securityResolver{provider: fixture})
+	svc.db = tx
+	hooks := &correctionCouponHooks{}
+	orders := ordersvc.NewService(orderrepo.NewRepository(tx), hooks)
+	svc.SetRenewalPriceCorrector(orders.CorrectUnpaidRenewalPriceTx)
+	proof, err := svc.VerifyRenewalPayment(ctx, host.CustomerID, o.ID)
+	must(err)
+	must(renewalquote.CheckTx(proof, tx, host.CustomerID, o.ID))
+	var got order.Order
+	must(tx.Where("id=?", o.ID).Take(&got).Error)
+	if got.TotalAmount != 3000 || got.PayAmount != 3000 || got.Status != 1 || got.ID != o.ID {
+		t.Fatalf("unpaid original not corrected in place: %+v", got)
+	}
+	var audits int64
+	must(tx.Table("system.audit_logs").Where("action='renewal_price_corrected' AND target_id=?", o.ID).Count(&audits).Error)
+	if audits != 1 {
+		t.Fatal("correction audit missing", audits)
+	}
+	var audit struct{ Detail string }
+	must(tx.Table("system.audit_logs").Select("detail").Where("action='renewal_price_corrected' AND target_id=?", o.ID).Take(&audit).Error)
+	if !strings.Contains(audit.Detail, "31.77") || !strings.Contains(audit.Detail, "30.00") {
+		t.Fatal("original/new amounts missing from audit")
+	}
+	_, err = svc.VerifyRenewalPayment(ctx, host.CustomerID, o.ID)
+	must(err)
+	must(tx.Table("system.audit_logs").Where("action='renewal_price_corrected' AND target_id=?", o.ID).Count(&audits).Error)
+	if audits != 1 {
+		t.Fatal("repeat corrected twice")
+	}
+	prepared, err := payment.NewRepository(tx).PrepareOrder(proof, host.CustomerID, o.ID, "wechat", time.Now().Add(time.Minute))
+	must(err)
+	if prepared.Payment.AmountFen != 3000 {
+		t.Fatal("gateway still uses old3177", prepared.Payment.AmountFen)
+	}
+	fixture.retail = "35.00"
+	if _, err = svc.VerifyRenewalPayment(ctx, host.CustomerID, o.ID); err == nil {
+		t.Fatal("existing channel checkout repriced")
+	}
+	must(tx.Where("id=?", o.ID).Take(&got).Error)
+	if got.TotalAmount != 3000 {
+		t.Fatal("inflight order mutated")
+	}
+	// Only this isolated fixture is reset to exercise the coupon recalculation contract.
+	must(tx.Delete(prepared.Payment).Error)
+	fixture.retail = "30.00"
+	coupon := int64(123)
+	must(tx.Model(&got).Updates(map[string]any{"total_amount": 3177, "pay_amount": 3077, "discount_amount": 100, "coupon_amount": 100, "coupon_id": coupon}).Error)
+	must(tx.Model(&row).Update("amount", "30.77").Error)
+	must(tx.Model(&item).Updates(map[string]any{"unit_price": 3177, "subtotal": 3177}).Error)
+	options, e := svc.RenewalOptions(ctx, host.CustomerID, host.ID)
+	must(e)
+	corrected, e := svc.CreateRenewalIntent(ctx, host.CustomerID, host.ID, "monthly", RenewalIntent{QuoteRevision: options[0].QuoteRevision})
+	must(e)
+	if corrected.OrderID != fmt.Sprint(o.ID) || corrected.Amount != "29.00" {
+		t.Fatal("create did not silently preserve corrected order/coupon", corrected)
+	}
+	proof, err = svc.VerifyRenewalPayment(ctx, host.CustomerID, o.ID)
+	must(err)
+	must(renewalquote.CheckTx(proof, tx, host.CustomerID, o.ID))
+	must(tx.Where("id=?", o.ID).Take(&got).Error)
+	if got.TotalAmount != 3000 || got.PayAmount != 2900 || hooks.charged != 0 || hooks.releases != 0 {
+		t.Fatalf("coupon correction disagrees: %+v hooks=%+v", got, hooks)
+	}
+	t.Log("silent3177->3000 correction keeps orderID; one audit retains old amount; replay idempotent; gateway receives3000; pending channel blocks mutation; reserved coupon remains100 without redemption/ledger changes; proof matches2900 net")
 }

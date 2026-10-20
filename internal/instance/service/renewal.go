@@ -245,7 +245,7 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customer).Take(&current).Error; e != nil {
 			return ErrNotFound
 		}
-		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID {
+		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || renewalIntentRevision(current, *selected) != renewalIntentRevision(*h, *selected) {
 			return errors.New("实例归属或绑定已变更")
 		}
 		if current.Status == 6 {
@@ -288,10 +288,25 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 					return renewalquote.Unverified()
 				}
 				mismatch := previous.Cycle != cycle || previous.Duration != selected.Duration || previous.Cost != selected.Cost || o.TotalAmount != int64(amount)
+				if o.Status == 1 && mismatch && previous.Cycle == cycle && s.renewalPriceCorrector != nil {
+					if previous.State != "unpaid" || previous.InvoiceID != "" || !previous.BaseExpiry.Equal(expiry) {
+						return renewalquote.Unverified()
+					}
+					net, e := s.renewalPriceCorrector(ctx, tx, customer, previous.OrderID, int64(amount))
+					if e != nil {
+						return e
+					}
+					if e = tx.Model(&previous).Updates(map[string]any{"amount": balance.Money(net).String(), "cost": selected.Cost.String(), "duration": selected.Duration}).Error; e != nil {
+						return e
+					}
+					result = RenewalOrder{ID: strconv.FormatInt(previous.ID, 10), OrderID: strconv.FormatInt(o.ID, 10), OrderNo: o.OrderNo, Amount: balance.Money(net).String(), State: "unpaid"}
+					return nil
+				}
 				if o.Status == 1 && mismatch {
-					if intent.ReplaceOrderID != strconv.FormatInt(o.ID, 10) || intent.QuoteRevision != selected.QuoteRevision || previous.State != "unpaid" || previous.InvoiceID != "" || s.renewalReplacementCancel == nil {
+					if previous.State != "unpaid" || previous.InvoiceID != "" || s.renewalReplacementCancel == nil {
 						return &renewalquote.Error{Code: "RENEWAL_PRICE_CHANGED", OldOrderID: strconv.FormatInt(o.ID, 10), OldAmount: balance.Money(o.TotalAmount).String(), NewAmount: selected.Amount}
 					}
+					intent.ReplaceOrderID = strconv.FormatInt(o.ID, 10)
 					if e := s.renewalReplacementCancel(ctx, tx, customer, o.ID); e != nil {
 						return e
 					}

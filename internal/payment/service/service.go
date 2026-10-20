@@ -404,6 +404,7 @@ func (s *Service) channel(name string) (string, Channel, error) {
 
 func checkoutResponse(payment *dom.Payment, checkout *Checkout) *types.CheckoutResponse {
 	response := &types.CheckoutResponse{
+		Amount:    payment.Amount,
 		PaymentID: fmt.Sprintf("%d", payment.ID), PayNo: payment.PaymentNo, Status: string(payment.Status), ExpireAt: payment.ExpireAt.Format(time.RFC3339),
 	}
 	if checkout.CodeURL != "" {

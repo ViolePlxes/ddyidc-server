@@ -32,6 +32,7 @@ type AlipayCheckout struct {
 }
 
 type CheckoutResponse struct {
+	Amount    string          `json:"amount"`
 	PaymentID string          `json:"paymentId"`
 	PayNo     string          `json:"payNo"`
 	Status    string          `json:"status"`

@@ -16,6 +16,15 @@ func TestEvidenceBindingAndValidity(t *testing.T) {
 	if e.Valid(now.Add(Lifetime)) {
 		t.Fatal("expired proof accepted")
 	}
+	configured := e
+	configured.ExpiresAt = now.Add(MaxLifetime)
+	if !configured.Valid(now) {
+		t.Fatal("configured upper bound rejected")
+	}
+	configured.ExpiresAt = now.Add(MaxLifetime + time.Second)
+	if configured.Valid(now) {
+		t.Fatal("unbounded evidence lifetime accepted")
+	}
 	cached := b
 	cached.ConfigSnapshot = `{"billingCycle":"monthly","configOptions":{"ram":"4"},"supplierReadSnapshot":{"amount":"99"}}`
 	if !e.Matches(cached) {

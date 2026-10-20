@@ -17,6 +17,7 @@ import (
 
 const RuleVersion = "explicit-original-v2"
 const Lifetime = 5 * time.Minute
+const MaxLifetime = 15 * time.Minute
 
 type Error struct {
 	Code       string `json:"code"`
@@ -101,7 +102,7 @@ func (e Evidence) Matches(b Binding) bool {
 	return b.UpstreamProviderID != nil && b.DeletedAt == nil && b.Status != 6 && e.CustomerID == b.CustomerID && e.InstanceID == b.ID && e.ProductID == b.ProductID && e.OwnershipVersion == b.OwnershipVersion && e.SupplierID == *b.UpstreamProviderID && e.RemoteHostID == b.UpstreamInstanceID && e.ConfigFingerprint != "" && e.ConfigFingerprint == b.ConfigHash()
 }
 func (e Evidence) Valid(now time.Time) bool {
-	return e.ID > 0 && e.Revision > 0 && e.Currency == "CNY" && e.SourceVersion == RuleVersion && e.Fingerprint != "" && !e.QuotedAt.After(now) && e.ExpiresAt.After(now) && e.ExpiresAt.Sub(e.QuotedAt) <= Lifetime && !e.ConfirmedAt.IsZero()
+	return e.ID > 0 && e.Revision > 0 && e.Currency == "CNY" && e.SourceVersion == RuleVersion && e.Fingerprint != "" && !e.QuotedAt.After(now) && e.ExpiresAt.After(now) && e.ExpiresAt.Sub(e.QuotedAt) <= MaxLifetime && !e.ConfirmedAt.IsZero()
 }
 
 type proofKey struct{}

@@ -634,6 +634,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	instanceSvc.SetManagement(db.G)
 	orderSvc.SetRenewalBalancePayer(instanceSvc)
 	instanceSvc.SetRenewalReplacementCanceller(orderSvc.CancelRenewalReplacementTx)
+	instanceSvc.SetRenewalPriceCorrector(orderSvc.CorrectUnpaidRenewalPriceTx)
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
 		panic("instance management schema failed: " + err.Error())
 	}

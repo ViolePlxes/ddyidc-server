@@ -38,6 +38,7 @@ type ProviderResolver interface {
 type Service struct {
 	quoteReads *renewalQuoteReads
 
+	renewalPriceCorrector    func(context.Context, *gorm.DB, int64, int64, int64) (int64, error)
 	renewalReplacementCancel func(context.Context, *gorm.DB, int64, int64) error
 
 	repo      repo.Repository
