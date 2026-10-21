@@ -26,8 +26,11 @@ func renewalBinding(h dom.Host) renewalquote.Binding {
 
 // VerifyRenewalPayment performs remote reads BEFORE any transaction/row locks.
 // Its request-scoped proof must be rechecked by the actual payment transaction.
+type autoRenewPaymentKey struct{}
+
 func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID int64) (context.Context, error) {
-	return s.verifyRenewalPayment(ctx, customer, orderID, true)
+	auto, _ := ctx.Value(autoRenewPaymentKey{}).(bool)
+	return s.verifyRenewalPayment(ctx, customer, orderID, !auto)
 }
 func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID int64, canCorrect bool) (context.Context, error) {
 	var r Renewal
@@ -43,6 +46,9 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 		return ctx, nil
 	}
 	if err != nil {
+		return ctx, err
+	}
+	if err := s.productionMutationAllowed(ctx, r.InstanceID); err != nil {
 		return ctx, err
 	}
 	var o order.Order

@@ -14,6 +14,7 @@ func (h *handler) managementRoutes() []rest.Route {
 	out := []rest.Route{}
 	for _, base := range []string{"/admin/v1/customers/:customerId/instances/:instanceId", "/api/v1/instance/:instanceId"} {
 		out = append(out,
+			rest.Route{Method: http.MethodPut, Path: base + "/production-lock", Handler: h.productionLock},
 			rest.Route{Method: http.MethodPut, Path: base + "/remark", Handler: h.remark},
 			rest.Route{Method: http.MethodPost, Path: base + "/credentials", Handler: h.credentials},
 			rest.Route{Method: http.MethodGet, Path: base + "/renewal-options", Handler: h.renewalOptions},
@@ -22,6 +23,31 @@ func (h *handler) managementRoutes() []rest.Route {
 			rest.Route{Method: http.MethodPut, Path: base + "/auto-renew", Handler: h.autoRenew})
 	}
 	return append(out, rest.Route{Method: http.MethodPatch, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.edit})
+}
+func (h *handler) productionLock(w http.ResponseWriter, r *http.Request) {
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r)
+	if id == 0 {
+		return
+	}
+	var in struct {
+		Enabled   *bool `json:"enabled"`
+		Confirmed bool  `json:"confirmed"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&in) != nil || in.Enabled == nil || !in.Confirmed {
+		writeError(w, 400, "请确认生产锁操作")
+		return
+	}
+	if err := h.service.SetProductionLock(r.Context(), customer, id, *in.Enabled); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"saved": true})
 }
 func (h *handler) edit(w http.ResponseWriter, r *http.Request) {
 	customer, ok := h.claims(w, r)
@@ -74,7 +100,11 @@ func (h *handler) renewalOptions(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, e)
 		return
 	}
-	cycle, _ := h.service.CurrentBillingCycle(r.Context(), customer, id)
+	cycle, err := h.service.OriginalRenewalCycle(r.Context(), customer, id)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
 	matched := false
 	for _, option := range out {
 		if option.Cycle == cycle {
@@ -155,12 +185,13 @@ func (h *handler) autoRenew(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Enabled       *bool  `json:"enabled"`
 		QuoteRevision string `json:"quoteRevision"`
+		Cycle         string `json:"cycle"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil || in.Enabled == nil {
 		writeError(w, 400, "缺少开关状态")
 		return
 	}
-	if e := h.service.SetAutoRenew(r.Context(), customer, id, *in.Enabled, in.QuoteRevision); e != nil {
+	if e := h.service.SetAutoRenewCycle(r.Context(), customer, id, *in.Enabled, in.Cycle, in.QuoteRevision); e != nil {
 		writeServiceError(w, e)
 		return
 	}

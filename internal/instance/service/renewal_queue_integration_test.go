@@ -64,7 +64,9 @@ func TestRenewalQueueMySQL(t *testing.T) {
 	service.db = db
 	// Exercise the real joined candidate query without running the renewal loop
 	// or contacting a supplier. Schema-qualified aliases must retain soft deletes.
-	if err := db.Model(&host).Update("expires_at", time.Now().Add(24*time.Hour)).Error; err != nil {
+	// Keep this join test inside the window: DATETIME(3) may round a 24h
+	// boundary forward past the subsequent query clock by a fraction of a ms.
+	if err := db.Model(&host).Update("expires_at", time.Now().Add(23*time.Hour)).Error; err != nil {
 		t.Fatal(err)
 	}
 	setting := RenewalSettings{InstanceID: host.ID, CustomerID: 77, Enabled: true, UpdatedAt: time.Now().Add(-time.Hour)}

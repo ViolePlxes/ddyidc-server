@@ -3,6 +3,7 @@ package pushtransfer
 
 import (
 	"context"
+	"ddyidc/internal/shared/productionlock"
 	schemamode "ddyidc/internal/shared/schema"
 	_ "embed"
 	"errors"
@@ -98,6 +99,9 @@ func LockHost(tx *gorm.DB, id int64) (*Host, error) {
 
 // AvailableTx requires the instance row lock. Every reservation writer takes it.
 func AvailableTx(tx *gorm.DB, instanceID, exceptTransfer, exceptListing int64) error {
+	if err := productionlock.Check(tx, instanceID); err != nil {
+		return err
+	}
 	var upgradeCount int64
 	if err := tx.Table("instance.instance_upgrades").Where("instance_id=? AND state NOT IN ('completed','cancelled') AND NOT (state='unpaid' AND order_id IN (SELECT id FROM `order`.orders WHERE status=3)) AND NOT (state='quoted' AND expires_at<NOW(3))", instanceID).Count(&upgradeCount).Error; err != nil {
 		return err

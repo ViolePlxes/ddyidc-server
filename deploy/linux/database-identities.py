@@ -82,6 +82,10 @@ def main():
                 privileges = "SELECT,INSERT"
             elif name == "instance.instance_renewal_auto_quotes":
                 privileges = "SELECT,INSERT,UPDATE(customer_id,ownership_version,quote_revision,amount,cycle,updated_at)"
+            elif name == "instance.instance_production_locks":
+                privileges = "SELECT,INSERT,UPDATE(enabled,updated_at)"
+            elif name == "instance.instance_product_lifecycle":
+                privileges = "SELECT,INSERT,UPDATE(state,attempts,next_attempt_at,last_error,updated_at)"
             elif name == "billing.accounts":
                 privileges = "SELECT,INSERT,UPDATE(balance,frozen_balance,total_recharge,total_consume,total_refund,total_withdraw,version,updated_at)"
             elif name == "system.id_sequences":

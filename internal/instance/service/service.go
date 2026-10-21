@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/shared/productionlock"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,22 +63,24 @@ type ListInput struct {
 }
 
 type ListItem struct {
-	ReadOnly        bool   `json:"readOnly"`
-	Hostname        string `json:"hostname,omitempty"`
-	Port            string `json:"port,omitempty"`
-	OperatingSystem string `json:"operatingSystem,omitempty"`
-	RenewalAmount   string `json:"renewalAmount,omitempty"`
-	LastSyncedAt    string `json:"lastSyncedAt,omitempty"`
-	Remark          string `json:"remark"`
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	ProductName     string `json:"productName"`
-	PrimaryIP       string `json:"primaryIp,omitempty"`
-	Status          uint8  `json:"status"`
-	PowerStatus     string `json:"powerStatus,omitempty"`
-	BillingCycle    string `json:"billingCycle,omitempty"`
-	ExpiresAt       string `json:"expiresAt,omitempty"`
-	CreatedAt       string `json:"createdAt"`
+	ProductionLocked bool   `json:"productionLocked"`
+	AutoRenew        bool   `json:"autoRenew"`
+	ReadOnly         bool   `json:"readOnly"`
+	Hostname         string `json:"hostname,omitempty"`
+	Port             string `json:"port,omitempty"`
+	OperatingSystem  string `json:"operatingSystem,omitempty"`
+	RenewalAmount    string `json:"renewalAmount,omitempty"`
+	LastSyncedAt     string `json:"lastSyncedAt,omitempty"`
+	Remark           string `json:"remark"`
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	ProductName      string `json:"productName"`
+	PrimaryIP        string `json:"primaryIp,omitempty"`
+	Status           uint8  `json:"status"`
+	PowerStatus      string `json:"powerStatus,omitempty"`
+	BillingCycle     string `json:"billingCycle,omitempty"`
+	ExpiresAt        string `json:"expiresAt,omitempty"`
+	CreatedAt        string `json:"createdAt"`
 }
 
 type ListResult struct {
@@ -105,6 +108,7 @@ type EventView struct {
 }
 
 type DetailView struct {
+	ProductionLocked   bool                           `json:"productionLocked"`
 	InfoSource         string                         `json:"infoSource"`
 	ReadOnly           bool                           `json:"readOnly"`
 	QueriedAt          string                         `json:"queriedAt,omitempty"`
@@ -227,6 +231,32 @@ func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*Li
 	}
 	// Resolve migration editability in one local query, without fetching row details.
 	if s.db != nil {
+		ids := make([]int64, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		if len(ids) > 0 {
+			var locks []ProductionLock
+			if err := s.db.WithContext(ctx).Where("instance_id IN ?", ids).Find(&locks).Error; err != nil {
+				return nil, err
+			}
+			var settings []RenewalSettings
+			if err := s.db.WithContext(ctx).Where("instance_id IN ? AND customer_id=?", ids, customerID).Find(&settings).Error; err != nil {
+				return nil, err
+			}
+			for i, row := range rows {
+				for _, lock := range locks {
+					if lock.InstanceID == row.ID {
+						items[i].ProductionLocked = lock.Enabled
+					}
+				}
+				for _, setting := range settings {
+					if setting.InstanceID == row.ID {
+						items[i].AutoRenew = setting.Enabled
+					}
+				}
+			}
+		}
 		legacyIDs := []int64{}
 		for _, host := range rows {
 			if host.ModuleType == "legacy_snapshot" {
@@ -293,6 +323,13 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
 	}
 	result.CurrentImageID, result.CurrentImageName = snapshotImage(snapshot)
+	if s.db != nil {
+		var lock ProductionLock
+		if err := s.db.WithContext(ctx).Where("instance_id=?", host.ID).Take(&lock).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		result.ProductionLocked = lock.Enabled
+	}
 	result.CurrentImageGroup = imageGroupName(result.CurrentImageName)
 	if result.OperatingSystem == "" {
 		result.OperatingSystem = result.CurrentImageName
@@ -385,12 +422,20 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.ExpiresAt = formatTime(*detail.ExpiresAt)
 	}
 	if s.db != nil && !outbound.DetailReadOnly() {
+		var lock ProductionLock
+		if err := s.db.WithContext(ctx).Where("instance_id=?", host.ID).Take(&lock).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+		result.ProductionLocked = lock.Enabled
 		var settings RenewalSettings
 		s.db.WithContext(ctx).Where("instance_id=? AND customer_id=?", host.ID, customerID).Take(&settings)
 		result.AutoRenew = settings.Enabled
 		result.AutoRenewWarning = s.AutoRenewalWarning(ctx, customerID, host.ID)
 	}
 	result.Capabilities = detail.Capabilities
+	if result.ProductionLocked {
+		result.Capabilities = contracts.InstanceCapabilities{}
+	}
 	result.IPs = detail.IPs
 	if detail.Hostname != "" {
 		result.Hostname = detail.Hostname
@@ -610,7 +655,7 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 		result, actionErr = upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{Action: in.Action, Password: in.Password, ImageID: in.ImageID, Port: in.Port, FormatDataDisk: in.FormatDataDisk, RescueSystem: in.RescueSystem, Force: in.Force})
 		return actionErr
 	}
-	if s.db != nil && (in.Action == "hard_stop" || in.Action == "hard_reboot" || in.Action == "rescue" || in.Action == "exit_rescue") {
+	if s.db != nil {
 		err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			var current dom.Host
 			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=? AND upstream_instance_id=? AND upstream_provider_id=? AND status<>6", host.ID, customerID, host.OwnershipVersion, host.UpstreamInstanceID, host.UpstreamProviderID).Take(&current).Error; e != nil {
@@ -632,6 +677,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	}
 	if err != nil {
 		message := "实例操作暂时不可用，请稍后重试"
+		if errors.Is(err, productionlock.ErrLocked) {
+			message = err.Error()
+		}
 		_ = s.repo.FinishEvent(ctx, event.ID, 3, nil, "", message)
 		return nil, errors.New(message)
 	}
@@ -676,6 +724,9 @@ func (s *Service) createRemoteSession(ctx context.Context, host *dom.Host, custo
 // CreateRemoteUpstream is called only by a server-side console provider. The
 // returned endpoint and password never cross an HTTP serialization boundary.
 func (s *Service) CreateRemoteUpstream(ctx context.Context, instanceID, customerID int64) (*remoteconsole.RemoteUpstream, error) {
+	if err := s.productionMutationAllowed(ctx, instanceID); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	host, err := s.owned(ctx, customerID, instanceID)
@@ -686,7 +737,29 @@ func (s *Service) CreateRemoteUpstream(ctx context.Context, instanceID, customer
 	if warning != "" {
 		return nil, remoteconsole.ErrUpstreamUnavailable
 	}
-	result, err := upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{Action: "remote"})
+	var result *contracts.InstanceActionResult
+	execute := func(tx *gorm.DB) error {
+		if tx != nil {
+			var current dom.Host
+			if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=?", host.ID, customerID, host.OwnershipVersion).Take(&current).Error; e != nil {
+				return ErrForbidden
+			}
+			if e := productionlock.Check(tx, host.ID); e != nil {
+				return e
+			}
+		}
+		var e error
+		result, e = upstream.ExecuteInstanceAction(parseHostID(host.UpstreamInstanceID), contracts.InstanceActionInput{Action: "remote"})
+		return e
+	}
+	if s.db != nil {
+		err = s.db.WithContext(ctx).Transaction(execute)
+	} else {
+		err = execute(nil)
+	}
+	if errors.Is(err, productionlock.ErrLocked) {
+		return nil, err
+	}
 	if err != nil || result == nil || strings.TrimSpace(result.RemoteEndpoint) == "" {
 		return nil, remoteconsole.ErrUpstreamUnavailable
 	}
@@ -694,6 +767,9 @@ func (s *Service) CreateRemoteUpstream(ctx context.Context, instanceID, customer
 }
 
 func (s *Service) ClaimRemoteSession(ctx context.Context, customerID, instanceID int64, token string) (*remoteconsole.RemoteSession, error) {
+	if err := s.productionMutationAllowed(ctx, instanceID); err != nil {
+		return nil, err
+	}
 	if _, err := s.owned(ctx, customerID, instanceID); err != nil {
 		return nil, err
 	}
@@ -717,6 +793,9 @@ func (s *Service) DiscardRemoteSession(session *remoteconsole.RemoteSession) {
 }
 
 func (s *Service) RemoteOwnership(ctx context.Context, instanceID, customerID int64) (int64, error) {
+	if err := s.productionMutationAllowed(ctx, instanceID); err != nil {
+		return 0, err
+	}
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return 0, err
@@ -833,7 +912,7 @@ func eventViews(events []*dom.Event) []EventView {
 	for _, event := range events {
 		message := event.ErrorMessage
 		if message == "" && event.Status == 2 {
-			message = "操作已提交至上游"
+			message = "操作已受理"
 		}
 		view := EventView{ID: strconv.FormatInt(event.ID, 10), Type: event.EventType, Status: event.Status, Message: message, CreatedAt: formatTime(event.CreatedAt)}
 		if event.ProcessedAt != nil {
