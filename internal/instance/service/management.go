@@ -4,6 +4,7 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/remoteconsole"
+	"ddyidc/internal/shared/productionlock"
 	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,9 @@ type EditInput struct {
 }
 
 func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) error {
+	if err := s.productionMutationAllowed(ctx, id); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	actor, admin := actionActor(ctx, customerID)
@@ -140,6 +144,9 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		}
 		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(current.UpstreamProviderID, h.UpstreamProviderID) {
 			return errors.New("实例已变更，请刷新后重试")
+		}
+		if err := productionlock.Check(tx, id); err != nil {
+			return err
 		}
 		var trading int64
 		if e := tx.Table("system.marketplace_listings").Where("product_id=? AND status IN ('pending','on_sale','locked')", id).Count(&trading).Error; e != nil {

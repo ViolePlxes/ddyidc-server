@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
+	"ddyidc/internal/shared/productionlock"
 	"errors"
 	"fmt"
 	"gorm.io/gorm"
@@ -52,6 +53,9 @@ func (s *Service) SaveRemark(ctx context.Context, customerID, id int64, in Remar
 		}
 		if current.OwnershipVersion != previous.OwnershipVersion {
 			return ErrForbidden
+		}
+		if err := productionlock.Check(tx, id); err != nil {
+			return err
 		}
 		now := time.Now()
 		if err := tx.Model(&current).Updates(map[string]any{"remark": value, "updated_at": now}).Error; err != nil {

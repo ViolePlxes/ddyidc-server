@@ -186,6 +186,9 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 	return s.CreateRenewalIntent(ctx, customer, id, cycle, RenewalIntent{})
 }
 func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, cycle string, intent RenewalIntent) (*RenewalOrder, error) {
+	if err := s.productionMutationAllowed(ctx, id); err != nil {
+		return nil, err
+	}
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return nil, e
@@ -345,6 +348,9 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	if _, e := s.owned(ctx, customer, id); e != nil {
 		return e
 	}
+	if err := s.productionMutationAllowed(ctx, id); err != nil {
+		return err
+	}
 	locked, e := s.repo.IsMarketplaceLocked(ctx, id)
 	if e != nil {
 		return e
@@ -387,6 +393,22 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 			return ErrForbidden
 		}
 		var trading int64
+		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+			return err
+		}
+		if automatic, _ := ctx.Value(autoRenewPaymentKey{}).(bool); automatic {
+			var settings RenewalSettings
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=? AND customer_id=?", id, customer).Take(&settings).Error; err != nil || !settings.Enabled {
+				return errors.New("自动续费已关闭，未扣款")
+			}
+			var approved AutoRenewalQuote
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=? AND customer_id=? AND ownership_version=?", id, customer, h.OwnershipVersion).Take(&approved).Error; err != nil {
+				return renewalquote.Unverified()
+			}
+			if approved.QuoteRevision != autoRenewalApprovalRevision(h, RenewalOption{Cycle: r.Cycle, Duration: r.Duration, Amount: r.Amount.String()}) {
+				return renewalquote.Unverified()
+			}
+		}
 		if e := tx.Table("system.marketplace_listings").Where("product_id=? AND status IN ('pending','on_sale','locked')", id).Count(&trading).Error; e != nil {
 			return e
 		}
@@ -424,6 +446,17 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	return nil
 }
 func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled bool, expectedRevision ...string) error {
+	revision := ""
+	if len(expectedRevision) == 1 {
+		revision = expectedRevision[0]
+	}
+	return s.SetAutoRenewCycle(ctx, customer, id, enabled, "", revision)
+}
+
+func (s *Service) SetAutoRenewCycle(ctx context.Context, customer, id int64, enabled bool, cycle, revision string) error {
+	if err := s.productionMutationAllowed(ctx, id); err != nil {
+		return err
+	}
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return e
@@ -434,9 +467,14 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 		if err != nil {
 			return err
 		}
-		_, snap := parseSnapshot(h.ConfigSnapshot)
+		if cycle == "" {
+			cycle, e = s.OriginalRenewalCycle(ctx, customer, id)
+			if e != nil {
+				return e
+			}
+		}
 		for i := range quotes {
-			if quotes[i].Cycle == snap.BillingCycle {
+			if quotes[i].Cycle == cycle {
 				approved = &quotes[i]
 				break
 			}
@@ -444,7 +482,7 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 		if approved == nil {
 			return renewalquote.Unverified()
 		}
-		if len(expectedRevision) != 1 || expectedRevision[0] == "" || expectedRevision[0] != approved.QuoteRevision {
+		if revision == "" || revision != approved.QuoteRevision {
 			return &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
 		}
 
@@ -458,6 +496,9 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 			return ErrForbidden
 		}
 		settings := RenewalSettings{InstanceID: id, CustomerID: customer, Enabled: enabled, UpdatedAt: time.Now()}
+		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+			return err
+		}
 		if enabled && current.Status == 6 {
 			return ErrUnsupported
 		}

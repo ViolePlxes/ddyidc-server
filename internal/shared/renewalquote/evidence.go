@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	billing "ddyidc/internal/billing/balance"
+	"ddyidc/internal/shared/productionlock"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -156,6 +157,9 @@ func checkTxAt(ctx context.Context, tx *gorm.DB, user, orderID int64, at time.Ti
 	var b Binding
 	if err := tx.Table("instance.instances").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=?", r.InstanceID).Take(&b).Error; err != nil {
 		return Unverified()
+	}
+	if err := productionlock.Check(tx, r.InstanceID); err != nil {
+		return err
 	}
 	if !e.Valid(at) {
 		return &Error{Code: "RENEWAL_QUOTE_EXPIRED"}

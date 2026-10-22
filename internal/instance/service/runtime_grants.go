@@ -20,6 +20,8 @@ func ApplyRuntimePrivileges(ctx context.Context, db *sql.DB, user, host string) 
 	}
 
 	rights := map[string]string{
+		"instance_production_locks":       "SELECT,INSERT,UPDATE(enabled,updated_at)",
+		"instance_product_lifecycle":      "SELECT,INSERT,UPDATE(state,attempts,next_attempt_at,last_error,updated_at)",
 		"instance_renewal_quote_evidence": "SELECT,INSERT",
 		"instance_renewal_payment_quotes": "SELECT,INSERT",
 		"instance_renewal_auto_quotes":    "SELECT,INSERT,UPDATE(customer_id,ownership_version,quote_revision,amount,cycle,updated_at)",

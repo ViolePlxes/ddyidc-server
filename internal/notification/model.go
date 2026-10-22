@@ -153,6 +153,14 @@ func EnqueueRenewalPause(tx *gorm.DB, e Event) error {
 	}
 	return enqueueDurable(tx, e)
 }
+
+// Keep financial lifecycle outcomes durable even while notification delivery is disabled.
+func EnqueueProductLifecycle(tx *gorm.DB, e Event) error {
+	if e.Scene != "product_lifecycle" || e.BusinessType != "instance" || e.OwnershipVersion <= 0 {
+		return ErrInput
+	}
+	return enqueueDurable(tx, e)
+}
 func enqueueDurable(tx *gorm.DB, e Event) error {
 	if err := e.Validate(); err != nil {
 		return err

@@ -5,6 +5,7 @@ import (
 	dom "ddyidc/internal/instance/domain"
 	workflow "ddyidc/internal/payment/repository/refundworkflow"
 	"ddyidc/internal/shared/distsync"
+	"ddyidc/internal/shared/productionlock"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/pkg/outbound"
@@ -234,6 +235,9 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 	return out, err
 }
 func (s *Service) refundHostUnlocked(tx *gorm.DB, id int64) error {
+	if err := productionlock.Check(tx, id); err != nil {
+		return err
+	}
 	var n int64
 	for _, q := range []struct{ table, where string }{
 		{"instance.instance_renewals", "instance_id=? AND state NOT IN ('completed','cancelled')"},
@@ -508,6 +512,9 @@ func (s *Service) StartMachineRefundMaintenance(ctx context.Context) {
 func (s *Service) refundMutationAllowed(ctx context.Context, tx *gorm.DB, id int64) error {
 	if tx == nil {
 		return nil
+	}
+	if err := productionlock.Check(tx.WithContext(ctx), id); err != nil {
+		return err
 	}
 	var count int64
 	if e := tx.WithContext(ctx).Table("payment.machine_refund_legs l").Joins("JOIN payment.machine_refund_actions a ON a.application_id=l.application_id").Where("l.instance_id=? AND (a.state<>'rejected' OR l.state NOT IN ('prepared','rejected'))", id).Count(&count).Error; e != nil {

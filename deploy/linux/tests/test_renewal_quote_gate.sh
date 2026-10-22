@@ -20,5 +20,6 @@ done
 mysqladmin --no-defaults --socket="$root/mysql.sock" -uroot ping >/dev/null
 export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
 go test -race -v . -run '^TestOfflineMigrationMySQL$' -count=1
-go test -race -v ./internal/instance/service -run '^(TestRenewalQuoteGateMySQL|TestRenewalQuoteCorrectionMySQL|TestRenewalQuoteReplacementMySQL|TestAutoRenewalQuotePauseMySQL|TestRenewalQuoteRuntimePrivilegesMySQL|TestRenewalQueueMySQL)$' -count=1
+go test -race -v ./internal/instance/service -run '^(TestProductProductionLockMySQL|TestProductExpirySyncMySQL|TestRenewalQuoteGateMySQL|TestRenewalQuoteCorrectionMySQL|TestRenewalQuoteReplacementMySQL|TestAutoRenewalQuotePauseMySQL|TestRenewalQuoteRuntimePrivilegesMySQL|TestRenewalQueueMySQL)$' -count=1
+go test -race -v ./internal/instance/service -run '^TestProductAutoRenewalWindowAndInsufficientMySQL$' -count=1
 go test -race -v ./internal/upstream/provider/zjmf ./internal/shared/renewalquote -run 'TestRenewalOriginalNeverInferredAcrossCycles|TestEvidenceBindingAndValidity' -count=1

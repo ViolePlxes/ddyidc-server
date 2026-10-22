@@ -127,7 +127,7 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	if e := db.AutoMigrate(&dom.Host{}, &dom.Event{}, &product.ProductGroup{}, &product.Product{}, &model.UpstreamProduct{}, &specification.Snapshot{}); e != nil {
+	if e := db.AutoMigrate(&ProductionLock{}, &dom.Host{}, &dom.Event{}, &product.ProductGroup{}, &product.Product{}, &model.UpstreamProduct{}, &specification.Snapshot{}); e != nil {
 		t.Fatal(e)
 	}
 	run := func(name string, fn func(*testing.T, *editProductFixture)) {
@@ -407,7 +407,13 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 		f.p.beforeDetail = func() { close(entered) }
 		done := make(chan error, 1)
 		go func() { done <- f.edit() }()
-		<-entered
+		select {
+		case <-entered:
+		case err := <-done:
+			t.Fatalf("edit failed before provider read: %v", err)
+		case <-time.After(10 * time.Second):
+			t.Fatal("edit did not reach provider read")
+		}
 		select {
 		case err := <-done:
 			t.Fatalf("edit ignored catalogue deletion lock: %v", err)

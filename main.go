@@ -638,7 +638,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	if err := instanceSvc.EnsureManagementSchema(context.Background()); err != nil {
 		panic("instance management schema failed: " + err.Error())
 	}
-	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance, instanceSvc.StartMachineRefundMaintenance, instanceSvc.StartUpgradeMaintenance)
+	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance, instanceSvc.StartExpirySyncMaintenance, instanceSvc.StartMachineRefundMaintenance, instanceSvc.StartUpgradeMaintenance)
 	durableDispatcher := paymentservice.NewDeferredDurableDispatcher(db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc})
 	*cronStarts = append(*cronStarts, durableDispatcher.Start)
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)

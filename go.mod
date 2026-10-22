@@ -1,6 +1,6 @@
 module ddyidc
 
-go 1.27.2
+go 1.27.3
 
 require (
 	github.com/alibabacloud-go/darabonba-openapi/v2 v2.2.2

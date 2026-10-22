@@ -6,6 +6,7 @@ import (
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/notification"
 	"ddyidc/internal/shared/snowflake"
+	"encoding/json"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -125,5 +126,14 @@ func (s *Service) AutoRenewalWarning(ctx context.Context, user, id int64) string
 func autoRenewalApprovalRevision(h dom.Host, q RenewalOption) string {
 	q.Cost = 0
 	q.ExchangeRate = ""
+	// The user chooses the automatic cycle independently of a manual renewal.
+	// Completing that cycle must not invalidate its own recurring approval.
+	var snapshot map[string]json.RawMessage
+	if json.Unmarshal([]byte(h.ConfigSnapshot), &snapshot) == nil && snapshot != nil {
+		value, _ := json.Marshal(q.Cycle)
+		snapshot["billingCycle"] = value
+		raw, _ := json.Marshal(snapshot)
+		h.ConfigSnapshot = string(raw)
+	}
 	return renewalIntentRevision(h, q)
 }

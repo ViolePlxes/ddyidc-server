@@ -213,7 +213,7 @@ func (s *Service) step(ctx context.Context) (bool, error) {
 		if err = json.Unmarshal([]byte(row.Payload), &e); err != nil {
 			return err
 		} // delivery is in this same transaction
-		if e.Scene == "renewal_quote_paused" {
+		if e.Scene == "renewal_quote_paused" || e.Scene == "product_lifecycle" {
 			var host struct {
 				CustomerID       int64
 				OwnershipVersion int64

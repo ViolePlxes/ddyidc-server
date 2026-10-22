@@ -4,6 +4,7 @@ import (
 	"context"
 	billing "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
+	"ddyidc/internal/notification"
 	order "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/distsync"
@@ -19,7 +20,7 @@ import (
 	"time"
 )
 
-func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64, method string) (bool, error) {
+func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64, method string) (handled bool, resultErr error) {
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	if s.db == nil {
@@ -46,6 +47,20 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	if o.Status != 2 && o.Status != 6 {
 		return true, errors.New("续费订单尚未支付")
 	}
+	defer func() {
+		if resultErr != nil {
+			// Queue an owner-bound, idempotent attention notice. Actual provider
+			// details remain in the existing order/task audit, never in the inbox.
+			call, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if e := s.db.WithContext(call).Transaction(func(tx *gorm.DB) error {
+				return notification.EnqueueProductLifecycle(tx, notification.Event{Key: fmt.Sprintf("renewal_attention:%d", r.ID), RecipientID: r.CustomerID, Type: "billing", Scene: "product_lifecycle", Title: "产品续费待核对", Summary: "续费订单已支付，但服务续费结果尚未确认，请核对订单或联系客服。系统不会重复扣费。", Content: "续费订单已支付，但服务续费结果尚未确认，请核对订单或联系客服。系统不会重复扣费。", BusinessType: "instance", BusinessID: fmt.Sprint(r.InstanceID), OwnershipVersion: r.OwnershipVersion})
+			}); e != nil {
+				log.Print("RENEWAL attention notice persistence failed")
+			}
+			notification.Wake()
+		}
+	}()
 	h, e := s.owned(ctx, customer, r.InstanceID)
 	if e != nil {
 		return true, e
@@ -55,6 +70,9 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	}
 	if h.Status == 6 {
 		return true, errors.New("实例已删除，续费待人工核对")
+	}
+	if err := s.productionMutationAllowed(ctx, h.ID); err != nil {
+		return true, err
 	}
 	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
@@ -209,6 +227,9 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		if e := json.Unmarshal([]byte(host.ConfigSnapshot), &snapshot); e != nil {
 			return e
 		}
+		if _, exists := snapshot["originalBillingCycle"]; !exists {
+			snapshot["originalBillingCycle"] = snapshot["billingCycle"]
+		}
 		snapshot["billingCycle"] = r.Cycle
 		raw, e := json.Marshal(snapshot)
 		if e != nil {
@@ -239,6 +260,9 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		if err := pointsevents.Enqueue(tx, pointsevents.Event{Key: fmt.Sprintf("renew:%d", r.ID), UserID: r.CustomerID, Event: "renew", RefID: paid.OrderNo, AmountCents: int64(r.Amount)}); err != nil {
 			return err
 		}
+		if err := notification.EnqueueProductLifecycle(tx, notification.Event{Key: fmt.Sprintf("renewal_complete:%d", r.ID), RecipientID: r.CustomerID, Type: "billing", Scene: "product_lifecycle", Title: "产品续费成功", Summary: "续费成功，到期时间已更新。", Content: fmt.Sprintf("产品续费成功，到期时间已更新至%s。", formatTime(expiry)), BusinessType: "instance", BusinessID: fmt.Sprint(r.InstanceID), OwnershipVersion: r.OwnershipVersion}); err != nil {
+			return err
+		}
 		return tx.Create(&dom.Event{InstanceID: r.InstanceID, EventType: "renew", OperatorType: 3, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: fmt.Sprintf(`{"orderId":"%d","expiresAt":%q}`, r.OrderID, formatTime(expiry)), CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}).Error
 	})
 }
@@ -260,6 +284,7 @@ func (s *Service) renewalTick(ctx context.Context) {
 	if s.db == nil {
 		return
 	}
+	s.reconcileAutoRenewAttempts(ctx)
 	// Paid renewals execute only through their transactional durable intention.
 	// Unknown outcomes remain visible for reconciliation, not minute-by-minute
 	// unbounded provider calls or a second execution path.
@@ -272,24 +297,16 @@ func (s *Service) renewalTick(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		claim := s.db.WithContext(ctx).Model(&RenewalSettings{}).Where("instance_id=? AND customer_id=? AND enabled=1 AND updated_at<=?", h.ID, h.CustomerID, time.Now().Add(-15*time.Minute)).Update("updated_at", time.Now())
-		if claim.Error != nil || claim.RowsAffected != 1 {
-			continue
-		}
-		_, snap := parseSnapshot(h.ConfigSnapshot)
-		if snap.BillingCycle == "" {
+		var approval AutoRenewalQuote
+		if e := s.db.WithContext(ctx).Where("instance_id=? AND customer_id=? AND ownership_version=?", h.ID, h.CustomerID, h.OwnershipVersion).Take(&approval).Error; e != nil {
+			s.pauseAutoRenewalQuote(ctx, h, "approval_required", "", "", "")
 			continue
 		}
 
-		if !s.autoRenewalQuoteAllowed(ctx, h, snap.BillingCycle) {
+		if !s.autoRenewalQuoteAllowed(ctx, h, approval.Cycle) {
 			continue
 		}
-		o, e := s.CreateRenewal(ctx, h.CustomerID, h.ID, snap.BillingCycle)
-		if e != nil {
-			continue
-		}
-		oid := parseHostID(o.OrderID)
-		s.PayRenewalBalance(ctx, h.CustomerID, h.ID, oid, "system_job")
+		s.autoRenewOnce(ctx, h, approval.Cycle)
 	}
 }
 
@@ -297,6 +314,6 @@ func (s *Service) autoRenewalCandidates(ctx context.Context) ([]dom.Host, error)
 	var hosts []dom.Host
 	// GORM requires explicit AS with a schema-qualified table to scope its
 	// implicit soft-delete predicate to i instead of the model table name.
-	err := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4,5) AND i.expires_at<=? AND i.expires_at>? AND r.updated_at<=?", time.Now().Add(72*time.Hour), time.Now().Add(-7*24*time.Hour), time.Now().Add(-15*time.Minute)).Limit(50).Find(&hosts).Error
+	err := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4) AND i.expires_at<=? AND i.expires_at>?", time.Now().Add(24*time.Hour), time.Now()).Where("NOT EXISTS (SELECT 1 FROM instance.instance_production_locks pl WHERE pl.instance_id=i.id AND pl.enabled=1)").Where("NOT EXISTS (SELECT 1 FROM instance.instance_product_lifecycle l WHERE l.instance_id=i.id AND l.ownership_version=i.ownership_version AND l.base_expiry=i.expires_at AND l.kind='auto_renew_attempt' AND (l.state<>'insufficient' OR l.next_attempt_at>NOW(3)))").Limit(50).Find(&hosts).Error
 	return hosts, err
 }
