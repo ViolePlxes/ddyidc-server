@@ -525,3 +525,17 @@ func (s *Service) refundMutationAllowed(ctx context.Context, tx *gorm.DB, id int
 	}
 	return nil
 }
+
+func (s *Service) renewalRefundAllowed(ctx context.Context, tx *gorm.DB, id int64) error {
+	if tx == nil {
+		return nil
+	}
+	var count int64
+	if e := tx.WithContext(ctx).Table("payment.machine_refund_legs l").Joins("JOIN payment.machine_refund_actions a ON a.application_id=l.application_id").Where("l.instance_id=? AND (a.state<>'rejected' OR l.state NOT IN ('prepared','rejected'))", id).Count(&count).Error; e != nil {
+		return e
+	}
+	if count > 0 {
+		return errors.New("实例已有人工退款操作，不能再变更服务权益")
+	}
+	return nil
+}

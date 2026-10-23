@@ -71,9 +71,6 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	if h.Status == 6 {
 		return true, errors.New("实例已删除，续费待人工核对")
 	}
-	if err := s.productionMutationAllowed(ctx, h.ID); err != nil {
-		return true, err
-	}
 	p, warning := s.providerContext(ctx, h)
 	if warning != "" {
 		return true, ErrUnsupported
@@ -314,6 +311,6 @@ func (s *Service) autoRenewalCandidates(ctx context.Context) ([]dom.Host, error)
 	var hosts []dom.Host
 	// GORM requires explicit AS with a schema-qualified table to scope its
 	// implicit soft-delete predicate to i instead of the model table name.
-	err := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4) AND i.expires_at<=? AND i.expires_at>?", time.Now().Add(24*time.Hour), time.Now()).Where("NOT EXISTS (SELECT 1 FROM instance.instance_production_locks pl WHERE pl.instance_id=i.id AND pl.enabled=1)").Where("NOT EXISTS (SELECT 1 FROM instance.instance_product_lifecycle l WHERE l.instance_id=i.id AND l.ownership_version=i.ownership_version AND l.base_expiry=i.expires_at AND l.kind='auto_renew_attempt' AND (l.state<>'insufficient' OR l.next_attempt_at>NOW(3)))").Limit(50).Find(&hosts).Error
+	err := s.db.WithContext(ctx).Table("instance.instances AS i").Select("i.*").Joins("JOIN instance.instance_renewal_settings r ON r.instance_id=i.id AND r.customer_id=i.customer_id AND r.enabled=1").Where("i.deleted_at IS NULL AND i.status IN (3,4) AND i.expires_at<=? AND i.expires_at>?", time.Now().Add(24*time.Hour), time.Now()).Where("NOT EXISTS (SELECT 1 FROM instance.instance_product_lifecycle l WHERE l.instance_id=i.id AND l.ownership_version=i.ownership_version AND l.base_expiry=i.expires_at AND l.kind='auto_renew_attempt' AND (l.state<>'insufficient' OR l.next_attempt_at>NOW(3)))").Limit(50).Find(&hosts).Error
 	return hosts, err
 }

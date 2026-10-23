@@ -1,0 +1,1 @@
+INSERT IGNORE INTO system.notification_templates (id,scene,channel,title,content,enabled) VALUES (905500000000001,'productionLock','email','生产锁操作验证码','您的生产锁操作验证码为 {{code}}，{{minutes}} 分钟内有效。仅用于本次实例操作，请勿向他人提供。',1);

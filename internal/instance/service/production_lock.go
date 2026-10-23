@@ -19,9 +19,12 @@ type ProductionLock struct {
 
 func (ProductionLock) TableName() string { return "instance.instance_production_locks" }
 
-func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, enabled bool) error {
+func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, enabled bool, verification ...ProductionLockEmailInput) error {
 	if _, err := s.owned(ctx, customer, id); err != nil {
 		return err
+	}
+	if len(verification) != 1 || verification[0].Code == "" {
+		return errors.New("请先完成邮箱验证码验证")
 	}
 	if s.db == nil {
 		return ErrUnsupported
@@ -30,6 +33,9 @@ func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, ena
 		var h dom.Host
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customer).Take(&h).Error; err != nil {
 			return ErrNotFound
+		}
+		if err := s.verifyProductionLockEmailTx(ctx, tx, h, enabled, verification[0]); err != nil {
+			return err
 		}
 		if enabled {
 			if h.Status == 2 || normalizePower(h.PowerStatus) == "operating" || normalizePower(h.PowerStatus) == "starting" || normalizePower(h.PowerStatus) == "stopping" || normalizePower(h.PowerStatus) == "rebooting" || normalizePower(h.PowerStatus) == "reinstalling" {
@@ -42,18 +48,10 @@ func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, ena
 			if existing.Enabled {
 				return nil
 			}
-			// Do not lock an operation that has already charged or reached a supplier.
-			var busy int64
-			if err := tx.Table("instance.instance_renewals r").Where("r.instance_id=? AND r.state NOT IN ('completed','cancelled') AND (r.state<>'unpaid' OR EXISTS (SELECT 1 FROM `order`.orders o WHERE o.id=r.order_id AND o.status IN (2,6)))", id).Count(&busy).Error; err != nil {
-				return err
-			}
-			if busy > 0 {
-				return errors.New("实例正在续费，请等待处理完成后开启生产锁")
-			}
 			if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
 				return err
 			}
-			if err := s.refundHostUnlocked(tx, id); err != nil {
+			if err := s.productionLockTradeAllowed(tx, id); err != nil {
 				return err
 			}
 			if err := s.upgradeMutationAllowed(ctx, tx, id); err != nil {
@@ -67,6 +65,7 @@ func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, ena
 		}
 		actor, operator := actionActor(ctx, customer)
 		state := `{"enabled":false}`
+
 		if enabled {
 			state = `{"enabled":true}`
 		}
@@ -79,8 +78,23 @@ func (s *Service) SetProductionLock(ctx context.Context, customer, id int64, ena
 }
 
 func (s *Service) productionMutationAllowed(ctx context.Context, id int64) error {
+
 	if s.db == nil {
 		return nil
 	}
 	return productionlock.Check(s.db.WithContext(ctx), id)
+}
+
+// Renewals are intentionally independent of the production lock.
+func (s *Service) productionLockTradeAllowed(tx *gorm.DB, id int64) error {
+	for _, q := range []struct{ table, where string }{{"system.marketplace_listings", "product_id=? AND status IN ('pending','on_sale','locked')"}, {"system.push_transfers", "instance_id=? AND status='pending'"}} {
+		var n int64
+		if e := tx.Table(q.table).Where(q.where, id).Count(&n).Error; e != nil {
+			return e
+		}
+		if n > 0 {
+			return ErrTradingLocked
+		}
+	}
+	return nil
 }

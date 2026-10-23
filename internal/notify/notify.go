@@ -144,7 +144,15 @@ func (s *VerificationService) send(w http.ResponseWriter, r *http.Request, chann
 		respond(w, http.StatusBadRequest, 400, nil, "不支持的验证码场景")
 		return
 	}
-	base := s.key(channel, target, scene)
+	s.sendScoped(w, r, channel, target, scene, scene)
+}
+
+func (s *VerificationService) sendScoped(w http.ResponseWriter, r *http.Request, channel, target, scene, keyScene string) {
+	if !validVerificationScene(scene) && scene != "productionLock" {
+		respond(w, http.StatusBadRequest, 400, nil, "不支持的验证码场景")
+		return
+	}
+	base := s.key(channel, target, keyScene)
 	if cache.RDB != nil {
 		reserved, err := s.reserveRedisSend(r.Context(), channel, target, scene, clientip.FromRequest(r))
 		if err != nil {
@@ -340,7 +348,7 @@ func (s *VerificationService) key(channel, target, scene string) string {
 }
 func validScene(v string) bool {
 	switch v {
-	case "register", "login", "reset", "bind", "bindMobile", "bindEmail", "order", "activation", "expiry", "expiry_digest", "recharge", "ticket_reply", "ticket_new":
+	case "register", "login", "reset", "bind", "bindMobile", "bindEmail", "productionLock", "order", "activation", "expiry", "expiry_digest", "recharge", "ticket_reply", "ticket_new":
 		return true
 	}
 	return false

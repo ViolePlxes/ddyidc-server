@@ -365,7 +365,7 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 		status = StatusFailed
 	}
 	snapshot := content
-	if code := params["code"]; code != "" && validVerificationScene(template.Scene) {
+	if code := params["code"]; code != "" && (validVerificationScene(template.Scene) || template.Scene == "productionLock") {
 		snapshot = strings.ReplaceAll(snapshot, code, "******")
 	}
 	logEntry := &NotifyLog{Scene: template.Scene, Channel: channel, Target: masked, TemplateID: &template.ID, ContentSnapshot: snapshot, Status: status, Error: errorText, RequestID: requestID, BusinessID: businessID, CreatedAt: m.now()}
