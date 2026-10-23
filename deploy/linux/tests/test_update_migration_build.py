@@ -23,7 +23,7 @@ try:
     firewall.main()
     with socket.socket() as listener,tempfile.TemporaryDirectory(prefix='ddyidc-migration-cold-build-') as folder:
         listener.bind(('127.0.0.1',0));listener.listen();port=listener.getsockname()[1]
-        root=Path(folder);source=root/'source';source.mkdir(mode=0o755)
+        root=Path(folder).resolve();source=root/'source';source.mkdir(mode=0o755)
         for name in ['go.mod','go.sum']:shutil.copyfile(base.parents[1]/name,source/name)
         (source/'main.go').write_text('package main\nimport _ "github.com/go-sql-driver/mysql"\nfunc main() {}\n')
         original=m.command
@@ -44,6 +44,7 @@ try:
             except Exception:
                 log=root/'last-command.log'
                 if log.exists():print(log.read_text()[-3000:])
+                subprocess.run(['journalctl','--no-pager','-o','cat','-n','30','-u','ddyidc-migration-build-'+str(os.getpid())+'.service'])
                 raise
     print('REAL_COLD_DOWNLOAD_DNS_ONLY_FIREWALL_AND_RUNTIME_FD_OK')
 finally:
