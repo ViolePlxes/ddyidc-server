@@ -9,9 +9,17 @@ def load(name,path):
 m=load('worker',base/'update-migration.py');firewall=load('firewall',base/'build-firewall.py')
 assert os.geteuid()==0
 lookup=pwd.getpwnam;identity=lookup(sys.argv[1]);go=str(Path(sys.argv[2]).resolve());assert Path(go).is_file()
-parent=Path('/etc/ddyidc-build');created_parent=not parent.exists();created=[];created_user=False
+parent=Path('/etc/ddyidc-build');created_parent=not parent.exists();created=[];created_user=False;protected=[];fake_config=None
 if created_parent:parent.mkdir(mode=0o755)
 try:
+    # Hosted runners lack deployment directories. Create only disposable empty
+    # stand-ins; retain production's fail-closed InaccessiblePaths contract.
+    for name in ['/etc/ddyidc','/var/lib/ddyidc','/run/mysqld','/run/redis']:
+        target=Path(name)
+        if not target.exists():target.mkdir(mode=0o755);protected.append(target)
+    config=Path('/etc/ddyidc/config.yaml')
+    if not config.exists():
+        config.write_text('fixture: no-credentials\n');config.chmod(0o644);fake_config=config
     try:builder=lookup('ddyidc-migration-build')
     except KeyError:
         subprocess.run(['useradd','--system','--no-create-home','--shell','/usr/sbin/nologin','ddyidc-migration-build'],check=True);builder=lookup('ddyidc-migration-build');created_user=True
@@ -52,4 +60,6 @@ finally:
         for tool in ('/usr/sbin/iptables','/usr/sbin/ip6tables'):subprocess.run([tool,'-w','-D','OUTPUT','-m','owner','--uid-owner',str(builder.pw_uid),'-j','DDYIDC_BUILD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         subprocess.run(['userdel','ddyidc-migration-build'],check=True)
     for target in reversed(created):target.unlink()
+    if fake_config is not None:fake_config.unlink()
+    for target in reversed(protected):target.rmdir()
     if created_parent:parent.rmdir()
