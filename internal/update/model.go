@@ -84,6 +84,7 @@ type HelperResult struct {
 }
 
 type HelperPlan struct {
+	NeedsMigration    bool   `json:"needsMigration,omitempty"`
 	TaskID            string `json:"taskId"`
 	ParentPID         int    `json:"parentPid"`
 	ParentIdentity    string `json:"parentIdentity,omitempty"`

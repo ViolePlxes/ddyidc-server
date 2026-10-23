@@ -326,6 +326,9 @@ func main() {
 		defer cancel()
 		if err := migrations.Verify(ctx, db.DB, migrationSteps); err != nil {
 			fmt.Fprintln(os.Stderr, "Database migration preflight failed:", err)
+			if migrations.IsPending(err) {
+				os.Exit(20)
+			}
 			os.Exit(2)
 		}
 		if err := notification.VerifyRuntimeAccess(ctx, db.DB); err != nil {

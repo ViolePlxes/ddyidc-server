@@ -80,7 +80,7 @@ def main():
     manifest = {}
     deployed = pathlib.Path('/opt/ddyidc/deploy')
     deployed.mkdir(parents=True, exist_ok=True)
-    for name in ('database-identities.py', 'nginx-ddyidc.conf', 'build-control.py', 'build-firewall.py', 'bootstrap-go.py', 'install-build-isolation.py', 'resource-reclamation.py', 'ddyidc-reclamation.service', 'ddyidc-reclamation.timer'):
+    for name in ('database-identities.py', 'nginx-ddyidc.conf', 'build-control.py', 'build-firewall.py', 'bootstrap-go.py', 'install-build-isolation.py', 'resource-reclamation.py', 'ddyidc-reclamation.service', 'ddyidc-reclamation.timer', 'update-migration.py', 'install-update-migration.py', 'ddyidc-update-migration.service'):
         data = (source / name).read_bytes()
         target = deployed / name
         target.write_bytes(data)
@@ -96,6 +96,8 @@ def main():
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl','enable','--now','ddyidc-build-firewall.service'],check=True)
     if marker.exists(): subprocess.run(['systemctl','enable','--now','ddyidc-reclamation.timer'],check=True)
+    if pathlib.Path('/etc/sudoers.d/ddyidc-update').exists():
+        subprocess.run(['/usr/bin/python3',str(source/'install-update-migration.py'),str(source)],check=True)
     print('Isolated build infrastructure installed; business database unchanged. Restart API to apply supplementary group.')
 
 if __name__ == '__main__':

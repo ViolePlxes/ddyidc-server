@@ -1,0 +1,10 @@
+{
+  "055_production_lock_email.sql": {
+    "sha256": "1450155761fe6181e8968da9994d1c0b8805cdc98646837c1b0395a9bc5cd608",
+    "rollbackCompatible": true
+  },
+  "056_resource_reclamation.sql": {
+    "sha256": "01dde2000d4bfe88769cb399c58da8a7613c7fba22a33b4b1ea3dc4168629125",
+    "rollbackCompatible": true
+  }
+}

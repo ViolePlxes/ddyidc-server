@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 )
 
-//go:embed deploy/linux/build-control.py deploy/linux/build-firewall.py deploy/linux/bootstrap-go.py deploy/linux/install-build-isolation.py deploy/linux/database-identities.py deploy/linux/nginx-ddyidc.conf deploy/linux/resource-reclamation.py deploy/linux/ddyidc-reclamation.service deploy/linux/ddyidc-reclamation.timer
+//go:embed deploy/linux/build-control.py deploy/linux/build-firewall.py deploy/linux/bootstrap-go.py deploy/linux/install-build-isolation.py deploy/linux/database-identities.py deploy/linux/nginx-ddyidc.conf deploy/linux/resource-reclamation.py deploy/linux/ddyidc-reclamation.service deploy/linux/ddyidc-reclamation.timer deploy/linux/update-migration.py deploy/linux/install-update-migration.py deploy/linux/ddyidc-update-migration.service
 var releaseInfrastructure embed.FS
 
 func installReleaseInfrastructure() error {
@@ -21,7 +21,7 @@ func installReleaseInfrastructure() error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	for _, name := range []string{"build-control.py", "build-firewall.py", "bootstrap-go.py", "install-build-isolation.py", "database-identities.py", "nginx-ddyidc.conf", "resource-reclamation.py", "ddyidc-reclamation.service", "ddyidc-reclamation.timer"} {
+	for _, name := range []string{"build-control.py", "build-firewall.py", "bootstrap-go.py", "install-build-isolation.py", "database-identities.py", "nginx-ddyidc.conf", "resource-reclamation.py", "ddyidc-reclamation.service", "ddyidc-reclamation.timer", "update-migration.py", "install-update-migration.py", "ddyidc-update-migration.service"} {
 		data, e := releaseInfrastructure.ReadFile("deploy/linux/" + name)
 		if e != nil {
 			return e

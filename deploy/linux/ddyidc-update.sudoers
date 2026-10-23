@@ -1,5 +1,6 @@
 # The application may queue only the fixed, audited update helper unit.
 ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ddyidc-update-helper.service
+ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl --no-block start ddyidc-update-migration.service
 ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl stop ddyidc.service
 ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl start ddyidc.service
 ddyidc ALL=(root) NOPASSWD: /usr/bin/systemctl restart ddyidc.service

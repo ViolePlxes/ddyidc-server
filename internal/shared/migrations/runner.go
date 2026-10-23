@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -134,11 +135,20 @@ func Apply(ctx context.Context, database *sql.DB, steps []Step, retryDirty bool,
 }
 
 // Verify is read-only and is suitable for the restricted runtime identity.
+type PendingError struct{ Name string }
+
+func (e *PendingError) Error() string { return fmt.Sprintf("migration %s required", e.Name) }
+
+func IsPending(err error) bool { var pending *PendingError; return errors.As(err, &pending) }
+
 func Verify(ctx context.Context, database *sql.DB, steps []Step) error {
 	for _, step := range steps {
 		var hash, state string
 		if err := database.QueryRowContext(ctx, "SELECT checksum,state FROM system.schema_migrations WHERE name=?", step.Name).Scan(&hash, &state); err != nil {
-			return fmt.Errorf("migration %s required", step.Name)
+			if errors.Is(err, sql.ErrNoRows) {
+				return &PendingError{Name: step.Name}
+			}
+			return fmt.Errorf("migration history unavailable: %w", err)
 		}
 		if hash != checksum(step) || state != "complete" {
 			return fmt.Errorf("migration %s is incomplete or changed", step.Name)
