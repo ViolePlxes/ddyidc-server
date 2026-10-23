@@ -19,6 +19,11 @@ func (m *Manager) restoreMigrationSource(ctx context.Context, result HelperResul
 	}
 	raw, err := os.ReadFile(m.config.helperPlanPath())
 	if os.IsNotExist(err) {
+		// Older installed helpers remove their plan when publishing a result.
+		// A pre-switch refusal still needs to undo the prepared source checkout.
+		if task != nil && task.Target == TargetBackend && formatID(task.ID) == result.TaskID && task.Status == StatusRunning && task.BeforeCommit != "" {
+			return true, m.resetWorktree(ctx, m.config.Backend, task.BeforeCommit)
+		}
 		return false, nil
 	}
 	if err != nil {
@@ -28,7 +33,7 @@ func (m *Manager) restoreMigrationSource(ctx context.Context, result HelperResul
 	if err = json.Unmarshal(raw, &plan); err != nil {
 		return false, err
 	}
-	if !plan.NeedsMigration || plan.TaskID != result.TaskID {
+	if plan.TaskID != result.TaskID {
 		return false, nil
 	}
 	if task == nil || plan.BeforeCommit != task.BeforeCommit || plan.Workspace != m.config.Backend.Workspace || plan.CurrentExecutable != m.config.Backend.Executable || plan.ResultFile != filepath.Join(m.config.ResultDir, result.TaskID+".result.json") {

@@ -163,13 +163,8 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	if !needsMigration {
 		_ = m.repo.Update(context.Background(), task.ID, map[string]any{"progress": 90, "log": logValue.String() + "\n后端进程切换中"})
 	}
-	// The independent coordinator must obtain the exclusive maintenance barrier.
-	// Return from workgate.Run first; keep the old API online during its build/backup.
-	if needsMigration {
-		return
-	}
-	time.Sleep(350 * time.Millisecond)
-	m.exit(0)
+	// Return from workgate.Run and leave the API online. The independent helper
+	// alone stops it after admission succeeds; queuing a unit is not admission.
 }
 
 func (m *Manager) runFrontend(ctx context.Context, task *Task) {

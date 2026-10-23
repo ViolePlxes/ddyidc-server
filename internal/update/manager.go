@@ -32,7 +32,6 @@ type Manager struct {
 	locker     Locker
 	httpClient *http.Client
 	freeSpace  func(string) (uint64, error)
-	exit       func(int)
 	startUnit  func(string, string, string) error
 	pid        int
 	mu         sync.Mutex
@@ -43,7 +42,7 @@ func NewManager(database *gorm.DB, redisClient *redis.Client, config Config) (*M
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
-	manager := &Manager{config: config, database: database, redis: redisClient, repo: NewRepository(database), runner: OSRunner{}, files: OSFileOps{}, locker: NewRedisLocker(redisClient), httpClient: defaultHTTPClient(), freeSpace: diskFree, exit: os.Exit, startUnit: startSystemdUnit, pid: os.Getpid()}
+	manager := &Manager{config: config, database: database, redis: redisClient, repo: NewRepository(database), runner: OSRunner{}, files: OSFileOps{}, locker: NewRedisLocker(redisClient), httpClient: defaultHTTPClient(), freeSpace: diskFree, startUnit: startSystemdUnit, pid: os.Getpid()}
 	if err := manager.repo.VerifySchema(context.Background()); err != nil {
 		return nil, fmt.Errorf("更新任务表未就绪，请先人工执行 migrations/001_create_update_tasks.sql: %w", err)
 	}

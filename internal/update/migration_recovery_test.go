@@ -47,7 +47,25 @@ func TestMigrationFailureRestoresOnlyItsOwnPreparedSource(t *testing.T) {
 	plan.BeforeCommit = "before"
 	plan.NeedsMigration = false
 	write()
-	if ok, err := m.restoreMigrationSource(context.Background(), result, task); ok || err != nil {
-		t.Fatal("ordinary helper plan was changed")
+	if ok, err := m.restoreMigrationSource(context.Background(), result, task); !ok || err != nil {
+		t.Fatal("ordinary pre-switch refusal did not restore its source", ok, err)
+	}
+}
+
+func TestLegacyHelperRefusalRestoresSourceWithoutPlan(t *testing.T) {
+	runner := &migrationRecoveryRunner{}
+	m := &Manager{config: Config{ResultDir: t.TempDir(), GitPath: "/usr/bin/git", Backend: TargetConfig{Workspace: "/prepared/source"}}, runner: runner}
+	task := &Task{ID: 99, Target: TargetBackend, Status: StatusRunning, BeforeCommit: "before"}
+	result := HelperResult{TaskID: "99", Status: StatusFailed, RollbackStatus: "not_required"}
+	if ok, err := m.restoreMigrationSource(context.Background(), result, task); !ok || err != nil || len(runner.calls) != 1 {
+		t.Fatal("legacy rejection left prepared source installed", ok, err)
+	}
+	for _, foreign := range []*Task{nil, {ID: 100, Target: TargetBackend, Status: StatusRunning, BeforeCommit: "before"}, {ID: 99, Target: TargetFrontend, Status: StatusRunning, BeforeCommit: "before"}, {ID: 99, Target: TargetBackend, Status: StatusSuccess, BeforeCommit: "before"}} {
+		if ok, err := m.restoreMigrationSource(context.Background(), result, foreign); ok || err != nil {
+			t.Fatal("unrelated result admitted", ok, err)
+		}
+	}
+	if len(runner.calls) != 1 {
+		t.Fatal("unrelated checkout changed")
 	}
 }
