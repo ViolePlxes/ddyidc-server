@@ -30,6 +30,7 @@ jobs:
           go build -trimpath -o /tmp/ddyidc-server .
           sudo env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/linux -p 'test_resource_reclamation.py'
           sudo env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/linux -p 'test_update_migration.py'
+          sudo env PYTHONDONTWRITEBYTECODE=1 python3 deploy/linux/tests/test_update_migration_build.py "$(id -un)" "$(command -v go)" > update-migration-build.log 2>&1
           bash deploy/linux/tests/test_resource_reclamation.sh > resource-reclamation.log 2>&1
           bash deploy/linux/tests/test_update_migration.sh > update-migration.log 2>&1
           python3 deploy/linux/tests/test_nginx_proxy.py
@@ -80,3 +81,4 @@ jobs:
             renewal-product-controls.log
             resource-reclamation.log
             update-migration.log
+            update-migration-build.log

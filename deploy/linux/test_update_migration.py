@@ -75,19 +75,28 @@ class ControlledMigrationTests(unittest.TestCase):
             self.assertEqual(len(options['pass_fds']),1)
             self.assertNotIn('--migration-socket',args[0])
 
-    def test_build_has_fresh_dynamic_identity_no_config_and_no_shared_cache(self):
+    def test_build_has_dedicated_identity_no_config_and_no_shared_cache(self):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder);source=root/'source';source.mkdir()
             def build(args,**kwargs):
-                self.assertIn('DynamicUser=yes',args)
+                self.assertIn('--uid=ddyidc-migration-build',args)
+                self.assertNotIn('--uid=ddyidc-build',args)
                 self.assertIn('GOTOOLCHAIN=auto',args)
                 self.assertIn('GOSUMDB=sum.golang.org',args)
                 self.assertIn('GOWORK=off',args)
+                mounts=[arg for arg in args if arg.startswith('BindReadOnlyPaths=')]
+                self.assertEqual(len(mounts),1)
+                self.assertIn('/etc/ddyidc-build/resolv.conf:/etc/resolv.conf ',mounts[0])
+                self.assertIn(str(source)+':/tmp/ddyidc-migration-source',mounts[0])
                 self.assertTrue(any('InaccessiblePaths=/etc/ddyidc' in arg for arg in args))
                 (root/'output/candidate').write_bytes(b'\x7fELFtrusted')
-            with mock.patch.object(m,'command',side_effect=build),mock.patch.object(m.subprocess,'run'):
+            with mock.patch.object(m,'build_network_guard',return_value='127.0.0.53'),mock.patch.object(m,'command',side_effect=build),mock.patch.object(m.subprocess,'run'):
                 candidate=m.build_candidate(source,root,'a'*40,lambda:None)
             self.assertEqual(candidate.read_bytes(),b'\x7fELFtrusted')
+
+    def test_builder_rejects_missing_ipv6_uid_firewall_hook(self):
+        with mock.patch.object(m,'command'),mock.patch.object(m.pwd,'getpwnam',return_value=type('User',(),{'pw_uid':1234})()),mock.patch.object(m.subprocess,'check_output',side_effect=['-A OUTPUT -m owner --uid-owner 1234 -j DDYIDC_BUILD\n','']):
+            with self.assertRaises(m.Refused):m.build_network_guard(lambda:None)
 
     def test_root_result_is_runtime_readable_and_does_not_follow_link(self):
         if os.geteuid()!=0:self.skipTest('root filesystem boundary test')

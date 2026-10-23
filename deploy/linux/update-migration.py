@@ -7,6 +7,7 @@ Only reviewed, checksum-pinned, backwards-compatible migrations may run unattend
 import fcntl
 import hashlib
 import importlib.machinery
+import ipaddress
 import json
 import os
 import pwd
@@ -206,19 +207,34 @@ def export_release(policy,expected,folder,guard):
     return source,sha
 
 
+def build_network_guard(guard):
+    command(['/usr/bin/systemctl','is-active','--quiet','ddyidc-build-firewall.service'],guard=guard)
+    uid=str(pwd.getpwnam('ddyidc-migration-build').pw_uid)
+    if uid=='0':raise Refused('unprivileged migration builder required')
+    for tool in ('/usr/sbin/iptables-save','/usr/sbin/ip6tables-save'):
+        rules=subprocess.check_output([tool],text=True)
+        if '-A OUTPUT -m owner --uid-owner '+uid+' -j DDYIDC_BUILD' not in rules.splitlines():raise Refused('migration builder network guard unavailable')
+    servers=Path('/etc/ddyidc-build/dns.json')
+    if servers.resolve()!=servers or servers.stat().st_uid!=0 or servers.stat().st_mode&0o022:raise Refused('trusted build DNS required')
+    allowed=' '.join(str(ipaddress.ip_address(value)) for value in json.loads(servers.read_text()))
+    if not allowed:raise Refused('build DNS unavailable')
+    return allowed
+
+
 def build_candidate(source,folder,sha,guard):
+    allowed=build_network_guard(guard)
     output=folder/'output';output.mkdir(mode=0o777);output.chmod(0o777)
     unit='ddyidc-migration-build-'+str(os.getpid())
     metadata=folder/'build-unit.json';metadata.write_text(json.dumps({'unit':unit,'pid':os.getpid(),'identity':process_identity(os.getpid())}));metadata.chmod(0o600)
     args=['/usr/bin/systemd-run','--quiet','--wait','--pipe','--collect','--unit='+unit,
-          '-p','DynamicUser=yes','-p','ProtectSystem=strict','-p','ProtectHome=yes',
+          '--uid=ddyidc-migration-build','--gid=ddyidc-migration-build','-p','ProtectSystem=strict','-p','ProtectHome=yes',
           '-p','NoNewPrivileges=yes','-p','PrivateTmp=yes','-p','CapabilityBoundingSet=',
           '-p','KillMode=control-group','-p','RuntimeMaxSec=900','-p','MemoryMax=3G','-p','ProtectProc=invisible',
           '-p','RestrictSUIDSGID=yes','-p','PrivateDevices=yes',
           '-p','IPAddressDeny=127.0.0.0/8 ::1/128 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16',
+          '-p','IPAddressAllow='+allowed,
           '-p','InaccessiblePaths=/etc/ddyidc /var/lib/ddyidc /run/mysqld /run/redis',
-          '-p','BindReadOnlyPaths=/etc/ddyidc-build/resolv.conf:/etc/resolv.conf',
-          '-p','BindReadOnlyPaths='+str(source)+':/tmp/ddyidc-migration-source',
+          '-p','BindReadOnlyPaths=/etc/ddyidc-build/resolv.conf:/etc/resolv.conf '+str(source)+':/tmp/ddyidc-migration-source',
           '-p','BindPaths='+str(output)+':/tmp/ddyidc-migration-output',
           '--working-directory=/tmp/ddyidc-migration-source',
           '/usr/bin/env','-i','PATH=/usr/local/go/bin:/usr/bin:/bin','HOME=/tmp/ddyidc-migration-output',

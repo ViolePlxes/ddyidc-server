@@ -6,10 +6,12 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import pwd
+import hashlib
 
 
 class InstallTransaction:
-    def __init__(self):self.files={};self.directories=[]
+    def __init__(self):self.files={};self.directories=[];self.users=[];self.rules=[]
     def __enter__(self):return self
     def watch(self,path):
         if path in self.files:return
@@ -32,6 +34,9 @@ class InstallTransaction:
                 finally:
                     if os.path.exists(name):os.unlink(name)
         for path in reversed(self.directories):path.rmdir()
+        for tool,uid in self.rules:subprocess.run([tool,'-w','-D','OUTPUT','-m','owner','--uid-owner',str(uid),'-j','DDYIDC_BUILD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        for name,uid in self.users:
+            if pwd.getpwnam(name).pw_uid==uid:subprocess.run(['userdel',name],check=True)
         subprocess.run(['systemctl','daemon-reload'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         return False
 
@@ -64,6 +69,20 @@ def main():
     if subprocess.run(['systemctl','is-active','--quiet','ddyidc-update-migration.service'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0:raise RuntimeError('migration service is active; installation refused')
     with InstallTransaction() as transaction:
         source=Path(a.source).resolve()
+        try:builder=pwd.getpwnam('ddyidc-migration-build')
+        except KeyError:
+            subprocess.run(['useradd','--system','--no-create-home','--shell','/usr/sbin/nologin','ddyidc-migration-build'],check=True)
+            builder=pwd.getpwnam('ddyidc-migration-build');transaction.users.append((builder.pw_name,builder.pw_uid))
+        if builder.pw_uid==0 or builder.pw_shell!='/usr/sbin/nologin':raise RuntimeError('dedicated unprivileged migration builder required')
+        for tool in ('/usr/sbin/iptables','/usr/sbin/ip6tables'):
+            if subprocess.run([tool,'-C','OUTPUT','-m','owner','--uid-owner',str(builder.pw_uid),'-j','DDYIDC_BUILD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode:transaction.rules.append((tool,builder.pw_uid))
+        firewall=Path('/opt/ddyidc/bin/ddyidc-build-firewall');transaction.watch(firewall)
+        subprocess.run(['install','-o','root','-g','root','-m','0755',str(source/'build-firewall.py'),str(firewall)],check=True)
+        subprocess.run([str(firewall)],check=True)
+        manifest=Path('/opt/ddyidc/deploy/release-infrastructure.json')
+        if manifest.exists():
+            transaction.watch(manifest);record=json.loads(manifest.read_text());record['installed_firewall']=hashlib.sha256(firewall.read_bytes()).hexdigest()
+            manifest.write_text(json.dumps(record,indent=2)+'\n')
         for directory in (Path('/var/lib/ddyidc-migrations'),Path('/var/backups/ddyidc/update-migrations')):
             # The existing backup parent is preserved; only this new private child is managed.
             if not directory.parent.exists():private_directory(directory.parent,transaction)

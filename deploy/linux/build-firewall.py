@@ -13,7 +13,8 @@ def run(args, check=True):
 def main():
     if os.geteuid() != 0:
         raise SystemExit('root required')
-    uid = str(pwd.getpwnam('ddyidc-build').pw_uid)
+    uids = [str(p.pw_uid) for p in pwd.getpwall() if p.pw_name in ('ddyidc-build','ddyidc-migration-build')]
+    if not uids:raise RuntimeError('dedicated build identity required')
     servers = json.loads(pathlib.Path('/etc/ddyidc-build/dns.json').read_text())
     addresses = json.loads(subprocess.check_output(['/usr/sbin/ip','-j','address']))
     for tool, version, private in (
@@ -38,10 +39,11 @@ def main():
         for address in sorted(local):
             run([tool,'-w','-A',chain,'-d',address,'-j','REJECT'])
         run([tool,'-w','-A',chain,'-j','RETURN'])
-        jump=[tool,'-w','-C','OUTPUT','-m','owner','--uid-owner',uid,'-j',chain]
-        if run(jump,False).returncode:
-            jump[jump.index('-C')]='-I'
-            run(jump)
+        for uid in uids:
+            jump=[tool,'-w','-C','OUTPUT','-m','owner','--uid-owner',uid,'-j',chain]
+            if run(jump,False).returncode:
+                jump[jump.index('-C')]='-I'
+                run(jump)
 
 if __name__=='__main__':
     main()
