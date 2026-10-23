@@ -105,18 +105,29 @@ func (m *Manager) Trigger(ctx context.Context, targetName string, adminID int64)
 	if _, err := m.config.target(targetName); err != nil {
 		return "", err
 	}
- if reclamationConfigured() {
-  target,_:=m.config.target(targetName)
-  free,spaceErr:=m.freeSpace(target.Workspace)
-  if spaceErr!=nil{return "",spaceErr}
-  if free/1024/1024<m.config.MinFreeMB {
-   var last struct{Status string;FinishedAt *time.Time}
-   if err:=m.database.WithContext(ctx).Table("system.reclamation_state").Where("id=1").Take(&last).Error;err!=nil{return "",fmt.Errorf("自动回收状态未就绪")}
-   if last.Status=="success"&&last.FinishedAt!=nil&&time.Since(*last.FinishedAt)<5*time.Minute{return "",fmt.Errorf("自动回收后空间仍不足，请核对必要数据容量或扩容")}
-   if err:=m.requestReclamation(ctx);err!=nil{return "",fmt.Errorf("空间不足且自动回收调度失败")}
-   return "",fmt.Errorf("空间不足，已安排系统自动回收，请稍后重试更新")
-  }
- }
+	if reclamationConfigured() {
+		target, _ := m.config.target(targetName)
+		free, spaceErr := m.freeSpace(target.Workspace)
+		if spaceErr != nil {
+			return "", spaceErr
+		}
+		if free/1024/1024 < m.config.MinFreeMB {
+			var last struct {
+				Status     string
+				FinishedAt *time.Time
+			}
+			if err := m.database.WithContext(ctx).Table("system.reclamation_state").Where("id=1").Take(&last).Error; err != nil {
+				return "", fmt.Errorf("自动回收状态未就绪")
+			}
+			if last.Status == "success" && last.FinishedAt != nil && time.Since(*last.FinishedAt) < 5*time.Minute {
+				return "", fmt.Errorf("自动回收后空间仍不足，请核对必要数据容量或扩容")
+			}
+			if err := m.requestReclamation(ctx); err != nil {
+				return "", fmt.Errorf("空间不足且自动回收调度失败")
+			}
+			return "", fmt.Errorf("空间不足，已安排系统自动回收，请稍后重试更新")
+		}
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	taskID := snowflake.GenID()
@@ -126,7 +137,11 @@ func (m *Manager) Trigger(ctx context.Context, targetName string, adminID int64)
 		return "", fmt.Errorf("获取更新锁: %w", err)
 	}
 	if !acquired {
-        if m.redis!=nil { if owner,e:=m.redis.Get(ctx,updateLockKey).Result();e==nil&&strings.HasPrefix(owner,"reclamation:"){return "",fmt.Errorf("生产资源正在自动回收，请稍后更新")} }
+		if m.redis != nil {
+			if owner, e := m.redis.Get(ctx, updateLockKey).Result(); e == nil && strings.HasPrefix(owner, "reclamation:") {
+				return "", fmt.Errorf("生产资源正在自动回收，请稍后更新")
+			}
+		}
 		return "", ErrUpdateRunning
 	}
 	if running, runningErr := m.repo.Running(ctx); runningErr != nil {
@@ -161,7 +176,11 @@ func firstFeature(changes []Change) string {
 }
 
 func (m *Manager) runTask(task *Task) {
- defer func(){ ctx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel(); _=m.requestReclamation(ctx) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = m.requestReclamation(ctx)
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), m.config.timeout())
 	defer cancel()
 	err := workgate.Run(ctx, func(ctx context.Context) error {

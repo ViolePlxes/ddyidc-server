@@ -1,8 +1,8 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
- "crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -31,7 +31,9 @@ func installReleaseInfrastructure() error {
 		}
 	}
 	args := []string{filepath.Join(dir, "install-build-isolation.py"), dir}
-	if *reclamationTarget != "" { args = append(args, *reclamationTarget) }
+	if *reclamationTarget != "" {
+		args = append(args, *reclamationTarget)
+	}
 	cmd := exec.Command("/usr/bin/python3", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -39,7 +41,10 @@ func installReleaseInfrastructure() error {
 }
 
 func reclamationInfrastructureDigests() map[string]string {
- result:=map[string]string{}
- for _,name:=range []string{"resource-reclamation.py","ddyidc-reclamation.service","ddyidc-reclamation.timer"} {data,_:=releaseInfrastructure.ReadFile("deploy/linux/"+name);result[name]=fmt.Sprintf("%x",sha256.Sum256(data))}
- return result
+	result := map[string]string{}
+	for _, name := range []string{"resource-reclamation.py", "ddyidc-reclamation.service", "ddyidc-reclamation.timer"} {
+		data, _ := releaseInfrastructure.ReadFile("deploy/linux/" + name)
+		result[name] = fmt.Sprintf("%x", sha256.Sum256(data))
+	}
+	return result
 }

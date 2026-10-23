@@ -353,9 +353,10 @@ func main() {
 				}
 			}
 		}
-        if err:=update.VerifyReclamationInfrastructure(ctx,reclamationInfrastructureDigests());err!=nil {
-            fmt.Fprintln(os.Stderr,"Production reclamation preflight failed:",err);os.Exit(2)
-        }
+		if err := update.VerifyReclamationInfrastructure(ctx, reclamationInfrastructureDigests()); err != nil {
+			fmt.Fprintln(os.Stderr, "Production reclamation preflight failed:", err)
+			os.Exit(2)
+		}
 		fmt.Println("Read-only database migration preflight complete; no service or scheduled task started")
 		return
 	}
@@ -382,7 +383,9 @@ func main() {
 			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
-			if err := update.ApplyReclamationPrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil { panic(err) }
+			if err := update.ApplyReclamationPrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 			if err := security.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
