@@ -24,8 +24,14 @@ def main():
         actual=hashlib.sha256(sudoers.read_bytes()).hexdigest()
         if actual != manifest.get('installed_sudoers'):
             raise ValueError('isolated build privilege rule drift')
+        if 'installed_reclamation_worker' in manifest:
+            actual=hashlib.sha256(pathlib.Path('/opt/ddyidc/bin/ddyidc-resource-reclamation').read_bytes()).hexdigest()
+            if actual != manifest['installed_reclamation_worker']: raise ValueError('reclamation worker drift')
         print('Fixed isolated build privilege rule verified')
         return 0
+    if action == 'reclaim':
+        if job_id != '0': raise ValueError('invalid reclamation action')
+        return subprocess.call(['/usr/bin/systemctl','--no-block','start','ddyidc-reclamation.service'])
     if action == 'stop':
         state=subprocess.run(['/usr/bin/systemctl','show',unit+'.service','-p','ActiveState','--value'],capture_output=True,text=True)
         if state.returncode==0 and state.stdout.strip() in ('inactive','failed',''):

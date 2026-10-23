@@ -170,7 +170,7 @@ func (m *Manager) runFrontend(ctx context.Context, task *Task) {
 		m.fail(context.Background(), task, logValue, err, m.frontendRollbackStatus(task.ID))
 		return
 	}
-	m.progress(ctx, task, 95, logValue, "前端原子切换与检查通过，旧版本和资源已保留")
+	m.progress(ctx, task, 95, logValue, "前端原子切换与检查通过；历史资源按生产自动回收策略处理")
 	m.succeed(context.Background(), task, logValue)
 }
 

@@ -80,6 +80,7 @@ import (
 )
 
 var noCron = flag.Bool("no-cron", false, "关闭全部定时任务，仅提供 API")
+var reclamationTarget = flag.String("reclamation-target", "", "仅root显式激活生产资源回收，固定目标114.66.48.129")
 var installBuildIsolation = flag.Bool("install-build-isolation", false, "root安装受限构建基础设施，不读取业务配置、不执行数据库迁移")
 var cronOnly = flag.String("cron-only", "", "仅运行指定模块任务，支持 promo_coupon；与 -no-cron 互斥")
 var promoMaintenance func(context.Context)
@@ -352,6 +353,9 @@ func main() {
 				}
 			}
 		}
+        if err:=update.VerifyReclamationInfrastructure(ctx,reclamationInfrastructureDigests());err!=nil {
+            fmt.Fprintln(os.Stderr,"Production reclamation preflight failed:",err);os.Exit(2)
+        }
 		fmt.Println("Read-only database migration preflight complete; no service or scheduled task started")
 		return
 	}
@@ -378,6 +382,7 @@ func main() {
 			if err := instanceservice.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
+			if err := update.ApplyReclamationPrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil { panic(err) }
 			if err := security.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
@@ -430,6 +435,7 @@ func main() {
 	if err != nil {
 		panic("notify initialization failed: " + err.Error())
 	}
+	c.Update.ReclamationDigests = reclamationInfrastructureDigests()
 	updateManager, err := update.NewManager(db.G, cache.RDB, c.Update)
 	if err != nil {
 		panic("update initialization failed: " + err.Error())

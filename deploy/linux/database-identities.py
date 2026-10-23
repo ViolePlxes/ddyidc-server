@@ -60,8 +60,10 @@ def main():
             privileges = "SELECT,INSERT,UPDATE,DELETE"
             if name == "billing.balance_guard_operators":
                 continue
-            if name in ("system.schema_migrations", "billing.balance_guard_audit"):
+            if name in ("system.schema_migrations", "billing.balance_guard_audit", "system.reclamation_resources", "system.reclamation_runs"):
                 privileges = "SELECT"
+            elif name == "system.reclamation_state":
+                privileges = "SELECT,UPDATE(status,requested_at,requested_by,next_attempt_at)"
             elif name in ("marketing.promo_coupon_events", "marketing.promo_coupon_reconciliations", "billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations", "system.id_registry", "system.todo_audits", "system.todo_event_resolutions", "payment.todo_evidence_files", "payment.todo_withdrawal_accounts", "payment.manual_remittances", "payment.todo_refund_calculations", "payment.todo_refund_requests", "system.cdnsell_admin_audits"):
                 privileges = "SELECT,INSERT"
             elif name in ("order.create_requests", "payment.offline_transfers", "payment.balance_withdrawals", "system.cdnsell_usage_windows", "system.cdnsell_usage_allocations", "system.cdnsell_usage_cursors"):

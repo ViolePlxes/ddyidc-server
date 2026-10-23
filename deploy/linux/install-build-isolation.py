@@ -10,9 +10,28 @@ import sys
 import ipaddress
 
 def main():
-    if os.geteuid() != 0 or len(sys.argv) != 2:
+    if os.geteuid() != 0 or len(sys.argv) not in (2, 3):
         raise SystemExit('trusted root bootstrap required')
     source = pathlib.Path(sys.argv[1])
+    target = sys.argv[2] if len(sys.argv) == 3 else ''
+    if target not in ('', '114.66.48.129'): raise ValueError('production target refused')
+    marker = pathlib.Path('/etc/ddyidc/reclamation-production.json')
+    if target:
+        # Explicit root activation, bound to this machine; never inferred from a VM config.
+        data = {'target': target, 'machine_id': pathlib.Path('/etc/machine-id').read_text().strip(), 'version': 1}
+        if marker.is_symlink(): raise ValueError('linked production binding')
+        if marker.exists():
+            st=marker.stat()
+            if st.st_uid!=0 or st.st_mode & 0o777 != 0o600 or json.loads(marker.read_text()) != data:
+                raise ValueError('production binding mismatch')
+        else:
+            fd = os.open(marker, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                json.dump(data, f);f.flush();os.fsync(f.fileno())
+    for name in ('ddyidc-reclamation.service','ddyidc-reclamation.timer'):
+        subprocess.run(['install','-o','root','-g','root','-m','0644',str(source/name),'/etc/systemd/system/'+name],check=True)
+    subprocess.run(['install','-o','root','-g','root','-m','0755',str(source/'resource-reclamation.py'),'/opt/ddyidc/bin/ddyidc-resource-reclamation'],check=True)
+
     if not any(p.pw_name == 'ddyidc-build' for p in pwd.getpwall()):
         subprocess.run(['useradd', '--system', '--no-create-home', '--shell', '/usr/sbin/nologin', 'ddyidc-build'], check=True)
     subprocess.run(['usermod', '-a', '-G', 'ddyidc-build', 'ddyidc'], check=True)
@@ -61,12 +80,13 @@ def main():
     manifest = {}
     deployed = pathlib.Path('/opt/ddyidc/deploy')
     deployed.mkdir(parents=True, exist_ok=True)
-    for name in ('database-identities.py', 'nginx-ddyidc.conf', 'build-control.py', 'build-firewall.py', 'bootstrap-go.py', 'install-build-isolation.py'):
+    for name in ('database-identities.py', 'nginx-ddyidc.conf', 'build-control.py', 'build-firewall.py', 'bootstrap-go.py', 'install-build-isolation.py', 'resource-reclamation.py', 'ddyidc-reclamation.service', 'ddyidc-reclamation.timer'):
         data = (source / name).read_bytes()
         target = deployed / name
         target.write_bytes(data)
         target.chmod(0o644)
         manifest[name] = hashlib.sha256(data).hexdigest()
+    manifest['installed_reclamation_worker'] = hashlib.sha256(pathlib.Path('/opt/ddyidc/bin/ddyidc-resource-reclamation').read_bytes()).hexdigest()
     manifest['installed_launcher'] = hashlib.sha256(launcher.read_bytes()).hexdigest()
     manifest['installed_sudoers'] = hashlib.sha256(sudoers.read_bytes()).hexdigest()
     manifest['installed_service_override'] = hashlib.sha256(override.read_bytes()).hexdigest()
@@ -75,6 +95,7 @@ def main():
     (deployed / 'release-infrastructure.json').write_text(json.dumps(manifest, indent=2) + '\n')
     subprocess.run(['systemctl', 'daemon-reload'], check=True)
     subprocess.run(['systemctl','enable','--now','ddyidc-build-firewall.service'],check=True)
+    if marker.exists(): subprocess.run(['systemctl','enable','--now','ddyidc-reclamation.timer'],check=True)
     print('Isolated build infrastructure installed; business database unchanged. Restart API to apply supplementary group.')
 
 if __name__ == '__main__':

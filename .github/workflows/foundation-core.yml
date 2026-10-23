@@ -27,6 +27,8 @@ jobs:
           go vet ./...
           go build ./...
           go build -trimpath -o /tmp/ddyidc-server .
+          sudo env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/linux -p 'test_resource_reclamation.py'
+          bash deploy/linux/tests/test_resource_reclamation.sh > resource-reclamation.log 2>&1
           python3 deploy/linux/tests/test_nginx_proxy.py
           python3 deploy/linux/tests/test_ledger_guard_upgrade.py
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
@@ -73,3 +75,4 @@ jobs:
             manual-product-display.log
             adapter-modules.log
             renewal-product-controls.log
+            resource-reclamation.log
