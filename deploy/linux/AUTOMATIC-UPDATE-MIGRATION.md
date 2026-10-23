@@ -10,7 +10,7 @@
 
 1. 通过 root 私有策略，独立从既有生产后端镜像 main 获取源码，必须等于任务目标 SHA；不信任应用工作区、应用编译程序或请求提供的命令。镜像仓库和 SSH Ed25519 主机公钥固定，使用既有后端只读部署密钥，禁止弱化主机校验。
 2. 核对完整迁移历史；只有 tools/architecture/automatic-migrations.json 中校验和一致且 rollbackCompatible=true 的待执行步骤可自动迁移。055、056 已审定；未知、脏、修改过或需人工处理的步骤保持拒绝。新 SQL 从055起必须显式登记自动/人工分类，否则 CI 阻断发布，避免以后再次漏接自动迁移。
-3. 在全新 DynamicUser 与私有缓存中独立构建可信候选，清空继承环境、只读源码，隔离业务配置、数据库/Redis socket 与私网。工具链和依赖走固定 Go 代理与 Go sumdb 校验；复用已安装的公共 DNS 模板。构建失败时旧 API 保持运行。
+3. 在专属无凭据账号 ddyidc-migration-build 与每次独立私有缓存中构建可信候选，清空继承环境、只读源码，隔离业务配置、数据库/Redis socket 与私网。工具链和依赖走固定 Go 代理与 Go sumdb 校验；复用现有 DNS 模板及仅53端口例外的 UID 防火墙；IPv4/IPv6 owner hook 缺失时拒绝构建。构建失败时旧 API 保持运行。
 4. 排空业务写入后取得专属维护屏障，保存 root 私有 mysqldump（应用数据库、触发器、例程和事件），完成落盘及结束标记核验后才停旧 API。迁移前后的 billing.accounts / billing.transactions 实测 CHECKSUM 必须一致。
 5. 用独立构建的 root 私有程序及现行配置副本，通过本地 MySQL socket 执行既有 --migrate，绝不带 --retry-dirty-migration。运行配置与业务账号权限不扩大，既有最小授权函数同步更新新表权限。
 6. 通过已打开的可执行文件 FD，以真实受限运行身份执行 --verify-migrations，不向该身份传递 DBA 凭据。复核账务不变，按所有者释放屏障，清除本次私有构建产物，再交回原切换助手，复用原子替换、健康/版本检查和程序回滚。
@@ -21,7 +21,7 @@
 
 旧 v0.1.145 没有接管代码，不能靠自身的只读校验自动安装 root 服务。需要一次受控 root 初始化，之后已审定的兼容性增量随后台更新自动执行，不再逐版 SSH 补库。用户仍自行点击后台更新业务版本。
 
-从可信发布获取并核对 deploy/linux 下的 update-migration.py、install-update-migration.py、ddyidc-update-migration.service、resource-reclamation.py，然后由 root 执行：
+从可信发布获取并核对 deploy/linux 下的 update-migration.py、install-update-migration.py、ddyidc-update-migration.service、resource-reclamation.py、build-firewall.py，然后由 root 执行：
 
 ```sh
 python3 install-update-migration.py <可信源目录> --enroll-existing
@@ -43,6 +43,12 @@ python3 install-update-migration.py <可信源目录> --enroll-existing
 
 ## 验证
 
-真实 DynamicUser 构建和受限身份 FD 执行已在 VM 验证。root 单元覆盖缺失/脏/变化/未分类历史、备份失败、迁移中断、资金变化、重入、私有路径、主机公钥和权限回滚。独立 MySQL/Redis 套件运行实际后端 CLI、最小运行权限、维护屏障、mysqldump 与还原，模拟 systemctl 以避免停止开发 VM 的真实业务。Go 全量与发布 CI 最终证据见交付记录。
+真实专属账号冷缓存下载、DNS端口白名单与非DNS本机端口阻断和受限身份 FD 执行已在 VM 验证。root 单元覆盖缺失/脏/变化/未分类历史、备份失败、迁移中断、资金变化、重入、私有路径、主机公钥和权限回滚。独立 MySQL/Redis 套件运行实际后端 CLI、最小运行权限、维护屏障、mysqldump 与还原，模拟 systemctl 以避免停止开发 VM 的真实业务。Go 全量与发布 CI 最终证据见交付记录。
 
 备份兼容性：仅修正旧版单语句触发器导出时可执行注释内部多余的末尾终止符，保留触发器内容，真实导出/还原演练验证。发布失败仅凭匹配当前任务的持久计划恢复程序工作区；移交原发布助手后不覆盖其结果。公开结果由运行身份持有0600，root恢复证据保持私有。
+
+## 构建身份与DNS兼容修正
+
+v0.1.147 的 DynamicUser 出站限制阻断了本机DNS模板的53端口；旧的无依赖构建演练未覆盖真实下载。v0.1.148 使用单独的 nologin 构建账号 ddyidc-migration-build，区别于应用账号和通用构建账号。既有 DDYIDC_BUILD 防火墙只给配置DNS的TCP/UDP53放行，其他本机/私网仍拒绝，IPv4/IPv6规则在构建前核验；不直接放开本机数据库访问。每次缓存、源码和程序仍独立且受root父目录保护，仅root固定协调器能启动此账号的构建。安装器保留已有账号、目录及权限，只创建本模块账号并更新固定防火墙脚本，失败恢复文件并删除本次新UID规则/账号。
+
+CI新增真实冷缓存下载工具链/依赖、运行身份FD执行和非DNS端口拒绝演练，使用真实UID防火墙而非只断言参数。
