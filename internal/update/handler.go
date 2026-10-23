@@ -21,6 +21,10 @@ func RegisterAdminHandlers(server *rest.Server, manager *Manager, authManager *a
 	handler := &adminHandler{manager: manager, auth: authManager}
 	server.AddRoutes([]rest.Route{
 		{Method: http.MethodGet, Path: "/admin/v1/update/status", Handler: handler.status},
+		{Method: http.MethodGet, Path: "/admin/v1/update/reclamation", Handler: handler.reclamation},
+		{Method: http.MethodGet, Path: "/admin/v1/update/reclamation/history", Handler: handler.reclamationHistory},
+		{Method: http.MethodPost, Path: "/admin/v1/update/reclamation/retry", Handler: handler.retryReclamation},
+		{Method: http.MethodPost, Path: "/admin/v1/update/reclamation/preview", Handler: handler.retryReclamation},
 		{Method: http.MethodPost, Path: "/admin/v1/update/check", Handler: handler.check},
 		{Method: http.MethodPost, Path: "/admin/v1/update/backend", Handler: handler.backend},
 		{Method: http.MethodPost, Path: "/admin/v1/update/frontend", Handler: handler.frontend},

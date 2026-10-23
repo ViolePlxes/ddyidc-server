@@ -75,7 +75,7 @@ func (m *Manager) frontendRelease(ctx context.Context, task *Task, target Target
 	live := filepath.Join(target.Workspace, "dist")
 	// Old hashed resources remain available to browsers opened before the switch.
 	oldAssets := filepath.Join(live, "assets")
-	if _, e := os.Stat(oldAssets); e == nil {
+	if _, e := os.Stat(oldAssets); e == nil && !reclamationConfigured() {
 		if err = retainStaticAssets(oldAssets, filepath.Join(candidate, "assets")); err != nil {
 			return rollback(err)
 		}
@@ -186,7 +186,7 @@ func retainStaticAssets(source, destination string) error {
 func (m *Manager) restoreFrontend(ctx context.Context, target TargetConfig, j frontendJournal) error {
 	live := filepath.Join(target.Workspace, "dist")
 	if verifyFrontendVersion(filepath.Join(live, "version.json"), j.Commit) == nil {
-		if _, err := os.Stat(filepath.Join(live, "assets")); err == nil {
+		if _, err := os.Stat(filepath.Join(live, "assets")); err == nil && !reclamationConfigured() {
 			if err = retainStaticAssets(filepath.Join(live, "assets"), filepath.Join(j.Candidate, "assets")); err != nil {
 				return err
 			}

@@ -18,6 +18,7 @@ type TargetConfig struct {
 }
 
 type Config struct {
+	ReclamationDigests  map[string]string `json:"-"`
 	GitPath             string
 	GoPath              string
 	NPMPath             string

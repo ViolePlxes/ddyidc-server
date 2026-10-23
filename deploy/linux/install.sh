@@ -105,7 +105,12 @@ if [[ ! -e /etc/ddyidc/backup.env ]]; then
   install -m 0600 /opt/ddyidc/deploy/backup.env.example /etc/ddyidc/backup.env
 fi
 
-python3 /opt/ddyidc/deploy/install-build-isolation.py /opt/ddyidc/deploy
+if [[ -n "${RECLAMATION_PRODUCTION_TARGET:-}" ]]; then
+  [[ "$RECLAMATION_PRODUCTION_TARGET" == 114.66.48.129 ]] || { echo "production reclamation target refused" >&2; exit 1; }
+  python3 /opt/ddyidc/deploy/install-build-isolation.py /opt/ddyidc/deploy "$RECLAMATION_PRODUCTION_TARGET"
+else
+  python3 /opt/ddyidc/deploy/install-build-isolation.py /opt/ddyidc/deploy
+fi
 systemctl daemon-reload
 systemctl enable ddyidc.service ddyidc-backup.timer ddyidc-disk-monitor.timer
 systemctl start ddyidc-backup.timer ddyidc-disk-monitor.timer

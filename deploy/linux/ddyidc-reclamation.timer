@@ -1,0 +1,10 @@
+[Unit]
+Description=DDYIDC production reclamation retry and orphan sweep
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=10s
+Persistent=true
+Unit=ddyidc-reclamation.service
+[Install]
+WantedBy=timers.target
