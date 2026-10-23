@@ -268,6 +268,14 @@ func (m *Manager) processHelperResults(ctx context.Context) {
 			continue
 		}
 		existing, _ := m.repo.Get(ctx, id)
+		if handled, restoreErr := m.restoreMigrationSource(ctx, result, existing); handled || restoreErr != nil {
+			if restoreErr != nil {
+				result.RollbackStatus = "failed: 迁移接管失败后的源码恢复未完成"
+				result.Error += "；源码版本需核对"
+			} else {
+				result.RollbackStatus = "success"
+			}
+		}
 		if err = m.repo.Finish(ctx, id, result.Status, sanitizeOutput(result.Error), result.RollbackStatus, mergeTaskLogs(existing, result.Log)); err != nil {
 			continue
 		}

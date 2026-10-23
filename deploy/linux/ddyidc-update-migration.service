@@ -1,0 +1,19 @@
+[Unit]
+Description=DDYIDC controlled offline update migration
+After=network-online.target mysql.service redis-server.service
+Wants=network-online.target
+ConditionPathExists=/etc/ddyidc/update-migration-policy.json
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/opt/ddyidc/bin/ddyidc-update-migration
+TimeoutStartSec=50min
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/ddyidc-migrations /var/backups/ddyidc/update-migrations /var/lib/ddyidc/update-results
+StandardOutput=journal
+StandardError=journal

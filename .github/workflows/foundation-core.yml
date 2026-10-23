@@ -21,6 +21,7 @@ jobs:
       - name: Build, race and protocol regression
         run: |
           go run ./cmd/releasecheck
+          python3 tools/architecture/check_automatic_migrations.py
           go test -json ./... > go-test.jsonl
           python3 tools/security/check_go_tests.py go-test.jsonl tools/security/integration-skips.json --output go-test-summary.json
           go test -race -count=3 ./pkg/auth ./pkg/clientip ./pkg/db ./internal/shared/middleware ./internal/shared/distsync
@@ -28,7 +29,9 @@ jobs:
           go build ./...
           go build -trimpath -o /tmp/ddyidc-server .
           sudo env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/linux -p 'test_resource_reclamation.py'
+          sudo env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s deploy/linux -p 'test_update_migration.py'
           bash deploy/linux/tests/test_resource_reclamation.sh > resource-reclamation.log 2>&1
+          bash deploy/linux/tests/test_update_migration.sh > update-migration.log 2>&1
           python3 deploy/linux/tests/test_nginx_proxy.py
           python3 deploy/linux/tests/test_ledger_guard_upgrade.py
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
@@ -76,3 +79,4 @@ jobs:
             adapter-modules.log
             renewal-product-controls.log
             resource-reclamation.log
+            update-migration.log

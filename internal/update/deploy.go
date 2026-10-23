@@ -56,7 +56,7 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 
 	m.progress(ctx, task, 20, logValue, "导出后端候选提交，当前源码与服务保持不变")
 	if output, diffErr := m.git(ctx, target.Workspace, "diff", "--name-only", task.BeforeCommit, info.RemoteCommit, "--", "*.sql"); diffErr == nil && strings.TrimSpace(output) != "" {
-		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；切换前须完成保留现有数据的离线增量迁移，更新不会自动改库")
+		m.progress(ctx, task, 30, logValue, "检测到数据库脚本变化；将核验是否需要受控备份和离线增量迁移")
 	}
 	newExecutable := filepath.Join(m.config.ResultDir, "staging", formatID(task.ID)+".new")
 	if err = m.files.MkdirAll(filepath.Dir(newExecutable)); err != nil {
@@ -97,9 +97,18 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 	// This executes as the existing unprivileged API identity. The candidate's
 	// verification mode reads migration history only; it cannot run DBA migrations.
 	m.progress(ctx, task, 60, logValue, "只读核验数据库迁移版本，旧服务保持运行")
-	if _, verifyErr := m.runner.Run(ctx, target.Workspace, newExecutable, []string{"-f", target.ConfigFile, "-verify-migrations"}, nil); verifyErr != nil {
-		rollbackBeforeSwitch(errors.New("数据库增量迁移未完成或校验失败，旧服务未停止；请完成保留数据的离线迁移后重试"))
-		return
+	needsMigration := false
+	if verifyOutput, verifyErr := m.runner.Run(ctx, target.Workspace, newExecutable, []string{"-f", target.ConfigFile, "-verify-migrations"}, nil); verifyErr != nil {
+		if candidateExitCode(verifyErr) != 20 {
+			rollbackBeforeSwitch(errors.New(migrationPreflightMessage(verifyOutput)))
+			return
+		}
+		if _, err = os.Stat("/etc/ddyidc/update-migration-policy.json"); err != nil {
+			rollbackBeforeSwitch(errors.New("发现待执行增量迁移；自动迁移服务尚未初始化，需管理员一次性安装受控迁移服务，旧服务保持运行"))
+			return
+		}
+		needsMigration = true
+		m.progress(ctx, task, 65, logValue, "已排队受控迁移：校验可信发布、维护屏障、数据库备份、离线迁移及账务复核后继续更新")
 	}
 	// The trusted helper is installed by deployment, never rebuilt by the API service.
 	if _, helperErr := os.Stat(target.HelperPath); helperErr != nil {
@@ -117,7 +126,8 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		helperTimeout = max(1, int(time.Until(deadline).Seconds()))
 	}
 	plan := HelperPlan{
-		TaskID: taskID, ParentPID: m.pid, ParentIdentity: processIdentity(m.pid), NewExecutable: newExecutable,
+		NeedsMigration: needsMigration,
+		TaskID:         taskID, ParentPID: m.pid, ParentIdentity: processIdentity(m.pid), NewExecutable: newExecutable,
 		CurrentExecutable: target.Executable, BackupExecutable: backup,
 		Workspace: target.Workspace, BeforeCommit: task.BeforeCommit, GitPath: m.config.GitPath,
 		ServerDirectory: filepath.Dir(target.Executable), ConfigFile: target.ConfigFile,
@@ -129,18 +139,35 @@ func (m *Manager) runBackend(ctx context.Context, task *Task) {
 		rollbackBeforeSwitch(fmt.Errorf("写入更新计划失败: %w", err))
 		return
 	}
-	if output, pullErr := m.pull(ctx, target); pullErr != nil {
-		_ = m.files.RemoveAll(planFile)
-		rollbackBeforeSwitch(fmt.Errorf("更新候选源码失败: %w (%s)", pullErr, output))
-		return
+	if !needsMigration {
+		if output, pullErr := m.pull(ctx, target); pullErr != nil {
+			_ = m.files.RemoveAll(planFile)
+			rollbackBeforeSwitch(fmt.Errorf("更新候选源码失败: %w (%s)", pullErr, output))
+			return
+		}
 	}
-	m.progress(ctx, task, 85, logValue, "更新助手已就绪，即将安全切换后端")
-	if err = m.startUnit(m.config.SudoPath, m.config.SystemctlPath, m.config.UpdateHelperService); err != nil {
+	if needsMigration {
+		m.progress(ctx, task, 70, logValue, "受控迁移即将接管；源码与旧服务保持原版本")
+	} else {
+		m.progress(ctx, task, 85, logValue, "更新助手已就绪，即将安全切换后端")
+	}
+	service := m.config.UpdateHelperService
+	if needsMigration {
+		service = "ddyidc-update-migration.service"
+	}
+	if err = m.startUnit(m.config.SudoPath, m.config.SystemctlPath, service); err != nil {
 		_ = m.files.RemoveAll(planFile)
 		rollbackBeforeSwitch(fmt.Errorf("启动更新助手失败: %w", err))
 		return
 	}
-	_ = m.repo.Update(context.Background(), task.ID, map[string]any{"progress": 90, "log": logValue.String() + "\n后端进程切换中"})
+	if !needsMigration {
+		_ = m.repo.Update(context.Background(), task.ID, map[string]any{"progress": 90, "log": logValue.String() + "\n后端进程切换中"})
+	}
+	// The independent coordinator must obtain the exclusive maintenance barrier.
+	// Return from workgate.Run first; keep the old API online during its build/backup.
+	if needsMigration {
+		return
+	}
 	time.Sleep(350 * time.Millisecond)
 	m.exit(0)
 }

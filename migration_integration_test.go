@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"ddyidc/internal/shared/migrations"
 	schemamode "ddyidc/internal/shared/schema"
 	"ddyidc/pkg/db"
@@ -47,6 +48,44 @@ func TestOfflineMigrationMySQL(t *testing.T) {
 	}
 	if err = migrations.Verify(ctx, pool, steps); err != nil {
 		t.Fatal(err)
+	}
+	// Update admission must distinguish a genuinely absent row from a corrupt,
+	// dirty or unreadable ledger; only the first case can queue reviewed migration.
+	var original string
+	if err = pool.QueryRow("SELECT checksum FROM system.schema_migrations WHERE name='056_resource_reclamation.sql'").Scan(&original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec("DELETE FROM system.schema_migrations WHERE name='056_resource_reclamation.sql'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = migrations.Verify(ctx, pool, steps); !migrations.IsPending(err) {
+		t.Fatalf("missing step not classified: %v", err)
+	}
+	if err = migrations.Apply(ctx, pool, steps, false, func(context.Context) error { t.Fatal("completed seed repeated"); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{"UPDATE system.schema_migrations SET state='running' WHERE name='056_resource_reclamation.sql'", "UPDATE system.schema_migrations SET state='complete',checksum=REPEAT('0',64) WHERE name='056_resource_reclamation.sql'"} {
+		if _, err = pool.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+		if err = migrations.Verify(ctx, pool, steps); err == nil || migrations.IsPending(err) {
+			t.Fatal("unsafe migration history admitted")
+		}
+	}
+	if _, err = pool.Exec("UPDATE system.schema_migrations SET state='complete',checksum=? WHERE name='056_resource_reclamation.sql'", original); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec("CREATE USER 'migration_noread_test'@'localhost' IDENTIFIED BY 'IsolatedNoRead123!'"); err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Exec("DROP USER 'migration_noread_test'@'localhost'")
+	historyOnlyPool, err := sql.Open("mysql", "migration_noread_test:IsolatedNoRead123!@unix("+socket+")/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer historyOnlyPool.Close()
+	if err = migrations.Verify(ctx, historyOnlyPool, steps); err == nil || migrations.IsPending(err) {
+		t.Fatal("history read denial incorrectly queued a migration")
 	}
 	if err = migrations.Apply(ctx, pool, steps, false, func(context.Context) error { t.Fatal("completed seeds repeated"); return nil }); err != nil {
 		t.Fatal(err)

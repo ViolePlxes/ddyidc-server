@@ -98,6 +98,7 @@ install -m 0644 /opt/ddyidc/deploy/ddyidc-disk-monitor.service /etc/systemd/syst
 install -m 0644 /opt/ddyidc/deploy/ddyidc-disk-monitor.timer /etc/systemd/system/ddyidc-disk-monitor.timer
 install -m 0440 /opt/ddyidc/deploy/ddyidc-update.sudoers /etc/sudoers.d/ddyidc-update
 visudo -cf /etc/sudoers.d/ddyidc-update
+python3 /opt/ddyidc/deploy/install-update-migration.py /opt/ddyidc/deploy
 install -m 0440 /opt/ddyidc/deploy/ddyidc-backup.sudoers /etc/sudoers.d/ddyidc-backup
 visudo -cf /etc/sudoers.d/ddyidc-backup
 install -m 0644 /opt/ddyidc/deploy/logrotate-ddyidc.conf /etc/logrotate.d/ddyidc
