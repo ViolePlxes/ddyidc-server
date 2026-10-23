@@ -186,9 +186,6 @@ func (s *Service) CreateRenewal(ctx context.Context, customer, id int64, cycle s
 	return s.CreateRenewalIntent(ctx, customer, id, cycle, RenewalIntent{})
 }
 func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, cycle string, intent RenewalIntent) (*RenewalOrder, error) {
-	if err := s.productionMutationAllowed(ctx, id); err != nil {
-		return nil, err
-	}
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return nil, e
@@ -254,7 +251,7 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 		if current.Status == 6 {
 			return ErrUnsupported
 		}
-		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+		if err := s.renewalRefundAllowed(ctx, tx, id); err != nil {
 			return err
 		}
 		if err := s.upgradeMutationAllowed(ctx, tx, id); err != nil {
@@ -348,9 +345,6 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 	if _, e := s.owned(ctx, customer, id); e != nil {
 		return e
 	}
-	if err := s.productionMutationAllowed(ctx, id); err != nil {
-		return err
-	}
 	locked, e := s.repo.IsMarketplaceLocked(ctx, id)
 	if e != nil {
 		return e
@@ -393,7 +387,7 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 			return ErrForbidden
 		}
 		var trading int64
-		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+		if err := s.renewalRefundAllowed(ctx, tx, id); err != nil {
 			return err
 		}
 		if automatic, _ := ctx.Value(autoRenewPaymentKey{}).(bool); automatic {
@@ -454,9 +448,6 @@ func (s *Service) SetAutoRenew(ctx context.Context, customer, id int64, enabled 
 }
 
 func (s *Service) SetAutoRenewCycle(ctx context.Context, customer, id int64, enabled bool, cycle, revision string) error {
-	if err := s.productionMutationAllowed(ctx, id); err != nil {
-		return err
-	}
 	h, e := s.owned(ctx, customer, id)
 	if e != nil {
 		return e
@@ -496,7 +487,7 @@ func (s *Service) SetAutoRenewCycle(ctx context.Context, customer, id int64, ena
 			return ErrForbidden
 		}
 		settings := RenewalSettings{InstanceID: id, CustomerID: customer, Enabled: enabled, UpdatedAt: time.Now()}
-		if err := s.refundMutationAllowed(ctx, tx, id); err != nil {
+		if err := s.renewalRefundAllowed(ctx, tx, id); err != nil {
 			return err
 		}
 		if enabled && current.Status == 6 {

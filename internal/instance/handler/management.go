@@ -14,6 +14,8 @@ func (h *handler) managementRoutes() []rest.Route {
 	out := []rest.Route{}
 	for _, base := range []string{"/admin/v1/customers/:customerId/instances/:instanceId", "/api/v1/instance/:instanceId"} {
 		out = append(out,
+			rest.Route{Method: http.MethodGet, Path: base + "/production-lock/email", Handler: h.productionLockEmail},
+			rest.Route{Method: http.MethodPost, Path: base + "/production-lock/email/send", Handler: h.sendProductionLockEmail},
 			rest.Route{Method: http.MethodPut, Path: base + "/production-lock", Handler: h.productionLock},
 			rest.Route{Method: http.MethodPut, Path: base + "/remark", Handler: h.remark},
 			rest.Route{Method: http.MethodPost, Path: base + "/credentials", Handler: h.credentials},
@@ -34,8 +36,10 @@ func (h *handler) productionLock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Enabled   *bool `json:"enabled"`
-		Confirmed bool  `json:"confirmed"`
+		Enabled   *bool  `json:"enabled"`
+		Confirmed bool   `json:"confirmed"`
+		Email     string `json:"email"`
+		Code      string `json:"code"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
@@ -43,7 +47,7 @@ func (h *handler) productionLock(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "请确认生产锁操作")
 		return
 	}
-	if err := h.service.SetProductionLock(r.Context(), customer, id, *in.Enabled); err != nil {
+	if err := h.service.SetProductionLock(r.Context(), customer, id, *in.Enabled, svc.ProductionLockEmailInput{Email: in.Email, Code: in.Code}); err != nil {
 		writeServiceError(w, err)
 		return
 	}

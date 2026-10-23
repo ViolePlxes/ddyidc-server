@@ -48,9 +48,6 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 	if err != nil {
 		return ctx, err
 	}
-	if err := s.productionMutationAllowed(ctx, r.InstanceID); err != nil {
-		return ctx, err
-	}
 	var o order.Order
 	if err = s.db.WithContext(ctx).Where("id=? AND customer_id=?", orderID, customer).Take(&o).Error; err != nil {
 		return ctx, err

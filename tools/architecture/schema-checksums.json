@@ -1,4 +1,5 @@
 {
+  "055_production_lock_email.sql": "1450155761fe6181e8968da9994d1c0b8805cdc98646837c1b0395a9bc5cd608",
   "054_instance_product_controls.sql": "aa591cddcafd48c40a921ad9e436ab6e31f90b123fecaf660a79212a03f4a34b",
   "001_baseline.sql": "210f1fedc0972f9839a48238837f6ecd1b92aafce9934fc3b533bc38e635dc23",
   "002_auth_version.sql": "d33310e9df24be5402ccf6e2d048727613faee4eaeace74d78dc16f28372a707",

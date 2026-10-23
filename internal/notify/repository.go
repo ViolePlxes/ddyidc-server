@@ -63,6 +63,7 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 type templateSeed struct{ scene, channel, title, content string }
 
 var defaultTemplates = []templateSeed{
+	{"productionLock", ChannelEmail, "生产锁操作验证码", "您的生产锁操作验证码为 {{code}}，{{minutes}} 分钟内有效。仅用于本次实例操作，请勿向他人提供。"},
 	{"expiry_digest", ChannelBoth, "服务器即将到期汇总", "您有{{server_count}}台服务器即将到期，最早到期时间为{{earliest_expiry}}，请登录用户中心查看并续费。"},
 	{"balance_freeze", ChannelBoth, "余额冻结通知", "您的余额已冻结 {{amount}} 元，原因：{{reason}}。"},
 	{"register", ChannelBoth, "注册验证码", "您的注册验证码为 {{code}}，{{minutes}} 分钟内有效。"},

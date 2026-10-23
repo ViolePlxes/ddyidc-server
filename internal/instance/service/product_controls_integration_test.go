@@ -43,9 +43,12 @@ func TestProductProductionLockMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	provider := &productionLockFixture{gateRenewalFixture: gateRenewalFixture{retail: "30.00", cost: "27.00", duration: 2678400, expiry: expiry}}
+	if err := tx.Exec("INSERT INTO customer.customers(id,username,password_hash,email,status) VALUES(994004,'lock-existing-email','!isolated','lock@example.invalid',1)").Error; err != nil {
+		t.Fatal(err)
+	}
 	s := NewService(repo.NewRepository(tx), securityResolver{provider: provider})
 	s.db = tx
-	if err := s.SetProductionLock(ctx, h.CustomerID, h.ID, true); err != nil {
+	if err := s.SetProductionLock(ctx, h.CustomerID, h.ID, true, issueLockTestCode(t, s, h.CustomerID, h.ID, true, "")); err != nil {
 		t.Fatal(err)
 	}
 	for _, action := range []string{"start", "stop", "reboot", "hard_stop", "hard_reboot", "remote", "reinstall", "reset_password", "rescue", "exit_rescue", "destroy"} {
@@ -57,9 +60,7 @@ func TestProductProductionLockMySQL(t *testing.T) {
 	remark := "blocked"
 	for name, err := range map[string]error{
 		"remark":   s.SaveRemark(ctx, h.CustomerID, h.ID, RemarkInput{Remark: &remark}),
-		"auto":     s.SetAutoRenew(ctx, h.CustomerID, h.ID, false),
 		"transfer": pushtransfer.AvailableTx(tx, h.ID, 0, 0),
-		"payment":  s.PayRenewalBalance(ctx, h.CustomerID, h.ID, 1, "127.0.0.1"),
 	} {
 		if !errors.Is(err, productionlock.ErrLocked) {
 			t.Fatalf("%s bypass: %v", name, err)
@@ -81,7 +82,7 @@ func TestProductProductionLockMySQL(t *testing.T) {
 	if err := s.SetProductionLock(ctx, h.CustomerID+1, h.ID, false); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("foreign unlock %v", err)
 	}
-	if err := s.SetProductionLock(ctx, h.CustomerID, h.ID, false); err != nil {
+	if err := s.SetProductionLock(ctx, h.CustomerID, h.ID, false, issueLockTestCode(t, s, h.CustomerID, h.ID, false, "")); err != nil {
 		t.Fatal(err)
 	}
 	if provider.writes.Load() != 0 {
@@ -134,6 +135,9 @@ func TestProductAutoRenewalWindowAndInsufficientMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	if e := s.SetAutoRenew(ctx, h.CustomerID, h.ID, true, options[0].QuoteRevision); e != nil {
+		t.Fatal(e)
+	}
+	if e := tx.Create(&ProductionLock{InstanceID: h.ID, Enabled: true, UpdatedAt: time.Now()}).Error; e != nil {
 		t.Fatal(e)
 	}
 	candidates, e := s.autoRenewalCandidates(ctx)

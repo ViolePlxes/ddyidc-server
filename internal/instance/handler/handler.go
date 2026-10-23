@@ -19,12 +19,20 @@ import (
 )
 
 type handler struct {
-	service *svc.Service
-	jwt     *auth.Manager
+	service         *svc.Service
+	jwt             *auth.Manager
+	lockEmailSender interface {
+		SendProductionLockCode(http.ResponseWriter, *http.Request, string, string)
+	}
 }
 
-func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager) {
+func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manager, emailSender ...interface {
+	SendProductionLockCode(http.ResponseWriter, *http.Request, string, string)
+}) {
 	h := &handler{service: service, jwt: jwt}
+	if len(emailSender) > 0 {
+		h.lockEmailSender = emailSender[0]
+	}
 	server.AddRoutes(h.adminListRoutes())
 	server.AddRoutes(h.managementRoutes())
 	server.AddRoutes(h.securityRoutes())

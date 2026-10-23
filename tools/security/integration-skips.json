@@ -1,4 +1,5 @@
 {
+  "ddyidc/internal/instance/service/TestProductionLockEmailBindingMySQL": {"disposition":"isolated_suite_required","verification":"Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; verify binding, ownership, replay and scope invalidation. A skip is not a pass."},
   "ddyidc/internal/instance/service/TestProductProductionLockMySQL": {"disposition":"isolated_suite_required","verification":"Run deploy/linux/tests/test_renewal_quote_gate.sh with disposable officially migrated MySQL. A skip is not a pass."},
   "ddyidc/internal/instance/service/TestProductExpirySyncMySQL": {"disposition":"isolated_suite_required","verification":"Run deploy/linux/tests/test_renewal_quote_gate.sh with disposable officially migrated MySQL. A skip is not a pass."},
   "ddyidc/internal/instance/service/TestProductAutoRenewalWindowAndInsufficientMySQL": {"disposition":"isolated_suite_required","verification":"Run deploy/linux/tests/test_renewal_quote_gate.sh with disposable officially migrated MySQL. A skip is not a pass."},

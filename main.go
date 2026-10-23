@@ -632,6 +632,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	upstreamservice.Default.SetSupplierSnapshotWorker(instanceSvc)
 	*cronStarts = append(*cronStarts, upstreamservice.Default.StartSupplierSnapshotScheduler)
 	instanceSvc.SetManagement(db.G)
+	instanceSvc.SetProductionLockEmailVerifier(verificationService)
 	orderSvc.SetRenewalBalancePayer(instanceSvc)
 	instanceSvc.SetRenewalReplacementCanceller(orderSvc.CancelRenewalReplacementTx)
 	instanceSvc.SetRenewalPriceCorrector(orderSvc.CorrectUnpaidRenewalPriceTx)
@@ -690,7 +691,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("push navigation migration failed: " + err.Error())
 	}
 	pushtransfer.RegisterHandlers(server, pushtransfer.New(db.G, cache.RDB), jwt)
-	instancehandler.RegisterHandlers(server, instanceSvc, jwt)
+	instancehandler.RegisterHandlers(server, instanceSvc, jwt, verificationService)
 	admintodo.RegisterManualEventReviews(server, db.G, jwt, instanceSvc)
 	admintodo.RegisterManualProductActions(server, db.G, jwt, instanceSvc)
 	admintodo.RegisterMachineRefundActions(server, db.G, jwt, instanceSvc)
