@@ -28,6 +28,35 @@ func TestDiskFree(t *testing.T) {
 	}
 }
 
+func TestSpaceRefusalNeverStopsServiceOrReplacesExecutable(t *testing.T) {
+	root := t.TempDir()
+	current, staged := filepath.Join(root, "server"), filepath.Join(root, "candidate")
+	writeTestFile(t, current, "old")
+	writeTestFile(t, staged, "new")
+	marker := filepath.Join(root, "service-touched")
+	ctl := filepath.Join(root, "systemctl")
+	writeTestFile(t, ctl, "#!/bin/sh\ntouch '"+marker+"'\nexit 0\n")
+	sudo := filepath.Join(root, "sudo")
+	writeTestFile(t, sudo, "#!/bin/sh\nshift\nexec \"$@\"\n")
+	free, err := diskFree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := update.HelperPlan{TaskID: "99", CurrentExecutable: current, NewExecutable: staged, BackupExecutable: filepath.Join(root, "previous"), MinFreeMB: free/1024/1024 + 1024, SudoPath: sudo, SystemctlPath: ctl, ServiceName: "ddyidc.service"}
+	result := execute(plan)
+	if result.Status != update.StatusFailed || result.RollbackStatus != "not_required" || !strings.Contains(result.Error, "目标卷可用空间") {
+		t.Fatalf("unexpected refusal: %+v", result)
+	}
+	assertTestFile(t, current, "old")
+	assertTestFile(t, staged, "new")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("service touched before admission", err)
+	}
+	if _, err := os.Stat(plan.BackupExecutable); !os.IsNotExist(err) {
+		t.Fatal("backup created before admission", err)
+	}
+}
+
 func TestAtomicReplaceAndRestore(t *testing.T) {
 	root := t.TempDir()
 	current := filepath.Join(root, "ddyidc-server")
