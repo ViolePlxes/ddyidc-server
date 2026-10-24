@@ -7,6 +7,7 @@ import (
 	"ddyidc/internal/notification"
 	"ddyidc/internal/shared/snowflake"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -32,13 +33,44 @@ func (RenewalQuoteAlert) TableName() string { return "instance.instance_renewal_
 func (s *Service) approveAutoRenewalTx(tx *gorm.DB, h dom.Host, quote RenewalOption) error {
 	return tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "instance_id"}}, DoUpdates: clause.AssignmentColumns([]string{"customer_id", "ownership_version", "quote_revision", "amount", "cycle", "updated_at"})}).Create(&AutoRenewalQuote{InstanceID: h.ID, CustomerID: h.CustomerID, OwnershipVersion: h.OwnershipVersion, QuoteRevision: autoRenewalApprovalRevision(h, quote), Amount: quote.Amount, Cycle: quote.Cycle, UpdatedAt: time.Now()}).Error
 }
+
+// Automatic renewal authorizes the selected product/configuration/cycle, while
+// its amount follows the current quote. Never re-enable a disabled setting or
+// carry an approval across an ownership/configuration change.
+func (s *Service) refreshAutoRenewalQuote(ctx context.Context, h dom.Host, q RenewalOption) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current dom.Host
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=?", h.ID, h.CustomerID, h.OwnershipVersion).Take(&current).Error; err != nil {
+			return err
+		}
+		if current.Status == 6 || current.DeletedAt.Valid || renewalIntentRevision(current, q) != renewalIntentRevision(h, q) {
+			return errors.New("产品配置已变化，请刷新后重试")
+		}
+		var settings RenewalSettings
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=? AND customer_id=? AND enabled=1", h.ID, h.CustomerID).Take(&settings).Error; err != nil {
+			return errors.New("自动续费已关闭，未扣款")
+		}
+		var before AutoRenewalQuote
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=?", h.ID).Take(&before).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		if err == nil {
+			old := q
+			old.Amount = before.Amount
+			if before.CustomerID != h.CustomerID || before.OwnershipVersion != h.OwnershipVersion || before.Cycle != q.Cycle || before.QuoteRevision != autoRenewalApprovalRevision(h, old) {
+				return errors.New("自动续费配置已变化，请重新开启")
+			}
+		}
+		return s.approveAutoRenewalTx(tx, current, q)
+	})
+}
 func (s *Service) autoRenewalQuoteAllowed(ctx context.Context, h dom.Host, cycle string) bool {
 	var approval AutoRenewalQuote
 	if e := s.db.WithContext(ctx).Where("instance_id=? AND customer_id=? AND ownership_version=?", h.ID, h.CustomerID, h.OwnershipVersion).Take(&approval).Error; e != nil {
-		if e == gorm.ErrRecordNotFound {
-			s.pauseAutoRenewalQuote(ctx, h, "approval_required", "", "", "")
+		if !errors.Is(e, gorm.ErrRecordNotFound) {
+			return false
 		}
-		return false
 	}
 	options, e := s.RenewalOptions(ctx, h.CustomerID, h.ID)
 	if e != nil {
@@ -47,14 +79,10 @@ func (s *Service) autoRenewalQuoteAllowed(ctx context.Context, h dom.Host, cycle
 	}
 	for _, q := range options {
 		if q.Cycle == cycle {
-			if approval.Cycle == cycle && approval.QuoteRevision == autoRenewalApprovalRevision(h, q) {
+			if s.refreshAutoRenewalQuote(ctx, h, q) == nil {
 				return true
 			}
-			reason := "quote_changed"
-			if approval.Amount != q.Amount {
-				reason = "price_changed"
-			}
-			s.pauseAutoRenewalQuote(ctx, h, reason, approval.Amount, q.Amount, approval.QuoteRevision)
+			s.pauseAutoRenewalQuote(ctx, h, "quote_changed", approval.Amount, q.Amount, approval.QuoteRevision)
 			return false
 		}
 	}
@@ -94,10 +122,7 @@ func (s *Service) pauseAutoRenewalQuote(ctx context.Context, h dom.Host, reason,
 		if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error; e != nil {
 			return e
 		}
-		content := "自动续费已暂停：续费价格或配置需要重新核验，请进入产品详情核对后重新开启。"
-		if reason == "price_changed" {
-			content = fmt.Sprintf("自动续费已暂停：原确认金额%s元，最新报价%s元。请核对后重新开启，系统不会自动按新价格扣款。", oldAmount, newAmount)
-		}
+		content := "自动续费已暂停，请检查服务配置或联系客服后重新开启。"
 		return notification.EnqueueRenewalPause(tx, notification.Event{Key: fmt.Sprintf("renewal_quote:%d:%s", h.ID, fingerprint), RecipientID: h.CustomerID, Type: "billing", Scene: "renewal_quote_paused", Title: "自动续费已暂停", Summary: content, Content: content, BusinessType: "instance", BusinessID: fmt.Sprint(h.ID), OwnershipVersion: h.OwnershipVersion})
 	})
 	notification.Wake()
@@ -116,9 +141,9 @@ func (s *Service) AutoRenewalWarning(ctx context.Context, user, id int64) string
 		return ""
 	}
 	if alert.Reason == "price_changed" {
-		return "自动续费已暂停：报价已变化，请核对最新价格后重新开启"
+		return "自动续费当前未开启，可按当前价格重新开启"
 	}
-	return "自动续费已暂停：续费价格需要重新核验，请手动确认"
+	return "自动续费已暂停，请检查服务配置或联系客服后重新开启"
 }
 
 // Supplier cost/discount changes do not change the customer's approved retail.

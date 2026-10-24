@@ -135,12 +135,12 @@ func (s *Service) autoRenewOnce(ctx context.Context, h dom.Host, cycle string) {
 			}
 		}
 	}
-	var approval AutoRenewalQuote
 	if err == nil {
-		err = s.db.WithContext(ctx).Where("instance_id=? AND customer_id=? AND ownership_version=?", h.ID, h.CustomerID, h.OwnershipVersion).Take(&approval).Error
-	}
-	if err == nil && (selected == nil || approval.QuoteRevision != autoRenewalApprovalRevision(h, *selected)) {
-		err = errors.New("自动续费报价已变化，需要重新确认")
+		if selected == nil {
+			err = errors.New("当前续费周期不可用")
+		} else {
+			err = s.refreshAutoRenewalQuote(ctx, h, *selected)
+		}
 	}
 	var o *RenewalOrder
 	if err == nil {

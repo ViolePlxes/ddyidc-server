@@ -4,7 +4,6 @@ import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
 	repo "ddyidc/internal/instance/repository"
-	"ddyidc/internal/notification"
 	order "ddyidc/internal/order/domain"
 	orderrepo "ddyidc/internal/order/repository"
 	ordersvc "ddyidc/internal/order/service"
@@ -236,9 +235,6 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	intent := RenewalIntent{QuoteRevision: options[0].QuoteRevision, ReplaceOrderID: fmt.Sprint(o.ID)}
-	if _, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", RenewalIntent{QuoteRevision: "stale", ReplaceOrderID: intent.ReplaceOrderID}); e == nil {
-		t.Fatal("stale price consent accepted")
-	}
 	pending := paydom.Payment{ID: 987007, PaymentNo: "RENEW-REPLACE-PAY", BizType: paydom.BizOrder, BizID: o.ID, CustomerID: h.CustomerID, Channel: "wechat", OutTradeNo: "RENEW-REPLACE-PAY", Amount: "31.77", AmountFen: 3177, Currency: "CNY", Status: paydom.StatusClosed, ExpireAt: expiry}
 	if e := tx.Create(&pending).Error; e != nil {
 		t.Fatal(e)
@@ -258,7 +254,7 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	repeated, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", intent)
+	repeated, e := svc.CreateRenewalIntent(ctx, h.CustomerID, h.ID, "monthly", RenewalIntent{QuoteRevision: "stale-display"})
 	if e != nil || repeated.OrderID != replaced.OrderID {
 		t.Fatal("replacement replay made second order", e)
 	}
@@ -291,64 +287,52 @@ func TestAutoRenewalQuotePauseMySQL(t *testing.T) {
 	if e := tx.Create(&RenewalSettings{InstanceID: h.ID, CustomerID: h.CustomerID, Enabled: true, UpdatedAt: time.Now()}).Error; e != nil {
 		t.Fatal(e)
 	}
-	if svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
-		t.Fatal("old auto setting missing explicit approval allowed")
+	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
+		t.Fatal("enabled legacy setting did not adopt current quote")
+	}
+	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true); e != nil {
+		t.Fatal(e)
+	}
+	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true, "stale-display"); e != nil {
+		t.Fatal(e)
+	}
+	fixture := svc.providers.(securityResolver).provider.(*gateRenewalFixture)
+	fixture.retail = "35.00"
+	fixture.cost = "28.00"
+	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
+		t.Fatal("price change required extra consent")
+	}
+	var approval AutoRenewalQuote
+	if e := tx.Where("instance_id=?", h.ID).Take(&approval).Error; e != nil || approval.Amount != "35.00" {
+		t.Fatal("current price not refreshed", e, approval)
 	}
 	var setting RenewalSettings
 	tx.Where("instance_id=?", h.ID).Take(&setting)
-	if setting.Enabled {
-		t.Fatal("unverified auto renewal not paused")
-	}
-
-	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true); e == nil {
-		t.Fatal("enabled auto without explicit price consent")
-	}
-	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true, "stale"); e == nil {
-		t.Fatal("enabled auto with stale consent")
-	}
-	options, quoteErr := svc.RenewalOptions(ctx, h.CustomerID, h.ID)
-	if quoteErr != nil {
-		t.Fatal(quoteErr)
-	}
-	if e := svc.SetAutoRenew(ctx, h.CustomerID, h.ID, true, options[0].QuoteRevision); e != nil {
-		t.Fatal(e)
-	}
-	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
-		t.Fatal("fresh exact price not authorized")
-	}
-
-	fixture := svc.providers.(securityResolver).provider.(*gateRenewalFixture)
-	fixture.cost = "26.00"
-	if !svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
-		t.Fatal("procurement discount changed an unchanged retail authorization")
-	}
-	fixture.cost = "27.00"
-	// A stale task must not disable a user's newer approval.
-	svc.pauseAutoRenewalQuote(ctx, h, "price_changed", "31.77", "30.00", "outdated")
-	tx.Where("instance_id=?", h.ID).Take(&setting)
 	if !setting.Enabled {
-		t.Fatal("stale worker disabled newly approved quote")
+		t.Fatal("price change disabled automatic renewal")
 	}
-	if e := tx.Model(&AutoRenewalQuote{}).Where("instance_id=?", h.ID).Updates(map[string]any{"amount": "31.77", "quote_revision": "old-price"}).Error; e != nil {
+	var count int64
+	tx.Model(&RenewalQuoteAlert{}).Where("instance_id=?", h.ID).Count(&count)
+	if count != 0 {
+		t.Fatal("price-only change created a pause alert")
+	}
+	// Product changes still cannot reuse recurring authorization.
+	h.ConfigSnapshot = `{"billingCycle":"monthly","configOptions":{"cpu":4}}`
+	if e := tx.Model(&h).Update("config_snapshot", h.ConfigSnapshot).Error; e != nil {
 		t.Fatal(e)
 	}
 	if svc.autoRenewalQuoteAllowed(ctx, h, "monthly") {
-		t.Fatal("changed price auto-debited")
+		t.Fatal("configuration change reused old authorization")
 	}
-	svc.pauseAutoRenewalQuote(ctx, h, "price_changed", "31.77", "30.00", "old-price")
-	var count int64
-	tx.Model(&RenewalQuoteAlert{}).Where("instance_id=? AND reason='price_changed'", h.ID).Count(&count)
-	if count != 1 {
-		t.Fatal("auto price alert was duplicated")
+	tx.Where("instance_id=?", h.ID).Take(&setting)
+	if setting.Enabled {
+		t.Fatal("unrelated configuration was not blocked")
 	}
-	var queued int64
-	if err := tx.Model(&notification.Outbox{}).Where("event_key LIKE ?", fmt.Sprintf("%d:renewal_quote:%d:%%", h.CustomerID, h.ID)).Count(&queued).Error; err != nil || queued != 2 {
-		t.Fatalf("expected two durable distinct alerts, got %d: %v", queued, err)
+	if e := svc.refreshAutoRenewalQuote(ctx, h, RenewalOption{Cycle: "monthly", Duration: 2678400, Amount: "35.00"}); e == nil {
+		t.Fatal("disabled setting refreshed")
 	}
-	if svc.AutoRenewalWarning(ctx, h.CustomerID, h.ID) == "" {
-		t.Fatal("paused reason invisible")
-	}
-	t.Log("legacy auto approval paused; explicit fresh approval accepted; changed price pauses without debit; stale worker rejected; alert deduplicated")
+	t.Log("enabled legacy settings adopt current price; price changes refresh without extra confirmation; changed configuration and disabled settings cannot debit")
+
 }
 
 func TestRenewalQuoteRuntimePrivilegesMySQL(t *testing.T) {
@@ -467,9 +451,7 @@ func TestRenewalQuoteCorrectionMySQL(t *testing.T) {
 	must(tx.Model(&got).Updates(map[string]any{"total_amount": 3177, "pay_amount": 3077, "discount_amount": 100, "coupon_amount": 100, "coupon_id": coupon}).Error)
 	must(tx.Model(&row).Update("amount", "30.77").Error)
 	must(tx.Model(&item).Updates(map[string]any{"unit_price": 3177, "subtotal": 3177}).Error)
-	options, e := svc.RenewalOptions(ctx, host.CustomerID, host.ID)
-	must(e)
-	corrected, e := svc.CreateRenewalIntent(ctx, host.CustomerID, host.ID, "monthly", RenewalIntent{QuoteRevision: options[0].QuoteRevision})
+	corrected, e := svc.CreateRenewalIntent(ctx, host.CustomerID, host.ID, "monthly", RenewalIntent{QuoteRevision: "stale-display"})
 	must(e)
 	if corrected.OrderID != fmt.Sprint(o.ID) || corrected.Amount != "29.00" {
 		t.Fatal("create did not silently preserve corrected order/coupon", corrected)

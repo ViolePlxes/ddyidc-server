@@ -163,4 +163,14 @@ class RedisLeaseTests(unittest.TestCase):
     a.command('SET',m.LOCK_KEY,'123456789');self.assertFalse(fresh.acquire());a.command('DEL',m.LOCK_KEY)
    finally:p.terminate();p.wait(timeout=5)
 
+class ResourceUnitScopeTests(unittest.TestCase):
+ def test_unit_allows_each_supported_resource_root_but_not_business_data(self):
+  unit=pathlib.Path(__file__).with_name('ddyidc-reclamation.service').read_text()
+  writes=next(line.split('=',1)[1].split() for line in unit.splitlines() if line.startswith('ReadWritePaths='))
+  for root in ['/var/lib/ddyidc-build/jobs','/var/lib/ddyidc/update-results','/var/lib/ddyidc/update/workspaces/frontend','/var/lib/ddyidc/backups','/var/lib/ddyidc/cache']:
+   self.assertIn(root,writes,'supported cleanup root would be read-only under ProtectSystem=strict')
+  for protected in ['/etc/ddyidc','/var/lib/mysql','/var/lib/redis','/var/lib/ddyidc/storage','/opt/ddyidc/application','/var/backups/ddyidc']:
+   self.assertFalse(any(protected==root or protected.startswith(root+'/') for root in writes),'unit grants write access to protected data')
+  self.assertIn('ProtectSystem=strict',unit)
+
 if __name__=='__main__':unittest.main()

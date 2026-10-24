@@ -296,8 +296,14 @@ func (s *Service) renewalTick(ctx context.Context) {
 		}
 		var approval AutoRenewalQuote
 		if e := s.db.WithContext(ctx).Where("instance_id=? AND customer_id=? AND ownership_version=?", h.ID, h.CustomerID, h.OwnershipVersion).Take(&approval).Error; e != nil {
-			s.pauseAutoRenewalQuote(ctx, h, "approval_required", "", "", "")
-			continue
+			if !errors.Is(e, gorm.ErrRecordNotFound) {
+				continue
+			}
+			cycle, err := s.OriginalRenewalCycle(ctx, h.CustomerID, h.ID)
+			if err != nil {
+				continue
+			}
+			approval.Cycle = cycle
 		}
 
 		if !s.autoRenewalQuoteAllowed(ctx, h, approval.Cycle) {

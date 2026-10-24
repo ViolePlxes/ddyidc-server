@@ -29,8 +29,7 @@ func renewalBinding(h dom.Host) renewalquote.Binding {
 type autoRenewPaymentKey struct{}
 
 func (s *Service) VerifyRenewalPayment(ctx context.Context, customer, orderID int64) (context.Context, error) {
-	auto, _ := ctx.Value(autoRenewPaymentKey{}).(bool)
-	return s.verifyRenewalPayment(ctx, customer, orderID, !auto)
+	return s.verifyRenewalPayment(ctx, customer, orderID, true)
 }
 func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID int64, canCorrect bool) (context.Context, error) {
 	var r Renewal
@@ -94,6 +93,11 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 	}
 	if selected == nil {
 		return ctx, renewalquote.Unverified()
+	}
+	if auto, _ := ctx.Value(autoRenewPaymentKey{}).(bool); auto {
+		if err := s.refreshAutoRenewalQuote(ctx, *h, *selected); err != nil {
+			return ctx, err
+		}
 	}
 	gross, err := billing.ParseMoney(selected.Amount)
 	if err != nil {
