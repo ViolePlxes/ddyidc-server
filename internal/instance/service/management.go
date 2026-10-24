@@ -190,7 +190,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 				if err := tx.Table("product.products").Clauses(clause.Locking{Strength: "UPDATE"}).Select("module_type").Where("id=?", current.ProductID).Take(&previous).Error; err != nil {
 					return err
 				}
-				if previous.ModuleType == "" || previous.ModuleType != product.ModuleType {
+				if previous.ModuleType == "" || (previous.ModuleType != product.ModuleType && !legacyCataloguePlaceholder(previous.ModuleType, product.ModuleType)) {
 					return errors.New("商品模块不一致，请完成原任务后使用完整编辑")
 				}
 			}
@@ -224,6 +224,20 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		remoteconsole.RevokeInstance(id)
 	}
 	return e
+}
+
+// A migrated catalogue placeholder has no physical service type to compare.
+// Only known provider-backed server types are eligible for metadata-only repair;
+// Edit has already verified the unchanged supplier/host and its real product ID.
+func legacyCataloguePlaceholder(previous, resolved string) bool {
+	if previous != "legacy_snapshot" {
+		return false
+	}
+	switch resolved {
+	case "cloud", "dcimcloud", "dcim", "mf_cloud", "mf_dcim":
+		return true
+	}
+	return false
 }
 
 type Credentials struct {
