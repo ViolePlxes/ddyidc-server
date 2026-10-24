@@ -15,6 +15,7 @@ import (
 	"errors"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -181,6 +182,51 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 		h := f.load(t)
 		if h.ProductID != target.ID || h.ModuleType != "legacy_snapshot" || h.OwnershipVersion != f.host.OwnershipVersion || h.ConfigSnapshot != f.host.ConfigSnapshot {
 			t.Fatal("legacy marker or metadata changed")
+		}
+	})
+	run("product-only legacy catalogue placeholder resolves to hidden real product", func(t *testing.T, f *editProductFixture) {
+		// Both the instance and its migrated SKU carry a placeholder, rather than
+		// a physical module. Keep the pending paid renewal and all instance facts.
+		if e := f.db.Model(&dom.Host{}).Where("id=?", f.host.ID).Update("module_type", "legacy_snapshot").Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := f.db.Model(&product.Product{}).Where("id=?", f.host.ProductID).Update("module_type", "legacy_snapshot").Error; e != nil {
+			t.Fatal(e)
+		}
+		f.p.detail.ID = f.host.UpstreamInstanceID
+		before := f.load(t)
+		oid := snowflake.GenID()
+		if e := f.db.Exec("INSERT INTO `order`.orders(id,status) VALUES(?,2)", oid).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := f.db.Exec("INSERT INTO instance.instance_renewals(instance_id,order_id,state) VALUES(?,?,'uncertain')", f.host.ID, oid).Error; e != nil {
+			t.Fatal(e)
+		}
+		id := f.host.UpstreamInstanceID
+		if e := f.s.Edit(WithAdminActor(context.Background(), 7), 77, f.host.ID, EditInput{UpstreamInstanceID: &id, ProductOnly: true}); e != nil {
+			t.Fatal(e)
+		}
+		after := f.load(t)
+		if after.ProductID == before.ProductID || after.ModuleType != before.ModuleType || after.UpstreamInstanceID != before.UpstreamInstanceID || !sameSupplier(after.UpstreamProviderID, before.UpstreamProviderID) || after.CustomerID != before.CustomerID || after.OwnershipVersion != before.OwnershipVersion || after.ConfigSnapshot != before.ConfigSnapshot || !reflect.DeepEqual(after.ExpiresAt, before.ExpiresAt) {
+			t.Fatal("metadata-only repair changed protected instance facts")
+		}
+		var created product.Product
+		if e := f.db.First(&created, "id=?", after.ProductID).Error; e != nil {
+			t.Fatal(e)
+		}
+		if !created.Hidden || created.Status != 2 || created.ModuleType != f.p.product.Type {
+			t.Fatal("instance-only product exposed for sale or has wrong type")
+		}
+		var status uint8
+		if e := f.db.Table("`order`.orders").Where("id=?", oid).Pluck("status", &status).Error; e != nil {
+			t.Fatal(e)
+		}
+		var state string
+		if e := f.db.Table("instance.instance_renewals").Where("order_id=?", oid).Pluck("state", &state).Error; e != nil {
+			t.Fatal(e)
+		}
+		if status != 2 || state != "uncertain" {
+			t.Fatal("existing paid renewal was modified or replayed")
 		}
 	})
 	run("product-only legacy repair rejects a different catalogue module", func(t *testing.T, f *editProductFixture) {
