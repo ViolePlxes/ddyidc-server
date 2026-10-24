@@ -9,7 +9,7 @@ def load(name,path):
 m=load('worker',base/'update-migration.py');firewall=load('firewall',base/'build-firewall.py')
 assert os.geteuid()==0
 lookup=pwd.getpwnam;identity=lookup(sys.argv[1]);go=str(Path(sys.argv[2]).resolve());assert Path(go).is_file()
-parent=Path('/etc/ddyidc-build');created_parent=not parent.exists();created=[];created_user=False;protected=[];fake_config=None
+parent=Path('/etc/ddyidc-build');created_parent=not parent.exists();created=[];created_user=False;protected=[];fake_config=None;previous_umask=None
 if created_parent:parent.mkdir(mode=0o755)
 try:
     # Hosted runners lack deployment directories. Create only disposable empty
@@ -29,11 +29,15 @@ try:
         target=parent/name
         if not target.exists():target.write_text(data);target.chmod(0o644);created.append(target)
     firewall.main()
+    previous_umask=os.umask(0o077)
     with socket.socket() as listener,tempfile.TemporaryDirectory(prefix='ddyidc-migration-cold-build-') as folder:
         listener.bind(('127.0.0.1',0));listener.listen();port=listener.getsockname()[1]
-        root=Path(folder).resolve();source=root/'source';source.mkdir(mode=0o755)
-        for name in ['go.mod','go.sum']:shutil.copyfile(base.parents[1]/name,source/name)
+        root=Path(folder).resolve();source=root/'source';m.source_directory(source,source)
+        for name in ['go.mod','go.sum']:
+            shutil.copyfile(base.parents[1]/name,source/name);(source/name).chmod(0o644)
         (source/'main.go').write_text('package main\nimport _ "github.com/go-sql-driver/mysql"\nfunc main() {}\n')
+        for item in source.iterdir():
+            if item.is_file():item.chmod(0o644)
         original=m.command
         def run(args,**options):
             if args==['/usr/bin/systemctl','is-active','--quiet','ddyidc-build-firewall.service']:return
@@ -56,6 +60,7 @@ try:
                 raise
     print('REAL_COLD_DOWNLOAD_DNS_ONLY_FIREWALL_AND_RUNTIME_FD_OK')
 finally:
+    if previous_umask is not None:os.umask(previous_umask)
     if created_user:
         for tool in ('/usr/sbin/iptables','/usr/sbin/ip6tables'):subprocess.run([tool,'-w','-D','OUTPUT','-m','owner','--uid-owner',str(builder.pw_uid),'-j','DDYIDC_BUILD'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         subprocess.run(['userdel','ddyidc-migration-build'],check=True)
