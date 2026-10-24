@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm/clause"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -121,6 +122,7 @@ func Claim(ctx context.Context, database *gorm.DB) (*Task, error) {
 		if result.RowsAffected != 1 {
 			return errors.New("task claim lost")
 		}
+		task.Attempt++
 		return nil
 	})
 	if err == nil && task.ID == 0 {
@@ -134,7 +136,17 @@ func Finish(ctx context.Context, database *gorm.DB, task *Task, runErr error) er
 	if runErr != nil {
 		status, message = "unknown", "执行结果未确认，请核对业务与供应商状态"
 	}
-	result := database.WithContext(ctx).Model(&Task{}).Where("id=? AND status='running' AND lease_token=? AND lease_until>NOW(3)", task.ID, task.LeaseToken).Updates(map[string]any{"status": status, "safe_error": message, "updated_at": gorm.Expr("NOW(3)")})
+	changes := map[string]any{"status": status, "safe_error": message, "updated_at": gorm.Expr("NOW(3)")}
+	var safe interface{ SafeToRetry() bool }
+	if runErr != nil && strings.HasPrefix(task.TaskKey, "delivery-unit:") && errors.As(runErr, &safe) && safe.SafeToRetry() {
+		changes["status"], changes["safe_error"] = "failed", "采购前报价连续失败，尚未提交开通，请检查连接后处理"
+		if task.Attempt < 4 {
+			delay := []int{30, 120, 300}[max(0, task.Attempt-1)]
+			changes["status"], changes["safe_error"] = "pending", "采购前报价暂时不可用，尚未提交开通，等待重试"
+			changes["available_at"] = gorm.Expr("DATE_ADD(NOW(3), INTERVAL ? SECOND)", delay)
+		}
+	}
+	result := database.WithContext(ctx).Model(&Task{}).Where("id=? AND status='running' AND lease_token=? AND lease_until>NOW(3)", task.ID, task.LeaseToken).Updates(changes)
 	if result.Error != nil {
 		return result.Error
 	}

@@ -137,9 +137,25 @@ func (s *Service) ProvisionDeliveryUnit(ctx context.Context, customerID, unitID 
 		// unclaimed units on a cancelled context; running units need reconciliation.
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.repo.Transaction(cleanup, func(tx *gorm.DB) error {
-			return tx.Model(&deliveryUnit{}).Where("id=? AND status='running'", unit.ID).Update("status", "unknown").Error
+		var safe interface{ SafeToRetry() bool }
+		retry := errors.As(err, &safe) && safe.SafeToRetry()
+		next := "unknown"
+		if retry {
+			next = "pending"
+		}
+		cleanupErr := s.repo.Transaction(cleanup, func(tx *gorm.DB) error {
+			result := tx.Model(&deliveryUnit{}).Where("id=? AND status='running'", unit.ID).Update("status", next)
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return errors.New("delivery claim lost")
+			}
+			return nil
 		})
+		if cleanupErr != nil {
+			return errors.New("交付状态保存失败，禁止自动重复采购")
+		}
 	}
 	return err
 }

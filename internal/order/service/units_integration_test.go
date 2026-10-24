@@ -10,6 +10,7 @@ import (
 	upstream "ddyidc/internal/upstream/service"
 	crypt "ddyidc/pkg/crypto"
 	"ddyidc/pkg/outbound"
+	"errors"
 	"fmt"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -22,6 +23,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type unitHooks struct{}
@@ -89,6 +91,7 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 	t.Log("quantities 1/2/10 with 8 concurrent planners each: exactly N distinct instance reservations and N durable tasks; wrong owner denied; no supplier I/O")
 	var invoices, charges atomic.Int64
 	var recoveryDeleted atomic.Bool
+	var quoteBlock atomic.Bool
 	recoveryDeleted.Store(true)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -113,6 +116,15 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 				fmt.Fprintf(w, `{"status":200,"data":{"host_data":{"id":"%s","productid":"353"}}}`, r.URL.Query().Get("host_id"))
 			}
 		case "/cart/get_total":
+			if quoteBlock.Load() {
+				conn, _, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				conn.Close()
+				return
+			}
 			fmt.Fprint(w, `{"status":200,"products":{"billingcycle":"monthly","sale_total":"1.00","type":{"type":1}}}`)
 		case "/cart/add_to_shop":
 			// Finance's v10-compatible cart_data protocol does not require i.
@@ -221,6 +233,88 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 			t.Fatal("partial delivery order state wrong", orderID, state)
 		}
 	}
+	// A timeout in get_total has not submitted any procurement write. Persist
+	// that proof, release only this unit, and let the fenced durable task retry.
+	if err := database.Exec("INSERT INTO `order`.orders(id,order_no,customer_id,status,pay_amount) VALUES(93003,'SAFE_PREFLIGHT',77,2,100)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Exec("INSERT INTO `order`.order_items(id,order_id,product_id,product_name,module_type,config_snapshot,qty,duration_months,unit_price,subtotal) VALUES(94003,93003,91001,'isolated','cloud','{}',1,1,100,100)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ProvisionAfterPayment(ctx, 77, 93003, "alipay"); err != nil {
+		t.Fatal(err)
+	}
+	var retryUnit struct {
+		ID     int64
+		Status string
+	}
+	if err := database.Table("order.delivery_units").Where("order_id=93003").Take(&retryUnit).Error; err != nil {
+		t.Fatal(err)
+	}
+	quoteBlock.Store(true)
+	short, cancel := context.WithTimeout(ctx, 10*time.Second)
+	beforeInvoices, beforeCharges := invoices.Load(), charges.Load()
+	retryErr := service.ProvisionDeliveryUnit(short, 77, retryUnit.ID, "alipay")
+	cancel()
+	quoteBlock.Store(false)
+	var safe interface{ SafeToRetry() bool }
+	if !errors.As(retryErr, &safe) || !safe.SafeToRetry() || invoices.Load() != beforeInvoices || charges.Load() != beforeCharges {
+		t.Fatalf("preflight not safely classified: %v", retryErr)
+	}
+	var proof struct {
+		Status       string
+		AttemptCount int
+	}
+	if err := database.Table("order.unit_procurements").Where("id=?", retryUnit.ID).Take(&proof).Error; err != nil || proof.Status != "not_submitted" {
+		t.Fatal("missing durable no-write proof", proof, err)
+	}
+	var job tasks.Task
+	if err := database.Where("task_key=?", fmt.Sprintf("delivery-unit:%d", retryUnit.ID)).Take(&job).Error; err != nil {
+		t.Fatal(err)
+	}
+	job.LeaseToken = "isolated-preflight-fence"
+	job.Attempt = 1
+	if err := database.Model(&tasks.Task{}).Where("id=?", job.ID).Updates(map[string]any{"status": "running", "attempt": 1, "lease_token": job.LeaseToken, "lease_until": gorm.Expr("DATE_ADD(NOW(3),INTERVAL 180 SECOND)")}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tasks.Finish(ctx, database, &job, retryErr); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Where("id=?", job.ID).Take(&job).Error; err != nil || job.Status != "pending" {
+		t.Fatal("safe task not requeued", err)
+	}
+	// Retry resumes the same unit and procurement identity, never customer debit.
+	if err := service.ProvisionDeliveryUnit(ctx, 77, retryUnit.ID, "alipay"); err != nil {
+		t.Fatal(err)
+	}
+	if invoices.Load() != beforeInvoices+1 || charges.Load() != beforeCharges+1 {
+		t.Fatal("preflight retry duplicated procurement")
+	}
+	if err := service.ProvisionDeliveryUnit(ctx, 77, retryUnit.ID, "alipay"); err != nil || charges.Load() != beforeCharges+1 {
+		t.Fatal("completed retry replayed", err)
+	}
+	if err := database.Table("order.unit_procurements").Where("id=?", retryUnit.ID).Take(&proof).Error; err != nil || proof.AttemptCount != 2 {
+		t.Fatal("procurement identity not reused", proof, err)
+	}
+	// Exhaustion is visible and terminal; generic and post-write failures stay unknown.
+	for _, tc := range []struct {
+		attempt int
+		err     error
+		want    string
+	}{{4, retryErr, "failed"}, {1, errors.New("unknown external effect"), "unknown"}} {
+		job.Attempt = tc.attempt
+		if err := database.Model(&tasks.Task{}).Where("id=?", job.ID).Updates(map[string]any{"status": "running", "lease_token": job.LeaseToken, "lease_until": gorm.Expr("DATE_ADD(NOW(3),INTERVAL 180 SECOND)")}).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := tasks.Finish(ctx, database, &job, tc.err); err != nil {
+			t.Fatal(err)
+		}
+		var got tasks.Task
+		if err := database.Where("id=?", job.ID).Take(&got).Error; err != nil || got.Status != tc.want {
+			t.Fatal("unsafe retry or missing exhaustion", got.Status, tc.want, err)
+		}
+	}
+	t.Log("preflight timeout: zero writes; durable backoff; same-unit retry exactly one invoice/payment; terminal exhaustion; unknown remains blocked")
 	var failedUnit int64
 	database.Raw("SELECT id FROM `order`.delivery_units WHERE order_id=93002 AND status='unknown'").Scan(&failedUnit)
 	var failedTask tasks.Task

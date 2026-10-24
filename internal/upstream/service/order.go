@@ -65,6 +65,16 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 			if link.Status == "paid" || link.Status == "active" {
 				return nil
 			}
+			if in.UnitID != "" && link.Status == "not_submitted" && link.UpstreamOrderID == "pending" && link.UpstreamHostID == "" && link.SupplierID == product.SupplierID && link.UpstreamProductID == product.UpstreamProductID {
+				if !product.AutoSetup {
+					return fmt.Errorf("商品未启用自动开通")
+				}
+				if err := s.ValidateLossGuard(product.ID, product.Price); err != nil {
+					return err
+				}
+				result := tx.Table(table).Where("id=? AND status='not_submitted'", link.ID).Updates(map[string]any{"status": "processing", "attempt_count": gorm.Expr("attempt_count+1"), "updated_at": now()})
+				return result.Error
+			}
 			return fmt.Errorf("采购已发起，结果待核实；禁止重复下单")
 		}
 		if findErr != gorm.ErrRecordNotFound {
@@ -118,8 +128,7 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 		},
 	})
 	if err != nil {
-		s.failProvision(table, &link, err)
-		return nil, err
+		return nil, s.failProvision(table, &link, err)
 	}
 	link.UpstreamOrderID, link.UpstreamHostID, link.Status = result.OrderID, result.HostID, result.Status
 	link.Cost, link.BalanceBefore, link.BalanceAfter, link.LastError = result.Cost, result.BalanceBefore, result.BalanceAfter, ""
@@ -152,16 +161,32 @@ func (s *Store) findProductByLocalID(localProductID string) (model.UpstreamProdu
 	return value, err
 }
 
-func (s *Store) failProvision(table string, link *model.UpstreamOrder, failure error) {
+func (s *Store) failProvision(table string, link *model.UpstreamOrder, failure error) error {
 	// A timeout or invalid response is not evidence that the supplier did not charge.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	evidence := contracts.ClassifyProcurementFailure("provider", failure)
-	err := s.db.WithContext(ctx).Table(table).Where("id = ?", link.ID).Updates(map[string]any{"status": "unknown", "last_error": evidence.Error(), "updated_at": now()}).Error
+	status := "unknown"
+	retry := table == "order.unit_procurements" && evidence.Stage == "quote" && (evidence.Code == "timeout" || evidence.Code == "network")
+	if retry {
+		status = "not_submitted"
+	}
+	// CAS against the durably saved read-only phase. If the database cannot
+	// prove this phase, fail closed; neither unit nor task may be requeued.
+	query := s.db.WithContext(ctx).Table(table).Where("id = ?", link.ID)
+	if retry {
+		query = query.Where("status='quote' AND upstream_order_id='pending' AND COALESCE(upstream_host_id,'')='' ")
+	}
+	result := query.Updates(map[string]any{"status": status, "last_error": evidence.Error(), "updated_at": now()})
+	err := result.Error
 	// Only fixed diagnostic fields; never include failure.Error(), URLs,
 	// upstream response text, authentication or the customer's configuration.
 	raw, _ := json.Marshal(map[string]any{"event": "procurement_failed", "order_id": link.OrderID, "procurement_id": link.ID, "supplier_id": link.SupplierID, "stage": evidence.Stage, "code": evidence.Code, "http_status": evidence.HTTPStatus, "supplier_status": evidence.SupplierStatus, "evidence_persisted": err == nil})
 	log.Print(string(raw))
+	if retry && err == nil && result.RowsAffected == 1 {
+		return &contracts.SafePreflightRetry{Cause: evidence}
+	}
+	return failure
 }
 
 func provisionResult(link model.UpstreamOrder) *ProvisionResult {
