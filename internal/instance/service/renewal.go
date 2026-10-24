@@ -214,9 +214,8 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 	if selected == nil {
 		return nil, errors.New("请选择有效续费周期")
 	}
-	if intent.QuoteRevision != "" && intent.QuoteRevision != selected.QuoteRevision {
-		return nil, &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
-	}
+	// Client revisions are display snapshots. Always price this intent from the
+	// fresh server quote; payment still rechecks the order and actual amount.
 
 	p, _ := s.provider(h)
 	real, e := p.GetInstanceDetail(parseHostID(h.UpstreamInstanceID))
@@ -399,7 +398,7 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=? AND customer_id=? AND ownership_version=?", id, customer, h.OwnershipVersion).Take(&approved).Error; err != nil {
 				return renewalquote.Unverified()
 			}
-			if approved.QuoteRevision != autoRenewalApprovalRevision(h, RenewalOption{Cycle: r.Cycle, Duration: r.Duration, Amount: r.Amount.String()}) {
+			if approved.QuoteRevision != autoRenewalApprovalRevision(h, RenewalOption{Cycle: r.Cycle, Duration: r.Duration, Amount: balance.Money(o.TotalAmount).String()}) {
 				return renewalquote.Unverified()
 			}
 		}
@@ -473,10 +472,6 @@ func (s *Service) SetAutoRenewCycle(ctx context.Context, customer, id int64, ena
 		if approved == nil {
 			return renewalquote.Unverified()
 		}
-		if revision == "" || revision != approved.QuoteRevision {
-			return &renewalquote.Error{Code: "RENEWAL_QUOTE_EXPIRED"}
-		}
-
 		if h.ExpiresAt == nil {
 			return errors.New("缺少到期时间")
 		}

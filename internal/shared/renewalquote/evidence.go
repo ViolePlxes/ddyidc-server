@@ -29,13 +29,13 @@ type Error struct {
 func (e *Error) Error() string {
 	switch e.Code {
 	case "RENEWAL_PRICE_CHANGED":
-		return "续费价格已变化：原金额" + e.OldAmount + "元，最新原价" + e.NewAmount + "元，请重新确认续费订单"
+		return "续费金额已更新，请重新发起支付"
 	case "RENEWAL_QUOTE_EXPIRED":
-		return "续费报价已过期，请重新核验后再支付"
+		return "续费信息已更新，请重新发起支付"
 	case "RENEWAL_PAYMENT_RECONCILING":
 		return "续费付款或执行结果待核对，请勿重复付款"
 	default:
-		return "续费完整原价或订单关联未确认，未发起支付"
+		return "暂时无法完成续费，请稍后重试或联系客服"
 	}
 }
 func Unverified() error { return &Error{Code: "RENEWAL_QUOTE_UNVERIFIED"} }

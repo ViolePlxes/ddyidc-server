@@ -1,6 +1,7 @@
 package renewalquote
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -71,5 +72,16 @@ func TestEvidenceBindingAndValidity(t *testing.T) {
 				t.Fatal("stale binding accepted")
 			}
 		})
+	}
+}
+
+func TestCustomerMessagesDoNotExposeInternalPriceEvidence(t *testing.T) {
+	for _, code := range []string{"RENEWAL_QUOTE_UNVERIFIED", "RENEWAL_PRICE_CHANGED", "RENEWAL_QUOTE_EXPIRED"} {
+		msg := (&Error{Code: code, OldAmount: "31.77", NewAmount: "30.00"}).Error()
+		for _, internal := range []string{"原价", "核验", "31.77", "订单关联未确认"} {
+			if strings.Contains(msg, internal) {
+				t.Fatalf("internal gate leaked: %s", msg)
+			}
+		}
 	}
 }
