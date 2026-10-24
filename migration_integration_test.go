@@ -49,6 +49,7 @@ func TestOfflineMigrationMySQL(t *testing.T) {
 	if err = migrations.Verify(ctx, pool, steps); err != nil {
 		t.Fatal(err)
 	}
+	checkDomainNavigationMigration(t, pool, steps)
 	// Update admission must distinguish a genuinely absent row from a corrupt,
 	// dirty or unreadable ledger; only the first case can queue reviewed migration.
 	var original string

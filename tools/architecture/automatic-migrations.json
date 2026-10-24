@@ -6,5 +6,9 @@
   "056_resource_reclamation.sql": {
     "sha256": "01dde2000d4bfe88769cb399c58da8a7613c7fba22a33b4b1ea3dc4168629125",
     "rollbackCompatible": true
+  },
+  "057_domain_navigation.sql": {
+    "sha256": "11a0a2f705e4efdc34df7d6315c4475c767bb48d9c10e49f217dc042f2d7cb1a",
+    "rollbackCompatible": true
   }
 }
