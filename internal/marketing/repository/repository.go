@@ -41,6 +41,7 @@ type Repository interface {
 	UpdateRewardStatus(ctx context.Context, id int64, from, to uint8, remark string) error
 	ReclaimRewardsByOrder(ctx context.Context, orderID int64, remark string) (int64, error)
 	SumRewardAmountByStatus(ctx context.Context, rewardUserID int64) (map[uint8]int64, error)
+	SumDailySettledRewards(ctx context.Context, rewardUserID int64, yesterday, today, tomorrow time.Time) (int64, int64, error)
 
 	// 优惠券（M4）
 	CreateCoupon(ctx context.Context, v *dom.Coupon) error
@@ -341,6 +342,20 @@ func (r *GormRepository) SumRewardAmountByStatus(c context.Context, rewardUserID
 
 func (r *GormRepository) CreateCoupon(c context.Context, v *dom.Coupon) error {
 	return r.db.WithContext(c).Table(dom.Coupon{}.TableName()).Create(v).Error
+}
+
+// SumDailySettledRewards counts actual settlements, scoped to their recipient.
+// Half-open business-day bounds exclude future, pending, frozen and reclaimed rewards.
+func (r *GormRepository) SumDailySettledRewards(c context.Context, userID int64, yesterday, today, tomorrow time.Time) (int64, int64, error) {
+	var row struct {
+		Today     int64
+		Yesterday int64
+	}
+	err := r.db.WithContext(c).Table(dom.Reward{}.TableName()).
+		Select("COALESCE(SUM(CASE WHEN settled_at >= ? THEN amount ELSE 0 END), 0) AS today, COALESCE(SUM(CASE WHEN settled_at < ? THEN amount ELSE 0 END), 0) AS yesterday", today, today).
+		Where("reward_user_id = ? AND status = ? AND settled_at >= ? AND settled_at < ?", userID, dom.RewardSettled, yesterday, tomorrow).
+		Scan(&row).Error
+	return row.Today, row.Yesterday, err
 }
 
 func (r *GormRepository) UpdateCoupon(c context.Context, v *dom.Coupon) error {

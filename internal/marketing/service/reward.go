@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	dom "ddyidc/internal/marketing/domain"
 	repo "ddyidc/internal/marketing/repository"
@@ -108,6 +109,13 @@ func isDuplicateEntry(err error) bool {
 
 // MyEarnings 用户收益概览（累计/待结算/已结算/冻结）。
 func (s *Service) MyEarnings(ctx context.Context, rewardUserID int64) (*EarningsResponse, error) {
+	return s.myEarningsAt(ctx, rewardUserID, time.Now())
+}
+
+func (s *Service) myEarningsAt(ctx context.Context, rewardUserID int64, now time.Time) (*EarningsResponse, error) {
+	if rewardUserID <= 0 {
+		return nil, errors.New("用户身份无效")
+	}
 	sums, err := s.repo.SumRewardAmountByStatus(ctx, rewardUserID)
 	if err != nil {
 		return nil, fmt.Errorf("统计收益失败: %w", err)
@@ -118,6 +126,13 @@ func (s *Service) MyEarnings(ctx context.Context, rewardUserID int64) (*Earnings
 		Frozen:  sums[dom.RewardFrozen],
 	}
 	resp.Total = resp.Pending + resp.Settled + resp.Frozen
+	local := now.In(time.FixedZone("Asia/Shanghai", 8*60*60))
+	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, local.Location())
+	resp.TodaySettled, resp.YesterdaySettled, err = s.repo.SumDailySettledRewards(ctx, rewardUserID, today.AddDate(0, 0, -1), today, today.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, fmt.Errorf("统计每日收益失败: %w", err)
+	}
+	resp.Day, resp.Timezone = today.Format("2006-01-02"), "Asia/Shanghai"
 	return resp, nil
 }
 

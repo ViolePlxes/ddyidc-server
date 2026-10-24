@@ -702,5 +702,13 @@
     "label": "隔离测试、本地联调用",
     "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh with official migrations on disposable MySQL; validates legacy payment gate, replacement consent, immutable proofs, auto pause/notification outbox and least runtime grants. A normal-suite skip is not a pass."
   },
-  "ddyidc/internal/instance/service/TestRenewalQuoteCorrectionMySQL": {"disposition":"isolated_suite_required","verification":"Run test_renewal_quote_gate.sh on official disposable MySQL; silent correction, audit, preserved coupon reservation, exact gateway amount and existing-channel rejection. Skip is not a pass."}
+  "ddyidc/internal/instance/service/TestRenewalQuoteCorrectionMySQL": {"disposition":"isolated_suite_required","verification":"Run test_renewal_quote_gate.sh on official disposable MySQL; silent correction, audit, preserved coupon reservation, exact gateway amount and existing-channel rejection. Skip is not a pass."},
+  "ddyidc/internal/marketing/service/TestDailyEarningsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_home_referral.sh on disposable officially migrated MySQL. A skip is not a pass."
+  },
+  "ddyidc/internal/marketing/service/TestHomeInviteLifecycleMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_home_referral.sh on disposable officially migrated MySQL. A skip is not a pass."
+  }
 }
