@@ -1,3 +1,5 @@
+import io
+import tarfile
 import hashlib
 import importlib.util
 import json
@@ -21,6 +23,27 @@ class ControlledMigrationTests(unittest.TestCase):
         (root/'tools/architecture/automatic-migrations.json').write_text(json.dumps({'001.sql':{'sha256':digest,'rollbackCompatible':True}}))
         rows={'999_module_seeds_v1':(hashlib.sha256(b'module-seeds-v1').hexdigest(),'complete')}
         return root,digest,rows
+
+    def test_export_source_is_readable_with_service_umask_without_relaxing_parent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);root.chmod(0o700)
+            private=root/'private';private.write_text('fixture');private.chmod(0o600)
+            def command(argv,**kwargs):
+                if 'archive' not in argv:return
+                target=Path(next(a.split('=',1)[1] for a in argv if a.startswith('--output=')))
+                with tarfile.open(target,'w') as archive:
+                    for name in ['go.mod','nested/child/main.go']:
+                        data=b'fixture';entry=tarfile.TarInfo(name);entry.size=len(data);archive.addfile(entry,io.BytesIO(data))
+            previous=os.umask(0o077)
+            try:
+                with mock.patch.object(m,'command',side_effect=command),mock.patch.object(m.subprocess,'check_output',return_value='a'*40+'\n'):
+                    source,sha=m.export_release({'identityFile':'fixture','knownHostsFile':'fixture','repository':'fixture'},'a'*40,root,lambda:None)
+                for path in [source,source/'nested',source/'nested/child']:self.assertEqual(path.stat().st_mode&0o777,0o755)
+                for path in [source/'go.mod',source/'nested/child/main.go']:self.assertEqual(path.stat().st_mode&0o777,0o644)
+                self.assertEqual(root.stat().st_mode&0o777,0o700)
+                self.assertEqual(private.stat().st_mode&0o777,0o600)
+                with self.assertRaises(m.Refused):m.source_directory(source,source/'..'/'outside')
+            finally:os.umask(previous)
 
     def test_pending_reviewed_and_repeat_are_distinct(self):
         with tempfile.TemporaryDirectory() as folder:
