@@ -14,6 +14,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 NoNewPrivileges=true
-ReadWritePaths=/var/lib/ddyidc-migrations /var/backups/ddyidc/update-migrations /var/lib/ddyidc/update-results
+ReadWritePaths=/var/lib/ddyidc-migrations /var/backups/ddyidc/update-migrations /var/lib/ddyidc/update-results /var/lib/ddyidc/update/workspaces/backend
 StandardOutput=journal
 StandardError=journal
