@@ -64,3 +64,13 @@ func sanitizeProcurementFailure(value ProcurementFailure) ProcurementFailure {
 	}
 	return value
 }
+
+// SafePreflightRetry is emitted only after durable proof that no procurement
+// write has begun. Never infer it from a message or a historical unknown row.
+type SafePreflightRetry struct{ Cause error }
+
+func (e *SafePreflightRetry) Error() string {
+	return "采购前报价暂时不可用，尚未提交开通，将限次重试"
+}
+func (e *SafePreflightRetry) Unwrap() error     { return e.Cause }
+func (e *SafePreflightRetry) SafeToRetry() bool { return true }
