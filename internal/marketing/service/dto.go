@@ -59,10 +59,14 @@ type RewardDTO struct {
 
 // EarningsResponse 用户收益概览（金额：分）
 type EarningsResponse struct {
-	Total   int64 `json:"total"`
-	Pending int64 `json:"pending"`
-	Settled int64 `json:"settled"`
-	Frozen  int64 `json:"frozen"`
+	Total            int64  `json:"total"`
+	Pending          int64  `json:"pending"`
+	Settled          int64  `json:"settled"`
+	Frozen           int64  `json:"frozen"`
+	TodaySettled     int64  `json:"todaySettled"`
+	YesterdaySettled int64  `json:"yesterdaySettled"`
+	Day              string `json:"day"`
+	Timezone         string `json:"timezone"`
 }
 
 // PromoOverviewResponse 用户推广看板（M3）

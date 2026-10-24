@@ -37,6 +37,7 @@ jobs:
           python3 deploy/linux/tests/test_ledger_guard_upgrade.py
           bash deploy/linux/tests/test_order_transactions.sh > order-transactions.log 2>&1
           bash deploy/linux/tests/test_foundation_modules.sh > foundation-modules.log 2>&1
+          bash deploy/linux/tests/test_home_referral.sh > home-referral.log 2>&1
           bash deploy/linux/tests/test_schema_migrations.sh > schema-contracts.log 2>&1
           bash deploy/linux/tests/test_notification_inbox.sh > notification-inbox.log 2>&1
           bash deploy/linux/tests/test_finance_recovery.sh > finance-recovery.log 2>&1
@@ -71,6 +72,7 @@ jobs:
             binary-vulns.json
             order-transactions.log
             foundation-modules.log
+            home-referral.log
             schema-contracts.log
             notification-inbox.log
             finance-recovery.log
