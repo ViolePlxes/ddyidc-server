@@ -122,10 +122,7 @@ func (s *Service) pauseAutoRenewalQuote(ctx context.Context, h dom.Host, reason,
 		if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&alert).Error; e != nil {
 			return e
 		}
-		content := "自动续费已暂停：续费价格或配置需要重新核验，请进入产品详情核对后重新开启。"
-		if reason == "price_changed" {
-			content = fmt.Sprintf("自动续费已暂停：原确认金额%s元，最新报价%s元。请核对后重新开启，系统不会自动按新价格扣款。", oldAmount, newAmount)
-		}
+		content := "自动续费已暂停，请检查服务配置或联系客服后重新开启。"
 		return notification.EnqueueRenewalPause(tx, notification.Event{Key: fmt.Sprintf("renewal_quote:%d:%s", h.ID, fingerprint), RecipientID: h.CustomerID, Type: "billing", Scene: "renewal_quote_paused", Title: "自动续费已暂停", Summary: content, Content: content, BusinessType: "instance", BusinessID: fmt.Sprint(h.ID), OwnershipVersion: h.OwnershipVersion})
 	})
 	notification.Wake()
@@ -144,9 +141,9 @@ func (s *Service) AutoRenewalWarning(ctx context.Context, user, id int64) string
 		return ""
 	}
 	if alert.Reason == "price_changed" {
-		return "自动续费已暂停：报价已变化，请核对最新价格后重新开启"
+		return "自动续费当前未开启，可按当前价格重新开启"
 	}
-	return "自动续费已暂停：续费价格需要重新核验，请手动确认"
+	return "自动续费已暂停，请检查服务配置或联系客服后重新开启"
 }
 
 // Supplier cost/discount changes do not change the customer's approved retail.
