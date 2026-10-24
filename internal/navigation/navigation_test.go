@@ -56,7 +56,7 @@ func TestSeeds(t *testing.T) {
 			}
 		}
 	}
-	if count["console"] != 30 || count["admin"] != 51 || count["sales"] != 3 {
+	if count["console"] != 40 || count["admin"] != 51 || count["sales"] != 3 {
 		t.Fatalf("unexpected seed inventory: %v", count)
 	}
 }
