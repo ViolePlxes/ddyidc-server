@@ -752,5 +752,13 @@
   "ddyidc/internal/domains/TestDomainLifecycleMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_domains.sh against disposable MySQL. Verifies tenant isolation, signatures, exact yuan pricing, quote ownership/expiry, insufficient balance, concurrent replay and unknown outcomes. Skip is not a pass."
+  },
+  "ddyidc/internal/marketing/service/TestPromoCodeGovernanceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_home_referral.sh against disposable migrated MySQL; assert safe code generation, mandatory review, policy reservation, concurrent claims, retired-code rejection and unchanged attribution/rewards. Skip is not a pass."
+  },
+  "ddyidc/TestPromoCodeMigrationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_home_referral.sh; simulate preceding schema inside disposable MySQL, apply/replay059, preserve legacy code/attribution/counts/financial ledger. Skip is not a pass."
   }
 }

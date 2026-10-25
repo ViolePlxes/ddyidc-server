@@ -14,6 +14,7 @@ type Invite struct {
 	ID           int64      `gorm:"column:id;primaryKey" json:"id,string"`
 	UserID       int64      `gorm:"column:user_id" json:"userId,string"`
 	Code         string     `gorm:"column:code" json:"code"`
+	PendingCode  *string    `gorm:"column:pending_code" json:"pendingCode,omitempty"`
 	Status       uint8      `gorm:"column:status" json:"status"` // 0待审核 1启用 2禁用 3已驳回
 	RejectReason *string    `gorm:"column:reject_reason" json:"rejectReason"`
 	AuditedAt    *time.Time `gorm:"column:audited_at" json:"auditedAt"`

@@ -53,8 +53,8 @@ var configDefaults = []struct {
 	Desc  string
 }{
 	{CfgInviteEnabled, "1", "优惠码注册总开关"},
-	{CfgInviteReview, "0", "自定义优惠码人工审核开关"},
-	{CfgInviteCodeLength, "6", "优惠码长度"},
+	{CfgInviteReview, "1", "自定义优惠码人工审核开关"},
+	{CfgInviteCodeLength, "8", "优惠码长度"},
 	{CfgInviteCodeCharset, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789", "优惠码字符集"},
 	{CfgRewardEnabled, "1", "多级分销奖励开关"},
 	{CfgRewardLevels, "1", "分销层级（1-3）"},
@@ -162,7 +162,7 @@ func (s *Service) GetPublicConfig(ctx context.Context) (*PublicConfigResponse, e
 	}
 	return &PublicConfigResponse{
 		InviteEnabled:   configBool(values, CfgInviteEnabled),
-		InviteReview:    configBool(values, CfgInviteReview),
+		InviteReview:    true,
 		RewardEnabled:   configBool(values, CfgRewardEnabled),
 		CouponSelfClaim: configBool(values, CfgCouponSelfClaim),
 	}, nil
@@ -192,6 +192,19 @@ func (s *Service) SaveAdminConfig(ctx context.Context, values map[string]string)
 		known[item.Key] = item.Desc
 	}
 	for key, value := range values {
+		if key == CfgInviteReview && value != "1" {
+			return fmt.Errorf("自定义优惠码必须人工审核")
+		}
+		if key == CfgInviteCodeCharset && value != "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" {
+			return fmt.Errorf("系统码使用固定安全字符集")
+		}
+		if key == CfgInviteCodeLength {
+			n, e := strconv.Atoi(value)
+			if e != nil || n < 4 || n > 12 {
+				return fmt.Errorf("系统优惠码长度仅支持4～12位")
+			}
+		}
+
 		desc, ok := known[key]
 		if !ok {
 			return fmt.Errorf("未知的配置键: %s", key)

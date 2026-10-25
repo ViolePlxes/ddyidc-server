@@ -185,7 +185,11 @@ func (r *GormRepository) ListInvites(c context.Context, page, pageSize int, stat
 		Joins("LEFT JOIN customer.customers cu ON cu.id = i.user_id").
 		Select("i.*, cu.username AS username, cu.email AS email")
 	if status != nil {
-		q = q.Where("i.status = ?", *status)
+		if *status == 0 {
+			q = q.Where("i.status=0 OR i.pending_code IS NOT NULL")
+		} else {
+			q = q.Where("i.status = ?", *status)
+		}
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
 		q = q.Where("i.code LIKE ? OR cu.username LIKE ?", "%"+kw+"%", "%"+kw+"%")

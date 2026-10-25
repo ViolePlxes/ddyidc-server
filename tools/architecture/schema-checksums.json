@@ -56,5 +56,6 @@
   "053_renewal_quote_evidence.sql": "892d8506ab5ebaf79108e75bc5f69bf47eff3ec933f0e4e7af933c8458deeeee",
   "056_resource_reclamation.sql": "01dde2000d4bfe88769cb399c58da8a7613c7fba22a33b4b1ea3dc4168629125",
   "057_domain_navigation.sql": "11a0a2f705e4efdc34df7d6315c4475c767bb48d9c10e49f217dc042f2d7cb1a",
-  "058_domain_service.sql": "51f4a3ed29e115b86c43ea2362e853e9a57effc5937225d2dea8aca19dafa213"
+  "058_domain_service.sql": "51f4a3ed29e115b86c43ea2362e853e9a57effc5937225d2dea8aca19dafa213",
+  "059_promo_code_governance.sql": "f6d579124c5066c7d38c6e2fe71843f5a29d505273e934bd474c5471605ec543"
 }

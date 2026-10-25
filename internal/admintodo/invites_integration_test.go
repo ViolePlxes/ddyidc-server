@@ -22,7 +22,7 @@ func TestRegistrationInviteTodoMySQL(t *testing.T) {
 	ctx := context.Background()
 	user := snowflake.GenID()
 	must(db.Table("customer.customers").Create(map[string]any{"id": user, "tenant_id": 0, "username": fmt.Sprintf("invite-test-%d", user), "password_hash": "isolated", "status": 1, "created_at": time.Now(), "updated_at": time.Now()}).Error)
-	row := dom.Invite{UserID: user, Code: fmt.Sprintf("T%d", user), Status: dom.InvitePending}
+	row := dom.Invite{UserID: user, Code: fmt.Sprintf("T%010d", user%10000000000), Status: dom.InvitePending}
 	must(db.Create(&row).Error)
 	var pending dom.Invite
 	must(db.First(&pending, row.ID).Error)

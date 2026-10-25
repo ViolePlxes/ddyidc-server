@@ -25,6 +25,9 @@ func ReviewInvite(ctx context.Context, db *gorm.DB, id, admin int64, ip, action,
 		return ErrQuery
 	}
 	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if e := marketing.LockCodePolicy(ctx, tx); e != nil {
+			return e
+		}
 		var row dom.Invite
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, id).Error; e != nil {
 			return e
@@ -36,10 +39,14 @@ func ReviewInvite(ctx context.Context, db *gorm.DB, id, admin int64, ip, action,
 		if replay {
 			return nil
 		}
-		if row.Status != dom.InvitePending || !row.UpdatedAt.Equal(expected) {
+		if (row.Status != dom.InvitePending && row.PendingCode == nil) || !row.UpdatedAt.Equal(expected) {
 			return ErrConflict
 		}
-		if e := marketing.NewService(tx, repo.NewRepository(tx)).AdminReviewInvite(ctx, id, action == "approve", reason); e != nil {
+		candidate := row.Code
+		if row.PendingCode != nil {
+			candidate = *row.PendingCode
+		}
+		if e := marketing.NewService(tx, repo.NewRepository(tx)).GovernCode(ctx, id, admin, ip, action, reason, candidate); e != nil {
 			return e
 		}
 		return tx.Table("system.todo_audits").Create(map[string]any{"id": snowflake.GenID(), "request_id": request, "kind": "recommendations", "source": "invite", "object_id": id, "action": action, "admin_id": admin, "operator_ip": ip, "notes": reason, "created_at": time.Now().UTC()}).Error

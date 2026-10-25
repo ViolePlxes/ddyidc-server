@@ -7,6 +7,7 @@ type InviteDTO struct {
 	ID           string  `json:"id"`
 	UserID       string  `json:"userId"`
 	Code         string  `json:"code"`
+	PendingCode  *string `json:"pendingCode,omitempty"`
 	Status       uint8   `json:"status"`
 	RejectReason *string `json:"rejectReason,omitempty"`
 	InviteCount  int64   `json:"inviteCount"`

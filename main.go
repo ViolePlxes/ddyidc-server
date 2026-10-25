@@ -385,6 +385,9 @@ func main() {
 			if err := notify.ApplyDigestRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
+			if err := marketingservice.ApplyCodeRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 			if err := domains.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
@@ -585,6 +588,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 
 	// 营销套件（M1-M6）
 	marketingSvc := marketingservice.NewService(db.G, repositories.Marketing)
+	*cronStarts = append(*cronStarts, marketingSvc.StartCodeGovernance)
 	pointsSvc := points.NewService(db.G, cache.RDB)
 	if err := pointsSvc.EnsureSchema(context.Background()); err != nil {
 		panic("points schema initialization failed: " + err.Error())
