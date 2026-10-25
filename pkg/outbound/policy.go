@@ -29,11 +29,11 @@ type Config struct {
 
 type Policy struct {
 	detailReadOnly bool
-	private []netip.Prefix
-	ports   map[int]bool
-	hosts   map[string]bool
-	lookup  func(context.Context, string) ([]net.IPAddr, error)
-	dial    func(context.Context, string, string) (net.Conn, error)
+	private        []netip.Prefix
+	ports          map[int]bool
+	hosts          map[string]bool
+	lookup         func(context.Context, string) ([]net.IPAddr, error)
+	dial           func(context.Context, string, string) (net.Conn, error)
 }
 
 var current atomic.Pointer[Policy]

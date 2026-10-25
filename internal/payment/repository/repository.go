@@ -2,8 +2,8 @@ package payment
 
 import (
 	"context"
- "ddyidc/internal/domains"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/domains"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/renewalquote"
 	"errors"
@@ -137,7 +137,9 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 		if row.Status != 1 || row.PayAmount <= 0 {
 			return ErrNotPayable
 		}
- if err := domains.CheckPaymentTx(ctx, tx, customerID, orderID, row.PayAmount, time.Now()); err != nil { return err }
+		if err := domains.CheckPaymentTx(ctx, tx, customerID, orderID, row.PayAmount, time.Now()); err != nil {
+			return err
+		}
 		if err := renewalquote.CheckTx(ctx, tx, customerID, orderID); err != nil {
 			return err
 		}
