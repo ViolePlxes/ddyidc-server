@@ -26,7 +26,7 @@ func RegisterHandlers(server *rest.Server, s *Service, jwt *auth.Manager) {
 	}{
 		{"GET", "/api/v1/domains/contracts", h.contracts}, {"GET", "/api/v1/domains/assets", h.assets}, {"GET", "/api/v1/domains/templates", h.templates}, {"GET", "/api/v1/domains/operations", h.records}, {"GET", "/api/v1/domains/orders", h.orders},
 		{"POST", "/api/v1/domains/actions", h.action}, {"POST", "/api/v1/domains/quotes", h.quote}, {"POST", "/api/v1/domains/orders", h.createOrder}, {"POST", "/api/v1/domains/reconcile", h.reconcile},
-		{"POST", "/admin/v1/domains/feeds", h.feed}, {"GET", "/admin/v1/domains/settings", h.settings}, {"PUT", "/admin/v1/domains/settings", h.settings}, {"GET", "/admin/v1/domains/operations", h.adminRecords}, {"POST", "/admin/v1/domains/import", h.importAsset},
+		{"GET", "/admin/v1/domains/assets", h.adminAssets}, {"GET", "/admin/v1/domains/asset", h.adminAsset}, {"POST", "/admin/v1/domains/asset/refresh", h.adminAsset}, {"POST", "/admin/v1/domains/feeds", h.feed}, {"GET", "/admin/v1/domains/settings", h.settings}, {"PUT", "/admin/v1/domains/settings", h.settings}, {"GET", "/admin/v1/domains/operations", h.adminRecords}, {"POST", "/admin/v1/domains/import", h.importAsset},
 	} {
 		server.AddRoute(rest.Route{Method: v.Method, Path: v.Path, Handler: v.Handler})
 	}

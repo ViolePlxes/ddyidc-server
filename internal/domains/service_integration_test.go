@@ -408,6 +408,58 @@ func TestDomainLifecycleMySQL(t *testing.T) {
 			t.Fatal("import target audit missing")
 		}
 	})
+	t.Run("administrator-domain-management", func(t *testing.T) {
+		before := writes.Load()
+		page, e := s.AdminAssets(ctx, AdminAssetFilter{Keyword: "imported.example", Page: 1, PageSize: 1})
+		must(e)
+		if page.Total != 1 || len(page.Items) != 1 || page.Items[0].CustomerID != 95001002 || page.Summary.Total < 2 {
+			t.Fatal("administrator owner projection or global summary incorrect")
+		}
+		id := page.Items[0].ID
+		second, e := s.AdminAssets(ctx, AdminAssetFilter{Keyword: "imported.example", Page: 2, PageSize: 1})
+		must(e)
+		if second.Total != 1 || len(second.Items) != 0 {
+			t.Fatal("pagination incorrect")
+		}
+		literal, e := s.AdminAssets(ctx, AdminAssetFilter{Keyword: "%", Page: 1, PageSize: 20})
+		must(e)
+		if literal.Total != 0 {
+			t.Fatal("search treated literal as wildcard")
+		}
+		for _, filter := range []AdminAssetFilter{{Page: 0, PageSize: 20}, {Page: 1, PageSize: 101}, {Page: 1, PageSize: 20, Status: "invalid"}, {Page: 1, PageSize: 20, Expiry: "invalid"}} {
+			if _, e = s.AdminAssets(ctx, filter); e == nil {
+				t.Fatal("invalid filter accepted")
+			}
+		}
+		detail, e := s.AdminAssetDetail(ctx, id)
+		must(e)
+		if detail.Asset.CustomerID != 95001002 || detail.Asset.Domain != "imported.example" {
+			t.Fatal("detail owner mismatch")
+		}
+		if _, e = s.AdminAssetDetail(ctx, 1); !errors.Is(e, ErrOwnership) {
+			t.Fatal("missing asset accepted")
+		}
+		pending := Asset{ID: 95001901, CustomerID: 95001001, Domain: "admin-pending.example", Status: "pending", CreatedAt: now, UpdatedAt: now}
+		must(database.Create(&pending).Error)
+		if e = s.AdminRefreshAsset(ctx, 95001099, pending.ID, "127.0.0.1"); e == nil {
+			t.Fatal("pending asset refreshed")
+		}
+		must(s.AdminRefreshAsset(ctx, 95001099, id, "127.0.0.1"))
+		var audit int64
+		must(database.Table("system.domain_admin_audits").Where("action='refresh_domain' AND notes LIKE '%imported.example%customer_id=95001002%'").Count(&audit).Error)
+		var after Asset
+		must(database.Take(&after, "id=?", id).Error)
+		if audit != 1 || after.CustomerID != 95001002 || after.Status != "active" || after.ExpiresAt == nil || writes.Load() != before {
+			t.Fatal("refresh changed ownership or performed registrar write")
+		}
+		exp, e := s.AdminAssets(ctx, AdminAssetFilter{Expiry: "expired", Page: 1, PageSize: 100})
+		must(e)
+		for _, asset := range exp.Items {
+			if asset.ExpiresAt == nil || asset.ExpiresAt.After(now) {
+				t.Fatal("expiry filter incorrect")
+			}
+		}
+	})
 	t.Run("runtime-identity-validation", func(t *testing.T) {
 		pool, _ := database.DB()
 		if e := ApplyRuntimePrivileges(ctx, pool, "untrusted", "127.0.0.1"); e == nil {
