@@ -9,6 +9,7 @@ import (
 
 	svc "ddyidc/internal/marketing/service"
 	"ddyidc/pkg/auth"
+	"ddyidc/pkg/clientip"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 )
@@ -20,6 +21,9 @@ func RegisterAdminHandlers(server *rest.Server, service *svc.Service, jwt *auth.
 		// M6 配置中心
 		{Method: http.MethodGet, Path: "/admin/v1/marketing/config", Handler: h.getConfig},
 		{Method: http.MethodPut, Path: "/admin/v1/marketing/config", Handler: h.saveConfig},
+		{Method: http.MethodGet, Path: "/admin/v1/marketing/code-governance", Handler: h.codeGovernance},
+		{Method: http.MethodPut, Path: "/admin/v1/marketing/code-governance", Handler: h.codeGovernance},
+		{Method: http.MethodPost, Path: "/admin/v1/marketing/invites/:id/govern", Handler: h.governCode},
 		// M1 优惠码
 		{Method: http.MethodGet, Path: "/admin/v1/marketing/invites", Handler: h.listInvites},
 		{Method: http.MethodPost, Path: "/admin/v1/marketing/invites/:id/review", Handler: h.reviewInvite},
@@ -118,48 +122,88 @@ func (h *adminHandler) listInvites(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"list": list, "total": total, "page": page, "pageSize": pageSize})
 }
 
-func (h *adminHandler) reviewInvite(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.admin(w, r); !ok {
-		return
-	}
-	id, ok := pathID(w, r)
+func (h *adminHandler) reviewInvite(w http.ResponseWriter, r *http.Request)    { h.governCode(w, r) }
+func (h *adminHandler) setInviteStatus(w http.ResponseWriter, r *http.Request) { h.governCode(w, r) }
+func (h *adminHandler) superCode(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	c, ok := requireRoles(w, r, h.jwt, "admin")
 	if !ok {
-		return
+		return 0, false
 	}
-	var input struct {
-		Approve bool   `json:"approve"`
-		Reason  string `json:"reason"`
+	if !h.service.IsSuperAdmin(r.Context(), c.UserID) {
+		writeError(w, 403, "仅超级管理员可管理优惠码规则与审核")
+		return 0, false
 	}
-	if !decodeBody(w, r, &input) {
-		return
-	}
-	if err := h.service.AdminReviewInvite(r.Context(), id, input.Approve, input.Reason); err != nil {
-		writeFail(w, err)
-		return
-	}
-	writeJSON(w, map[string]bool{"reviewed": true})
+	return c.UserID, true
 }
-
-func (h *adminHandler) setInviteStatus(w http.ResponseWriter, r *http.Request) {
-	if _, ok := h.admin(w, r); !ok {
+func (h *adminHandler) codeGovernance(w http.ResponseWriter, r *http.Request) {
+	admin, ok := h.superCode(w, r)
+	if !ok {
+		return
+	}
+	if r.Method == http.MethodGet {
+		p, e := h.service.CodePolicy(r.Context())
+		if e != nil {
+			writeFail(w, e)
+			return
+		}
+		rows, e := h.service.CodeCandidates(r.Context())
+		if e != nil {
+			writeFail(w, e)
+			return
+		}
+		audits, e := h.service.CodeAudits(r.Context())
+		if e != nil {
+			writeFail(w, e)
+			return
+		}
+		writeJSON(w, map[string]any{"policy": p, "candidates": rows, "audits": audits})
+		return
+	}
+	var in struct {
+		Policy svc.CodePolicy `json:"policy"`
+		Reason string         `json:"reason"`
+	}
+	if !decodeBody(w, r, &in) {
+		return
+	}
+	if e := h.service.SaveCodePolicy(r.Context(), in.Policy, admin, clientip.FromRequest(r), in.Reason); e != nil {
+		writeFail(w, e)
+		return
+	}
+	writeJSON(w, map[string]bool{"saved": true})
+}
+func (h *adminHandler) governCode(w http.ResponseWriter, r *http.Request) {
+	admin, ok := h.superCode(w, r)
+	if !ok {
 		return
 	}
 	id, ok := pathID(w, r)
 	if !ok {
 		return
 	}
-	var input struct {
-		Status uint8 `json:"status"`
+	var in struct {
+		Action, Reason, ExpectedCode string
+		Approve                      *bool
+		Status                       uint8
 	}
-	if !decodeBody(w, r, &input) {
+	if !decodeBody(w, r, &in) {
 		return
 	}
-	if input.Status != 1 && input.Status != 2 {
-		writeError(w, http.StatusBadRequest, "状态仅支持 1启用 / 2禁用")
-		return
+	if in.Action == "" {
+		if in.Approve != nil {
+			if *in.Approve {
+				in.Action = "approve"
+			} else {
+				in.Action = "reject"
+			}
+		} else if in.Status == 1 {
+			in.Action = "enable"
+		} else if in.Status == 2 {
+			in.Action = "disable"
+		}
 	}
-	if err := h.service.AdminSetInviteStatus(r.Context(), id, input.Status); err != nil {
-		writeFail(w, err)
+	if e := h.service.GovernCode(r.Context(), id, admin, clientip.FromRequest(r), in.Action, in.Reason, in.ExpectedCode); e != nil {
+		writeFail(w, e)
 		return
 	}
 	writeJSON(w, map[string]bool{"updated": true})

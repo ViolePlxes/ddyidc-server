@@ -15,9 +15,9 @@ func TestTodoMetadataMySQL(t *testing.T) {
 	}
 	defer tx.Rollback()
 	for _, sql := range []string{
-		"CREATE TEMPORARY TABLE marketing.invites (id BIGINT,user_id BIGINT,code VARCHAR(16),status INT,created_at DATETIME,updated_at DATETIME)",
+		"CREATE TEMPORARY TABLE marketing.invites (id BIGINT,user_id BIGINT,code VARCHAR(16),status INT,pending_code VARCHAR(12) NULL,created_at DATETIME,updated_at DATETIME)",
 		"CREATE TEMPORARY TABLE system.todo_audits (id BIGINT,kind VARCHAR(32),source VARCHAR(32),object_id BIGINT,admin_id BIGINT,created_at DATETIME)",
-		"INSERT INTO marketing.invites VALUES (90001,90001,'TDTEST',0,'2026-10-01 10:00:00','2026-10-01 10:00:00')",
+		"INSERT INTO marketing.invites VALUES (90001,90001,'TDTEST',0,NULL,'2026-10-01 10:00:00','2026-10-01 10:00:00')",
 		"INSERT INTO system.todo_audits VALUES (1,'recommendations','invite',90001,12,'2026-10-01 10:00:00'),(2,'recommendations','invite',90001,13,'2026-10-01 10:00:00'),(3,'refunds','invite',90001,99,'2026-10-02 10:00:00')",
 	} {
 		if err := tx.Exec(sql).Error; err != nil {

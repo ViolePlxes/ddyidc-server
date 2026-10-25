@@ -14,5 +14,9 @@
   "058_domain_service.sql": {
     "sha256": "51f4a3ed29e115b86c43ea2362e853e9a57effc5937225d2dea8aca19dafa213",
     "rollbackCompatible": true
+  },
+  "059_promo_code_governance.sql": {
+    "sha256": "f6d579124c5066c7d38c6e2fe71843f5a29d505273e934bd474c5471605ec543",
+    "rollbackCompatible": true
   }
 }

@@ -75,7 +75,7 @@ func projection(kind string) (string, error) {
 	case "certifications":
 		return `SELECT CAST(r.id AS CHAR) id,'certification' source,CAST(r.customer_id AS CHAR) customer_id,CASE WHEN r.type=2 THEN '企业实名审核' ELSE '个人实名审核' END title,CAST(r.id AS CHAR) number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at,(r.type=1 AND COALESCE(r.certify_channel,'')='alipay') automatic_certification FROM customer.customer_realname r WHERE ` + manualCertificationPredicate, nil
 	case "recommendations":
-		return `SELECT CAST(r.id AS CHAR) id,'invite' source,CAST(r.user_id AS CHAR) customer_id,CONCAT('注册优惠码 · ',r.code) title,r.code number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at FROM marketing.invites r WHERE r.status=0`, nil
+		return `SELECT CAST(r.id AS CHAR) id,'invite' source,CAST(r.user_id AS CHAR) customer_id,CONCAT('优惠码申请 · ',COALESCE(r.pending_code,r.code)) title,COALESCE(r.pending_code,r.code) number,CASE WHEN r.pending_code IS NOT NULL THEN '0' ELSE CAST(r.status AS CHAR) END status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at FROM marketing.invites r WHERE (r.status=0 OR r.pending_code IS NOT NULL)`, nil
 	case "withdrawals":
 		return `SELECT CAST(w.id AS CHAR) id,'marketplace' source,CAST(w.user_id AS CHAR) customer_id,'市场收益提现' title,w.withdraw_no number,w.status,w.amount, '' order_id,'' instance_id,w.created_at,w.updated_at FROM system.marketplace_withdrawals w WHERE w.status IN ('pending','approved','processing','unknown') UNION ALL SELECT CAST(w.id AS CHAR),'balance',CAST(w.customer_id AS CHAR),'余额提现',w.request_id,w.status,w.amount,'','',w.created_at,w.updated_at FROM payment.balance_withdrawals w WHERE w.status IN ('pending','approved','processing','unknown')`, nil
 	case "refunds":
@@ -110,7 +110,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		case "certifications":
 			sql = strings.Replace(sql, "WHERE "+manualCertificationPredicate, "", 1)
 		case "recommendations":
-			sql = strings.Replace(sql, "WHERE r.status=0", "", 1)
+			sql = strings.Replace(sql, "WHERE (r.status=0 OR r.pending_code IS NOT NULL)", "", 1)
 		case "withdrawals":
 			sql = strings.ReplaceAll(sql, "WHERE w.status IN ('pending','approved','processing','unknown')", "")
 		case "offline-transfers":

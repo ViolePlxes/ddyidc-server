@@ -106,7 +106,7 @@ func TestHomeInviteLifecycleMySQL(t *testing.T) {
 		t.Fatal("isolated fixture code collision")
 	}
 	invite, err := svc.ApplyInvite(ctx, owner, code)
-	if err != nil || invite.Status != dom.InvitePending {
+	if err != nil || (invite.Status != dom.InviteActive || invite.PendingCode == nil || *invite.PendingCode != code) {
 		t.Fatalf("custom review: %+v %v", invite, err)
 	}
 	if _, err = svc.ApplyInvite(ctx, owner, code); err == nil {
@@ -119,7 +119,13 @@ func TestHomeInviteLifecycleMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	row.Status = dom.InviteActive
+	if err = svc.AdminReviewInvite(ctx, row.ID, true, "checked custom code"); err != nil {
+		t.Fatal(err)
+	}
+	row, err = repository.FindInviteByUser(ctx, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err = repository.UpdateInvite(ctx, row); err != nil {
 		t.Fatal(err)
 	}
