@@ -26,7 +26,6 @@ func (h *handler) adminListRoutes() []rest.Route {
 		{Method: http.MethodGet, Path: "/admin/v1/instances/export", Handler: h.adminInstanceExport},
 		{Method: http.MethodPost, Path: "/admin/v1/instances/sync", Handler: h.adminInstanceSync},
 		{Method: http.MethodGet, Path: "/admin/v1/instances/sync/:taskId", Handler: h.adminInstanceSyncResult},
-		{Method: http.MethodPut, Path: "/admin/v1/instances/:instanceId/remark", Handler: h.adminInstanceRemark},
 	}
 }
 func (h *handler) globalAccess(w http.ResponseWriter, r *http.Request) (svc.AdminAccess, bool) {
@@ -201,29 +200,6 @@ func (h *handler) adminInstanceSyncResult(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, out)
 }
-func (h *handler) adminInstanceRemark(w http.ResponseWriter, r *http.Request) {
-	a, ok := h.globalAccess(w, r)
-	if !ok {
-		return
-	}
-	id := pathID(w, r)
-	if id == 0 {
-		return
-	}
-	var in svc.AdminRemarkInput
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8192))
-	d.DisallowUnknownFields()
-	if d.Decode(&in) != nil {
-		writeError(w, 400, "备注参数错误")
-		return
-	}
-	if e := h.service.SaveAdminRemark(r.Context(), a, clientip.FromRequest(r), id, in); e != nil {
-		adminListError(w, e)
-		return
-	}
-	writeJSON(w, map[string]bool{"saved": true})
-}
-
 func (h *handler) adminRenewalQuoteAudit(w http.ResponseWriter, r *http.Request) {
 	access, ok := h.globalAccess(w, r)
 	if !ok {
