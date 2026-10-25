@@ -391,45 +391,6 @@ func appendAdminAudit(tx *gorm.DB, admin int64, ip string, id, customer, task in
 	return tx.Exec("INSERT INTO instance.admin_instance_audits(id,admin_id,operator_ip,instance_id,customer_id,task_id,action,before_value,after_value,result,created_at) VALUES(?,?,?,?,?,?,?,?,?,'success',?)", snowflake.GenID(), admin, ip, id, customer, task, action, string(b), string(a), time.Now().UTC()).Error
 }
 
-type AdminRemarkInput struct {
-	CustomerID       string  `json:"customerId"`
-	OwnershipVersion string  `json:"ownershipVersion"`
-	Remark           *string `json:"remark"`
-}
-
-func (s *Service) SaveAdminRemark(ctx context.Context, a AdminAccess, ip string, id int64, in AdminRemarkInput) error {
-	if !a.Remark {
-		return ErrForbidden
-	}
-	customer, e := strconv.ParseInt(in.CustomerID, 10, 64)
-	version, ve := strconv.ParseInt(in.OwnershipVersion, 10, 64)
-	if e != nil || ve != nil || version < 0 || id <= 0 || net.ParseIP(ip) == nil {
-		return ErrAdminListInput
-	}
-	if !a.Allows(customer) {
-		return ErrForbidden
-	}
-	value, e := remarkValue(RemarkInput{Remark: in.Remark})
-	if e != nil {
-		return e
-	}
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var h dom.Host
-		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=? AND ownership_version=?", id, customer, version).Take(&h).Error; e != nil {
-			return errors.New("实例归属已变化，请刷新列表")
-		}
-		before := h.Remark
-		now := time.Now()
-		if e := tx.Model(&h).Updates(map[string]any{"remark": value, "updated_at": now}).Error; e != nil {
-			return e
-		}
-		if e := tx.Create(&dom.Event{InstanceID: id, EventType: "remark", OperatorType: 2, OperatorID: &a.AdminID, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: `{"saved":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}).Error; e != nil {
-			return e
-		}
-		return appendAdminAudit(tx, a.AdminID, ip, id, customer, 0, "remark", map[string]string{"remark": before}, map[string]string{"remark": value})
-	})
-}
-
 func (s *Service) AdminExportRows(ctx context.Context, a AdminAccess, in AdminListInput) ([]AdminInstanceRow, error) {
 	if !a.Export {
 		return nil, ErrForbidden

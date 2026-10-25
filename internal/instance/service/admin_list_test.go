@@ -140,7 +140,7 @@ func TestAdminListMySQL(t *testing.T) {
 	yesterday := now.Add(-24 * time.Hour)
 	for i := 0; i < 7; i++ {
 		cycle := "monthly"
-		amount := `"10.0050"`
+		amount := `"10.01"`
 		state := uint8(3)
 		power := "running"
 		expiry := &tomorrow
@@ -166,7 +166,25 @@ func TestAdminListMySQL(t *testing.T) {
 			customer = 99004099
 		}
 		snapshot := `{"billingCycle":"` + cycle + `","renewalAmount":` + amount + `,"hostname":"vm-fixture","syncedIps":[{"address":"203.0.113.77"},{"address":"203.0.113.77"}],"password":"NEVER_EXPORT"}`
-		h := dom.Host{ID: int64(99004100 + i), InstanceNo: "ADMIN-LIST-" + string(rune('A'+i)), CustomerID: customer, ProductID: 99004200, ProductName: "fixture product", ModuleType: "cloud", ConfigSnapshot: snapshot, Status: state, PowerStatus: power, CreatedAt: now.Add(time.Duration(i) * time.Hour), UpdatedAt: now, ExpiresAt: expiry, OwnershipVersion: 1, Remark: "fixture remark"}
+		var outer map[string]any
+		if err := json.Unmarshal([]byte(snapshot), &outer); err != nil {
+			t.Fatal(err)
+		}
+		outer["renewalAmount"] = "0.01" // Legacy procurement cost must never win.
+		outer["listDisplay"] = map[string]any{"billingCycle": cycle, "renewalAmount": "0.02"}
+		outer["billingCycle"] = "" // Current cycle also exists in the new display path.
+		var amountValue any
+		if err := json.Unmarshal([]byte(amount), &amountValue); err != nil {
+			t.Fatal(err)
+		}
+		outer["supplierReadSnapshot"] = map[string]any{"customerId": customer, "ownershipVersion": 1, "supplierId": 1, "remoteId": "42", "billingCycle": cycle, "amount": amountValue, "priceSource": "upstream_original", "priceState": "verified", "verifiedAt": now.Unix()}
+		encoded, err := json.Marshal(outer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot = string(encoded)
+		fixtureSupplier := int64(1)
+		h := dom.Host{ID: int64(99004100 + i), InstanceNo: "ADMIN-LIST-" + string(rune('A'+i)), CustomerID: customer, ProductID: 99004200, ProductName: "fixture product", UpstreamProviderID: &fixtureSupplier, UpstreamInstanceID: "42", ModuleType: "cloud", ConfigSnapshot: snapshot, Status: state, PowerStatus: power, CreatedAt: now.Add(time.Duration(i) * time.Hour), UpdatedAt: now, ExpiresAt: expiry, OwnershipVersion: 1, Remark: "fixture remark"}
 		if e = tx.Create(&h).Error; e != nil {
 			t.Fatal(e)
 		}
@@ -178,12 +196,51 @@ func TestAdminListMySQL(t *testing.T) {
 	if result.Total != 6 || len(result.Items) != 2 || result.Counts["suspended"] != 1 || result.Counts["due"] != 2 || result.Counts["expired"] != 1 || result.Counts["terminated"] != 1 || result.TotalRenewalSum != "50.05" || result.MissingPriceCount != 1 {
 		t.Fatalf("wrong statistics: %+v", result)
 	}
+	exec("UPDATE customer.customers SET username='v10_11722339' WHERE id=99004001")
+	current, e := service.AdminList(ctx, a, AdminListInput{})
+	if e != nil || current.Items[0].Username != "99004001" {
+		t.Fatal("migration username still displayed", e)
+	}
+	choices, e := service.AdminFilterOptions(ctx, a)
+	if e != nil || choices["customers"][0].Name != "99004001" {
+		t.Fatal("migration username in filter", e)
+	}
+	exported, e := service.AdminExportRows(ctx, a, AdminListInput{})
+	if e != nil || exported[0].Username != "99004001" {
+		t.Fatal("migration username in export", e)
+	}
+	var originalSnapshot string
+	if e = tx.Table("instance.instances").Select("config_snapshot").Where("id=99004100").Scan(&originalSnapshot).Error; e != nil {
+		t.Fatal(e)
+	}
+	for field, bad := range map[string]any{"customerId": 1, "ownershipVersion": 2, "supplierId": 2, "remoteId": "other", "billingCycle": "yearly", "priceSource": "upstream_cost", "priceState": "unavailable", "amount": "0.00"} {
+		var outer map[string]any
+		_ = json.Unmarshal([]byte(originalSnapshot), &outer)
+		outer["supplierReadSnapshot"].(map[string]any)[field] = bad
+		raw, _ := json.Marshal(outer)
+		exec("UPDATE instance.instances SET config_snapshot=? WHERE id=99004100", string(raw))
+		denied, e := service.AdminList(ctx, a, AdminListInput{Search: "99004100"})
+		if e != nil || len(denied.Items) != 1 || denied.Items[0].RenewalAmount != nil {
+			t.Fatal("mismatched quote admitted", field, e)
+		}
+	}
+	exec("UPDATE instance.instances SET config_snapshot=? WHERE id=99004100", originalSnapshot)
+	valid, e := service.AdminList(ctx, a, AdminListInput{Search: "99004100"})
+	if e != nil || valid.Items[0].RenewalAmount == nil || *valid.Items[0].RenewalAmount != "10.01" || valid.Items[0].RenewalStale {
+		t.Fatal("current verified quote missing", e)
+	}
+	exec("UPDATE instance.instances SET config_snapshot=JSON_SET(config_snapshot,'$.supplierReadSnapshot.priceState','last_known') WHERE id=99004100")
+	stale, e := service.AdminList(ctx, a, AdminListInput{Search: "99004100"})
+	if e != nil || !stale.Items[0].RenewalStale || stale.Items[0].RenewalAmount == nil {
+		t.Fatal("last known quote not marked", e)
+	}
+	exec("UPDATE instance.instances SET config_snapshot=? WHERE id=99004100", originalSnapshot)
 	exec("UPDATE customer.customers SET real_name='Unverified profile' WHERE id=99004001")
 	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Items[0].RealName != "" {
 		t.Fatal("unverified profile exposed as certified name", e)
 	}
 	exec("INSERT INTO customer.customer_realname(id,customer_id,type,name,status,created_at,updated_at) VALUES(99004400,99004001,1,'VM Verified Name',2,NOW(),NOW())")
-	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Total != 6 || result.Items[0].RealName != "VM Verified Name" {
+	if result, e = service.AdminList(ctx, a, AdminListInput{}); e != nil || result.Total != 6 || (result.Items[0].RealName != "VM Verified Name" || result.Items[0].RealNameRecordID != "99004400") {
 		t.Fatal("approved identity name not projected or rows duplicated", e)
 	}
 	exec("UPDATE customer.customer_realname SET status=3 WHERE id=99004400")
@@ -219,18 +276,8 @@ func TestAdminListMySQL(t *testing.T) {
 	if _, e = service.AdminExportRows(ctx, masked, AdminListInput{}); !errors.Is(e, ErrForbidden) {
 		t.Fatal("export authorization", e)
 	}
-	invalid := "other owner"
-	if e = service.SaveAdminRemark(ctx, a, "127.0.0.1", 99004100, AdminRemarkInput{CustomerID: "99004001", OwnershipVersion: "2", Remark: &invalid}); e == nil {
-		t.Fatal("stale ownership accepted")
-	}
-	value := "changed in isolated test"
-	if e = service.SaveAdminRemark(ctx, a, "127.0.0.1", 99004100, AdminRemarkInput{CustomerID: "99004001", OwnershipVersion: "1", Remark: &value}); e != nil {
-		t.Fatal(e)
-	}
+	value := "fixture remark"
 	var audit struct{ BeforeValue, AfterValue string }
-	if e = tx.Table("instance.admin_instance_audits").Where("instance_id=99004100").Take(&audit).Error; e != nil || !strings.Contains(audit.BeforeValue, "fixture remark") || !strings.Contains(audit.AfterValue, value) {
-		t.Fatal("audit", e, audit)
-	}
 	if _, e = service.StartAdminSync(ctx, a, "127.0.0.1", AdminSyncInput{RequestID: "test-stale-owner-20261004", Items: []AdminSyncSelection{{ID: "99004100", CustomerID: "99004001", OwnershipVersion: "9"}}}); e == nil {
 		t.Fatal("stale sync accepted")
 	}
@@ -264,5 +311,5 @@ func TestAdminListMySQL(t *testing.T) {
 	if _, e = service.AdminAccess(ctx, 99004002); !errors.Is(e, ErrForbidden) {
 		t.Fatal("empty scope not denied", e)
 	}
-	t.Log("real VM MySQL: exact rounded totals, scope, statuses, multi-IP dedupe, masks, export, stale ownership, remark audit passed; fixtures rolled back")
+	t.Log("real VM MySQL: exact rounded totals, scope, statuses, multi-IP dedupe, masks, export, stale ownership, binding-verified retail quotes, current customer IDs and certification links passed; fixtures rolled back")
 }

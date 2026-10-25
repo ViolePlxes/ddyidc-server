@@ -17,13 +17,13 @@ func (h *handler) managementRoutes() []rest.Route {
 			rest.Route{Method: http.MethodGet, Path: base + "/production-lock/email", Handler: h.productionLockEmail},
 			rest.Route{Method: http.MethodPost, Path: base + "/production-lock/email/send", Handler: h.sendProductionLockEmail},
 			rest.Route{Method: http.MethodPut, Path: base + "/production-lock", Handler: h.productionLock},
-			rest.Route{Method: http.MethodPut, Path: base + "/remark", Handler: h.remark},
 			rest.Route{Method: http.MethodPost, Path: base + "/credentials", Handler: h.credentials},
 			rest.Route{Method: http.MethodGet, Path: base + "/renewal-options", Handler: h.renewalOptions},
 			rest.Route{Method: http.MethodPost, Path: base + "/renewals", Handler: h.createRenewal},
 			rest.Route{Method: http.MethodPost, Path: base + "/renewals/pay", Handler: h.payRenewal},
 			rest.Route{Method: http.MethodPut, Path: base + "/auto-renew", Handler: h.autoRenew})
 	}
+	out = append(out, rest.Route{Method: http.MethodPut, Path: "/api/v1/instance/:instanceId/remark", Handler: h.remark})
 	return append(out, rest.Route{Method: http.MethodPatch, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.edit})
 }
 func (h *handler) productionLock(w http.ResponseWriter, r *http.Request) {
