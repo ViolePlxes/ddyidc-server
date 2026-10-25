@@ -9,6 +9,7 @@ import (
 	"ddyidc/internal/billing/withdrawal"
 	"ddyidc/internal/captcha"
 	"ddyidc/internal/cdnsell"
+ "ddyidc/internal/domains"
 	"ddyidc/internal/certification"
 	customerhandler "ddyidc/internal/customer/handler"
 	customerrrepo "ddyidc/internal/customer/repository"
@@ -118,6 +119,7 @@ type paymentCoordinator struct {
 	orders        *orderservice.Service
 	marketplace   *marketplace.Service
 	cdnsell       *cdnsell.Service
+ domains       *domains.Service
 }
 
 type authEventHooks struct {
@@ -186,6 +188,10 @@ func (c paymentCoordinator) ProvisionAfterPayment(ctx context.Context, customerI
 			return err
 		}
 	}
+	if c.domains != nil {
+ matched, err := c.domains.ProvisionPlatformOrder(ctx, customerID, orderID, method)
+ if matched || err != nil { return err }
+ }
 	if c.cdnsell != nil {
 		matched, err := c.cdnsell.ProvisionPlatformOrder(ctx, customerID, orderID, method)
 		if matched || err != nil {
@@ -377,6 +383,7 @@ func main() {
 			if err := notify.ApplyDigestRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
+ if err := domains.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil { panic(err) }
 			if err := points.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
@@ -601,6 +608,10 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	*cronStarts = append(*cronStarts, promoCouponSvc.StartMaintenance)
 	*cronStarts = append(*cronStarts, orderSvc.StartStockExpiry)
 	orderSvc.SetNotifier(notifyManager)
+ domainSvc := domains.New(db.G, snapshotKey)
+ domains.RegisterHandlers(server, domainSvc, jwt)
+ *cronStarts = append(*cronStarts, domainSvc.Start)
+ orderSvc.RegisterModuleBalancePayer("domains", domainSvc.PayBalance)
 	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)
 	if err := cdnsellSvc.EnsureSchema(context.Background()); err != nil {
 		panic("cdnsell schema initialization failed: " + err.Error())
@@ -652,7 +663,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("instance management schema failed: " + err.Error())
 	}
 	*cronStarts = append(*cronStarts, instanceSvc.StartRenewalMaintenance, instanceSvc.StartExpirySyncMaintenance, instanceSvc.StartMachineRefundMaintenance, instanceSvc.StartUpgradeMaintenance)
-	durableDispatcher := paymentservice.NewDeferredDurableDispatcher(db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc})
+	durableDispatcher := paymentservice.NewDeferredDurableDispatcher(db.G, paymentCoordinator{notifier: notifyManager, groups: groupbuySvc, instances: instanceSvc, certification: certificationSvc, orders: orderSvc, marketplace: marketplaceSvc, cdnsell: cdnsellPaymentSvc, domains: domainSvc})
 	*cronStarts = append(*cronStarts, durableDispatcher.Start)
 	paymentSvc := paymentservice.NewService(repositories.Payment, paymentConfig, paymentChannels, durableDispatcher)
 	paymentSvc.SetRemoteDeliveryRecovery(orderSvc.ReconcileRemoteDelivery)

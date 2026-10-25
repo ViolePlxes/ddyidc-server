@@ -64,9 +64,11 @@ def main():
                 privileges = "SELECT"
             elif name == "system.reclamation_state":
                 privileges = "SELECT,UPDATE(status,requested_at,requested_by,next_attempt_at)"
-            elif name in ("marketing.promo_coupon_events", "marketing.promo_coupon_reconciliations", "billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations", "system.id_registry", "system.todo_audits", "system.todo_event_resolutions", "payment.todo_evidence_files", "payment.todo_withdrawal_accounts", "payment.manual_remittances", "payment.todo_refund_calculations", "payment.todo_refund_requests", "system.cdnsell_admin_audits"):
+            elif name in ("marketing.promo_coupon_events", "marketing.promo_coupon_reconciliations", "billing.transactions", "system.marketplace_flows", "payment.receipts", "system.task_reconciliations", "system.id_registry", "system.todo_audits", "system.todo_event_resolutions", "payment.todo_evidence_files", "payment.todo_withdrawal_accounts", "payment.manual_remittances", "payment.todo_refund_calculations", "payment.todo_refund_requests", "system.cdnsell_admin_audits", "system.domain_admin_audits"):
                 privileges = "SELECT,INSERT"
             elif name in ("order.create_requests", "payment.offline_transfers", "payment.balance_withdrawals", "system.cdnsell_usage_windows", "system.cdnsell_usage_allocations", "system.cdnsell_usage_cursors"):
+                privileges = "SELECT,INSERT,UPDATE"
+            elif name in ("system.domain_rate_limits", "system.domain_settings", "system.domain_assets", "system.domain_templates", "system.domain_operations", "system.domain_quotes", "system.domain_orders"):
                 privileges = "SELECT,INSERT,UPDATE"
             elif name == "system.notification_messages":
                 privileges = "SELECT,INSERT,UPDATE(read_at,deleted_at)"

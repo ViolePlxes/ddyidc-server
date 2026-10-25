@@ -1126,5 +1126,17 @@
     "enabled": true,
     "sort": 8,
     "gate": ""
+  },
+  {
+    "id": "950001100",
+    "scope": "admin",
+    "parentId": "38",
+    "name": "域名服务",
+    "href": "/admin/domains",
+    "icon": "GlobeIcon",
+    "target": "self",
+    "enabled": true,
+    "sort": 9,
+    "gate": ""
   }
 ]
