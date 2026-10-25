@@ -29,11 +29,11 @@ type Config struct {
 
 type Policy struct {
 	detailReadOnly bool
-	private []netip.Prefix
-	ports   map[int]bool
-	hosts   map[string]bool
-	lookup  func(context.Context, string) ([]net.IPAddr, error)
-	dial    func(context.Context, string, string) (net.Conn, error)
+	private        []netip.Prefix
+	ports          map[int]bool
+	hosts          map[string]bool
+	lookup         func(context.Context, string) ([]net.IPAddr, error)
+	dial           func(context.Context, string, string) (net.Conn, error)
 }
 
 var current atomic.Pointer[Policy]
@@ -229,7 +229,18 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func NewClient(timeout time.Duration) *http.Client {
+	return newClient(timeout, false)
+}
+
+// NewSingleAttemptClient avoids replay on reused connections. Some registrars
+// use GET for charged writes, so HTTP method alone cannot establish idempotency.
+func NewSingleAttemptClient(timeout time.Duration) *http.Client {
+	return newClient(timeout, true)
+}
+
+func newClient(timeout time.Duration, singleAttempt bool) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
+	base.DisableKeepAlives = singleAttempt
 	base.Proxy = nil // Do not permit environment proxies to bypass IP validation.
 	base.DialContext = DialContext
 	base.MaxConnsPerHost = 16

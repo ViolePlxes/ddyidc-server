@@ -1,0 +1,2070 @@
+[
+  {
+    "key": "1.1",
+    "path": "/info/?act=getprice",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "value",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "year",
+        "label": "年限",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.1",
+    "path": "/domain/query/",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "suffix",
+        "label": "查询后缀",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.2",
+    "path": "/domain/?act=renew",
+    "method": "POST",
+    "write": true,
+    "paid": true,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "year",
+        "label": "年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.3",
+    "path": "/domain/?act=getdomains",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "local-list",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "limit",
+        "label": "limit",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "page",
+        "label": "page",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.4",
+    "path": "/domain/?act=getpwd",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.5",
+    "path": "/domain/?act=modpwd",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "domainpwd",
+        "label": "域名管理密码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.6",
+    "path": "/domain/?act=moddns",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns1",
+        "label": "首选DNS",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns2",
+        "label": "备用DNS",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns3",
+        "label": "DNS 3",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns4",
+        "label": "DNS 4",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns5",
+        "label": "DNS 5",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns6",
+        "label": "DNS 6",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "offline",
+        "label": "offline",
+        "required": false,
+        "secret": false,
+        "numeric": false,
+        "hidden": true
+      }
+    ]
+  },
+  {
+    "key": "3.7",
+    "path": "/domain/?act=adddnsrecord",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "host",
+        "label": "主机记录",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "type",
+        "label": "记录类型",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "value",
+        "label": "解析值",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "ttl",
+        "label": "TTL（秒）",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "level",
+        "label": "优先级",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "line",
+        "label": "解析线路",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.8",
+    "path": "/domain/?act=moddnsrecord",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "id",
+        "label": "记录编号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "value",
+        "label": "解析值",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "ttl",
+        "label": "TTL（秒）",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.9",
+    "path": "/domain/?act=deldnsrecord",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "id",
+        "label": "记录编号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.10",
+    "path": "/domain/?act=getdnsrecord",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "limit",
+        "label": "limit",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "pageno",
+        "label": "pageno",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.11",
+    "path": "/domain/?act=cert",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.12",
+    "path": "/domain/?act=setlock",
+    "method": "GET",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "val",
+        "label": "锁定范围",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "status",
+        "label": "状态",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.13",
+    "path": "/domain/?act=whois",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.14",
+    "path": "/domain/?act=getrenprice",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "year",
+        "label": "年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.15",
+    "path": "/domain/?act=offline",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.16",
+    "path": "/domain/?act=buysecuritylock",
+    "method": "GET",
+    "write": true,
+    "paid": true,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "buyyear",
+        "label": "服务年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "ver",
+        "label": "版本",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.17",
+    "path": "/domain/?act=securitylockprice",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "buyyear",
+        "label": "服务年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "ver",
+        "label": "版本",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.18",
+    "path": "/domain/?act=getcreatedns",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.19",
+    "path": "/domain/?act=createdns",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "hostname",
+        "label": "DNS主机名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dnsip",
+        "label": "DNS主机IP",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.20",
+    "path": "/domain/?act=modcreatedns",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "hostname",
+        "label": "DNS主机名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dnsip",
+        "label": "DNS主机IP",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.21",
+    "path": "/domain/?act=syncreatedns",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "hostname",
+        "label": "DNS主机名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.22",
+    "path": "/domain/?act=delcreatedns",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "hostname",
+        "label": "DNS主机名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.28",
+    "path": "/domain/ransom/",
+    "method": "GET",
+    "write": true,
+    "paid": true,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.29",
+    "path": "/domain/?act=dnssecadd",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "keytag",
+        "label": "密钥标签",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "keyalg",
+        "label": "签名算法",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "keytype",
+        "label": "摘要类型",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "keydigest",
+        "label": "密钥摘要",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.30",
+    "path": "/domain/?act=dnssecdel",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "keydigest",
+        "label": "密钥摘要",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.31",
+    "path": "/domain/?act=dnssecinfo",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.32",
+    "path": "/domain/?act=dnssecsync",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.33",
+    "path": "/domain/?act=openwhois",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "email",
+        "label": "联系邮箱",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.34",
+    "path": "/domain/?act=closewhois",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.35",
+    "path": "/domain/?act=statuswhois",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.36",
+    "path": "/domain/?act=dnvdellogs",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned-log",
+    "fields": []
+  },
+  {
+    "key": "3.37",
+    "path": "/domain/?act=securitylockview",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.38",
+    "path": "/domain/?act=securitylockstatus",
+    "method": "GET",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "val",
+        "label": "锁定范围",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.39",
+    "path": "/domain/?act=securitylockrenew",
+    "method": "GET",
+    "write": true,
+    "paid": true,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "buyyear",
+        "label": "服务年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "4.1",
+    "path": "/audit/?act=auditsub",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "new-template",
+    "fields": [
+      {
+        "key": "c_regtype",
+        "label": "注册人类型",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "c_org_m",
+        "label": "中文单位名称",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "fullname",
+        "label": "持有人中文全名",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln_m",
+        "label": "中文姓或单位名称",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn_m",
+        "label": "中文名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_co",
+        "label": "国家代码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "cocode",
+        "label": "电话国家区号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st_m",
+        "label": "中文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct_m",
+        "label": "中文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_dt_m",
+        "label": "中文区县",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr_m",
+        "label": "中文联系地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_pc",
+        "label": "邮政编码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_type",
+        "label": "电话格式",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "c_ph",
+        "label": "联系电话",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_code",
+        "label": "电话区号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_num",
+        "label": "电话号码",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_fj",
+        "label": "分机号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_em",
+        "label": "联系邮箱",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_org",
+        "label": "英文单位名称",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln",
+        "label": "英文姓或单位名称",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn",
+        "label": "英文名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st",
+        "label": "英文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct",
+        "label": "英文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr",
+        "label": "英文地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "reg_contact_type",
+        "label": "注册人特殊类别",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idtype_hk",
+        "label": "香港证件类型",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idnum_hk",
+        "label": "香港证件号码",
+        "required": false,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "c_idtype_gswl",
+        "label": "证件类型",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idnum_gswl",
+        "label": "证件号码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "c_keyword",
+        "label": "模板备注",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.2",
+    "path": "/audit/?act=auditmod",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "template",
+    "fields": [
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln_m",
+        "label": "中文姓或单位名称",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn_m",
+        "label": "中文名",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_co",
+        "label": "国家代码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "cocode",
+        "label": "电话国家区号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st_m",
+        "label": "中文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct_m",
+        "label": "中文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_dt_m",
+        "label": "中文区县",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr_m",
+        "label": "中文联系地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_pc",
+        "label": "邮政编码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_type",
+        "label": "电话格式",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "c_ph",
+        "label": "联系电话",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_code",
+        "label": "电话区号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_num",
+        "label": "电话号码",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_fj",
+        "label": "分机号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_em",
+        "label": "联系邮箱",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln",
+        "label": "英文姓或单位名称",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn",
+        "label": "英文名",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st",
+        "label": "英文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct",
+        "label": "英文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr",
+        "label": "英文地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "reg_contact_type",
+        "label": "注册人特殊类别",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idtype_hk",
+        "label": "香港证件类型",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idnum_hk",
+        "label": "香港证件号码",
+        "required": false,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "c_idtype_gswl",
+        "label": "证件类型",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_idnum_gswl",
+        "label": "证件号码",
+        "required": false,
+        "secret": true,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.3",
+    "path": "/audit/?act=auditdel",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "template",
+    "fields": [
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.4",
+    "path": "/audit/?act=auditlist",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "templates",
+    "fields": [
+      {
+        "key": "c_keyword",
+        "label": "模板备注",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_regtype",
+        "label": "注册人类型",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "c_org_m",
+        "label": "中文单位名称",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "reg_contact_type",
+        "label": "注册人特殊类别",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_em",
+        "label": "联系邮箱",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_status",
+        "label": "c_status",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "r_status",
+        "label": "r_status",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_date_begin",
+        "label": "c_date_begin",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_date_end",
+        "label": "c_date_end",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "pageno",
+        "label": "pageno",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "pagesize",
+        "label": "pagesize",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "4.5",
+    "path": "/audit/?act=auditinfo",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "template",
+    "fields": [
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.6",
+    "path": "/audit/?act=regdomain",
+    "method": "POST",
+    "write": true,
+    "paid": true,
+    "scope": "new-domain",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "regyear",
+        "label": "注册年限",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "domainpwd",
+        "label": "域名管理密码",
+        "required": false,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "dns_host1",
+        "label": "dns_host1",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "dns_host2",
+        "label": "dns_host2",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.7",
+    "path": "/audit/?act=domainmodisub",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "eppidtype",
+        "label": "域名后缀类型",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "fullname",
+        "label": "持有人中文全名",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln_m",
+        "label": "中文姓或单位名称",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn_m",
+        "label": "中文名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_co",
+        "label": "国家代码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "cocode",
+        "label": "电话国家区号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st_m",
+        "label": "中文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct_m",
+        "label": "中文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_dt_m",
+        "label": "中文区县",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr_m",
+        "label": "中文联系地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_pc",
+        "label": "邮政编码",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_type",
+        "label": "电话格式",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "c_ph",
+        "label": "联系电话",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_code",
+        "label": "电话区号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_num",
+        "label": "电话号码",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ph_fj",
+        "label": "分机号",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_em",
+        "label": "联系邮箱",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ln",
+        "label": "英文姓或单位名称",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_fn",
+        "label": "英文名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_st",
+        "label": "英文省份",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_ct",
+        "label": "英文城市",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_adr",
+        "label": "英文地址",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.8",
+    "path": "/audit/?act=domaininfo",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.9",
+    "path": "/audit/?act=uploadwcftoken",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "template",
+    "fields": [
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "f_type_org",
+        "label": "实名证件类型",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "f_code_org",
+        "label": "实名证件号码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.10",
+    "path": "https://netservice.vhostgo.com/wcfservice/Service1.svc/Wcf_AuditUploadFile",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "template",
+    "fields": [
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "f_type_org",
+        "label": "实名证件类型",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "f_code_org",
+        "label": "实名证件号码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "file_org",
+        "label": "实名证件图片",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.11",
+    "path": "/audit/?act=auditghsub",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "eppidtype",
+        "label": "域名后缀类型",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "4.12",
+    "path": "/audit/?act=ghlist",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "c_sysid",
+        "label": "信息模板",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "g_status",
+        "label": "g_status",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "g_date_begin",
+        "label": "g_date_begin",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "g_date_end",
+        "label": "g_date_end",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "pageno",
+        "label": "pageno",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "pagesize",
+        "label": "pagesize",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "5.1",
+    "path": "/transfer/?act=addnew",
+    "method": "POST",
+    "write": true,
+    "paid": true,
+    "scope": "new-domain",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "authcode",
+        "label": "转移授权码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      },
+      {
+        "key": "templateid",
+        "label": "信息模板",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "setdns",
+        "label": "重置DNS",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "hkfreename",
+        "label": "香港注册人姓名",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "5.2",
+    "path": "/transfer/?act=check",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "authcode",
+        "label": "转移授权码",
+        "required": true,
+        "secret": true,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "5.3",
+    "path": "/transfer/?act=search",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "status",
+        "label": "状态",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "startime",
+        "label": "startime",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "overtime",
+        "label": "overtime",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "5.4",
+    "path": "/transfer/?act=cancel",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "5.5",
+    "path": "/transfer/?act=refresh",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "market.full",
+    "path": "/oneprice/?act=getall",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "admin",
+    "fields": []
+  },
+  {
+    "key": "market.removed",
+    "path": "/oneprice/?act=getdrop",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "admin",
+    "fields": []
+  },
+  {
+    "key": "market.new",
+    "path": "/oneprice/?act=getnew",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "admin",
+    "fields": []
+  },
+  {
+    "key": "market.detail",
+    "path": "/oneprice/?act=check",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "market.buy",
+    "path": "/oneprice/?act=buy",
+    "method": "POST",
+    "write": true,
+    "paid": true,
+    "scope": "new-domain",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "templetid",
+        "label": "信息模板",
+        "required": false,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.28.check",
+    "path": "/domain/ransom/",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  }
+]

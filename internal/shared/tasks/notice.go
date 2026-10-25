@@ -23,7 +23,7 @@ func EnqueueNotice(tx *gorm.DB, p NoticePayload) error {
 		return errors.New("invalid notification identity")
 	}
 	switch p.Scene {
-	case "marketplace_trade_success", "marketplace_transfer_complete", "marketplace_refund", "marketplace_withdraw_result", "marketplace_listing_passed":
+	case "domain_order_success", "domain_order_failed", "marketplace_trade_success", "marketplace_transfer_complete", "marketplace_refund", "marketplace_withdraw_result", "marketplace_listing_passed":
 	default:
 		return errors.New("unregistered durable notification scene")
 	}

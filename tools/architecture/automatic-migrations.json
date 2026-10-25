@@ -10,5 +10,9 @@
   "057_domain_navigation.sql": {
     "sha256": "11a0a2f705e4efdc34df7d6315c4475c767bb48d9c10e49f217dc042f2d7cb1a",
     "rollbackCompatible": true
+  },
+  "058_domain_service.sql": {
+    "sha256": "51f4a3ed29e115b86c43ea2362e853e9a57effc5937225d2dea8aca19dafa213",
+    "rollbackCompatible": true
   }
 }
