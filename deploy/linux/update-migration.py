@@ -183,6 +183,19 @@ def inspect_history(source,rows):
     return sorted(pending)
 
 
+def source_directory(source,path):
+    # Only this newly exported, credential-free source tree becomes traversable.
+    # Do not relax WORK, temporary parent, backup or credential directories.
+    relative=path.relative_to(source)
+    if '..' in relative.parts:raise Refused('unsafe release archive')
+    current=source
+    for part in (None,*relative.parts):
+        if part is not None:current=current/part
+        if not current.exists():current.mkdir(mode=0o755)
+        if current.is_symlink() or not current.is_dir():raise Refused('unsafe release archive')
+        current.chmod(0o755)
+
+
 def export_release(policy,expected,folder,guard):
     repo=folder/'git';repo.mkdir()
     ssh=['/usr/bin/ssh','-F','/dev/null','-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','HostKeyAlgorithms=ssh-ed25519','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+policy['knownHostsFile'],'-i',policy['identityFile']]
@@ -192,16 +205,17 @@ def export_release(policy,expected,folder,guard):
     command(git+['-C',str(repo),'fetch','--quiet','--depth=1',policy['repository'],'refs/heads/main'],env=env,guard=guard)
     sha=subprocess.check_output(git+['-C',str(repo),'rev-parse','FETCH_HEAD'],env=env,text=True).strip()
     if expected and sha!=expected:raise Refused('requested commit is not verified mirror main')
-    source=folder/'source';source.mkdir(mode=0o755)
+    source=folder/'source';source_directory(source,source)
     archive=folder/'source.tar'
     command(git+['-C',str(repo),'archive','--format=tar','--output='+str(archive),sha],env=env,guard=guard)
     with tarfile.open(archive) as tar:
         for member in tar:
+            if Path(member.name).is_absolute() or '..' in Path(member.name).parts:raise Refused('unsafe release archive')
             path=source/member.name
             if not path.resolve().is_relative_to(source) or not (member.isdir() or member.isfile()):raise Refused('unsafe release archive')
-            if member.isdir():path.mkdir(parents=True,exist_ok=True,mode=0o755)
+            if member.isdir():source_directory(source,path)
             else:
-                path.parent.mkdir(parents=True,exist_ok=True,mode=0o755)
+                source_directory(source,path.parent)
                 with path.open('xb') as output,tar.extractfile(member) as data:shutil.copyfileobj(data,output)
                 path.chmod(0o644)
     return source,sha
