@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/clientip"
 	"github.com/google/uuid"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/rest"
 	"github.com/zeromicro/go-zero/rest/pathvar"
 )
@@ -108,6 +110,9 @@ func (s *Service) publicDocument(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	_, _ = w.Write(data)
 }
+
+var previewScriptTags = regexp.MustCompile(`(?is)<script\b[^>]*>.*?</script\s*>`)
+
 func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 	authorize := func(w http.ResponseWriter, r *http.Request) *auth.Claims {
 		claims, e := manager.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
@@ -224,8 +229,18 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		if claims == nil {
 			return
 		}
-		d, e := s.Rollback(r.Context(), pathvar.Vars(r)["id"], claims.UserID, clientip.FromRequest(r))
+		var in struct {
+			ExpectedRevision int64 `json:"expectedRevision"`
+		}
+		if !decode(w, r, &in) {
+			return
+		}
+		d, e := s.Rollback(r.Context(), pathvar.Vars(r)["id"], in.ExpectedRevision, claims.UserID, clientip.FromRequest(r))
 		if e != nil {
+			if strings.Contains(e.Error(), "请刷新") {
+				reply(w, 409, nil, e.Error())
+				return
+			}
 			reply(w, 400, nil, "回滚失败，请检查版本兼容性并刷新重试")
 			return
 		}
@@ -251,6 +266,7 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		_, g, e := s.generate(r.Context(), in.Document)
 		s.mu.Unlock()
 		if e != nil {
+			logx.WithContext(r.Context()).Errorf("portal preview generation failed: %v", e)
 			reply(w, 400, nil, "无法生成预览，请检查配置和主题资源")
 			return
 		}
@@ -264,7 +280,9 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 		w.Header().Set("Cache-Control", "no-store")
-		_, _ = w.Write(data)
+		// Preview is read-only. Omit generated scripts as well as relying on the
+		// frontend iframe sandbox, so no runtime is loaded or executed here.
+		_, _ = w.Write(previewScriptTags.ReplaceAll(data, nil))
 	}})
 	server.AddRoute(rest.Route{Method: "GET", Path: "/admin/v1/portal/media", Handler: func(w http.ResponseWriter, r *http.Request) {
 		if authorize(w, r) == nil {
