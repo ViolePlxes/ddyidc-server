@@ -9,7 +9,7 @@ import (
 )
 
 func validateReleaseTree(root string, artifact bool) error {
-	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -35,7 +35,8 @@ func validateReleaseTree(root string, artifact bool) error {
 			if !allowed[strings.ToLower(filepath.Ext(name))] {
 				return fmt.Errorf("unexpected public release file: %s", relative)
 			}
-			if strings.HasSuffix(name, ".json") && name != "version.json" && name != "wallet-payment-channels.json" {
+			portalManifest := filepath.ToSlash(relative) == "portal/themes.json" || filepath.ToSlash(relative) == "portal/cloudflare-reference.json"
+			if strings.HasSuffix(name, ".json") && name != "version.json" && name != "wallet-payment-channels.json" && !portalManifest {
 				return fmt.Errorf("unregistered public data file: %s", relative)
 			}
 			backupComponent := filepath.ToSlash(filepath.Dir(relative)) == "assets" && regexp.MustCompile(`^backups-[a-z0-9_-]{8,}\.js$`).MatchString(name)
@@ -61,6 +62,9 @@ func validateReleaseTree(root string, artifact bool) error {
 		}
 		return nil
 	})
+	if err != nil { return err }
+	if artifact { return validatePortalReleaseAssets(root) }
+	return nil
 }
 
 // ValidateReleaseTree is also used by the repository's mandatory CI gate.

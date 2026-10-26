@@ -3,6 +3,7 @@
 package portal
 
 import (
+	"ddyidc/internal/shared/richtext"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,32 +35,35 @@ type Item struct {
 	Category string `json:"category"`
 }
 type Module struct {
-	Limit      int      `json:"limit"`
-	ProductIDs []string `json:"productIds"`
-	Interval   int      `json:"interval"`
-	AutoPlay   bool     `json:"autoPlay"`
-	ID         string   `json:"id"`
-	Type       string   `json:"type"`
-	Enabled    bool     `json:"enabled"`
-	Sort       int      `json:"sort"`
-	Eyebrow    string   `json:"eyebrow"`
-	Title      string   `json:"title"`
-	Text       string   `json:"text"`
-	Image      string   `json:"image"`
-	Alt        string   `json:"alt"`
-	Href       string   `json:"href"`
-	Label      string   `json:"label"`
-	Items      []Item   `json:"items"`
+	RichContent json.RawMessage `json:"richContent,omitempty"`
+	Limit       int             `json:"limit"`
+	ProductIDs  []string        `json:"productIds"`
+	Interval    int             `json:"interval"`
+	AutoPlay    bool            `json:"autoPlay"`
+	ID          string          `json:"id"`
+	Type        string          `json:"type"`
+	Enabled     bool            `json:"enabled"`
+	Sort        int             `json:"sort"`
+	Eyebrow     string          `json:"eyebrow"`
+	Title       string          `json:"title"`
+	Text        string          `json:"text"`
+	Image       string          `json:"image"`
+	Alt         string          `json:"alt"`
+	Href        string          `json:"href"`
+	Label       string          `json:"label"`
+	Items       []Item          `json:"items"`
 }
 type Page struct {
-	ID        string   `json:"id"`
-	Path      string   `json:"path"`
-	Title     string   `json:"title"`
-	Kind      string   `json:"kind"`
-	Enabled   bool     `json:"enabled"`
-	SEO       SEO      `json:"seo"`
-	Modules   []Module `json:"modules"`
-	UpdatedAt string   `json:"updatedAt"`
+	ContentType string   `json:"contentType,omitempty"`
+	CategoryID  string   `json:"categoryId,omitempty"`
+	ID          string   `json:"id"`
+	Path        string   `json:"path"`
+	Title       string   `json:"title"`
+	Kind        string   `json:"kind"`
+	Enabled     bool     `json:"enabled"`
+	SEO         SEO      `json:"seo"`
+	Modules     []Module `json:"modules"`
+	UpdatedAt   string   `json:"updatedAt"`
 }
 type Site struct {
 	Brand         string `json:"brand"`
@@ -79,10 +83,16 @@ type Site struct {
 	Footer        []Link `json:"footer"`
 }
 type Document struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	Revision      int64  `json:"revision"`
-	Site          Site   `json:"site"`
-	Pages         []Page `json:"pages"`
+	Categories    []Category `json:"categories,omitempty"`
+	SchemaVersion int        `json:"schemaVersion"`
+	Revision      int64      `json:"revision"`
+	Site          Site       `json:"site"`
+	Pages         []Page     `json:"pages"`
+}
+type Category struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
 }
 type Product struct {
 	ID          string `json:"id"`
@@ -129,6 +139,23 @@ func origin(raw string) bool {
 	return e == nil && u.Scheme == "https" && u.Host != "" && u.User == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == ""
 }
 func Validate(d Document) error {
+	if len(d.Categories) > 100 {
+		return errors.New("内容分类不能超过 100 个")
+	}
+	categories := map[string]Category{}
+	names := map[string]bool{}
+	for _, c := range d.Categories {
+		name := strings.TrimSpace(c.Name)
+		key := c.Kind + ":" + strings.ToLower(name)
+		if !identifier.MatchString(c.ID) || name == "" || len(name) > 200 || (c.Kind != "news" && c.Kind != "help") || names[key] {
+			return errors.New("分类名称、类型或 ID 无效或重复")
+		}
+		if _, exists := categories[c.ID]; exists {
+			return errors.New("分类 ID 重复")
+		}
+		categories[c.ID] = c
+		names[key] = true
+	}
 	if d.SchemaVersion != 1 || !identifier.MatchString(d.Site.Theme) || !origin(d.Site.Origin) || !origin(d.Site.ConsoleOrigin) {
 		return errors.New("主题、版本或 HTTPS 站点地址无效")
 	}
@@ -146,6 +173,9 @@ func Validate(d Document) error {
 	}
 	var links func([]Link, int) bool
 	links = func(list []Link, depth int) bool {
+		if len(list) == 0 {
+			return true
+		}
 		if depth > 2 || len(list) > 100 {
 			return false
 		}
@@ -181,6 +211,19 @@ func Validate(d Document) error {
 		if p.Kind != "page" && p.Kind != "article" && p.Kind != "products" && p.Kind != "product" {
 			return errors.New("页面类型无效")
 		}
+		if p.ContentType != "" && (p.Kind != "article" || (p.ContentType != "news" && p.ContentType != "help")) {
+			return errors.New("文章内容类型无效")
+		}
+		if p.CategoryID != "" {
+			kind := p.ContentType
+			if kind == "" {
+				kind = "news"
+			}
+			c, exists := categories[p.CategoryID]
+			if p.Kind != "article" || !exists || c.Kind != kind {
+				return errors.New("文章分类不存在或类型不匹配；请先调整关联文章再删除分类")
+			}
+		}
 		if (p.Kind == "product") != strings.HasPrefix(p.Path, "/products/") {
 			return errors.New("产品 SEO 页面必须使用产品详情路径")
 		}
@@ -192,6 +235,9 @@ func Validate(d Document) error {
 		}
 		mids := map[string]bool{}
 		for _, m := range p.Modules {
+			if _, _, err := richtext.Validate(m.RichContent, nil); err != nil {
+				return errors.New("正文富文本无效；请使用受支持的格式，图片请使用封面字段")
+			}
 			if m.Limit < 0 || m.Limit > 100 || m.Interval < 0 || m.Interval > 60 || len(m.ProductIDs) > 100 {
 				return errors.New("产品数量或轮播间隔无效")
 			}

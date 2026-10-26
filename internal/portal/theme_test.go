@@ -23,6 +23,7 @@ func TestInstalledThemeStaticDocument(t *testing.T) {
 	}
 	d := Seed()
 	view := View{Site: d.Site, Page: d.Pages[0], SEO: d.Site.SEO, Assets: assets, Canonical: d.Site.Origin + "/", Revision: 1, Products: []Product{{ID: "123", Name: "真实测试目录", Group: "测试分组", Price: "10.00"}}}
+	view.Articles = []Page{{ID: "article", Path: "/news/test", Title: "新闻目录回归", Kind: "article", Enabled: true}}
 	var b bytes.Buffer
 	if e = tmpl.Execute(&b, view); e != nil {
 		t.Fatal(e)

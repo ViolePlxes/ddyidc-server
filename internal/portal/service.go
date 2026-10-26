@@ -19,6 +19,7 @@ import (
 	"time"
 
 	productrepo "ddyidc/internal/product/repository"
+	"ddyidc/internal/shared/richtext"
 	"github.com/google/uuid"
 	"golang.org/x/net/html"
 	"gorm.io/gorm"
@@ -41,7 +42,7 @@ type siteRow struct {
 func (siteRow) TableName() string { return "system.portal_sites" }
 
 type revisionRow struct {
-	ID         int64     `json:"id"`
+	ID         int64     `json:"id,string"`
 	Revision   int64     `json:"revision"`
 	Document   string    `json:"-"`
 	ActorID    int64     `json:"actorId,string"`
@@ -270,6 +271,7 @@ func pagesFor(snap Snapshot) []Page {
 
 func templateFunctions() template.FuncMap {
 	return template.FuncMap{
+		"richBody": renderRichBody,
 		"absolute": func(base, path string) string {
 			if strings.HasPrefix(path, "/") {
 				return base + path
@@ -478,6 +480,18 @@ func (s *Service) Save(ctx context.Context, d Document, publish bool, actor int6
 	if e = Validate(d); e != nil {
 		return d, e
 	}
+	for pi := range d.Pages {
+		for mi := range d.Pages[pi].Modules {
+			m := &d.Pages[pi].Modules[mi]
+			if len(m.RichContent) > 0 {
+				canonical, text, err := richtext.Validate(m.RichContent, nil)
+				if err != nil {
+					return d, err
+				}
+				m.RichContent, m.Text = canonical, text
+			}
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	old := Seed()
 	if row.Draft != "" {
@@ -584,26 +598,17 @@ func (s *Service) Current(ctx context.Context) (Snapshot, string, error) {
 	return snap, filepath.Join(s.root, "generations", row.Generation), nil
 }
 func (s *Service) Bootstrap(ctx context.Context) error {
-	r, e := s.row(ctx)
-	if e != nil {
-		return e
-	}
-	if r.Published != "" {
-		return nil
-	}
-	d, e := s.Draft(ctx)
-	if e != nil {
-		return e
-	}
-	_, e = s.Save(ctx, d, true, 0, "local", "initial-publish")
-	return e
+	// Kept for existing startup/public-read callers. Installing assets, reading a
+	// public page or starting a worker must never publish an unconfirmed draft.
+	// Only an authenticated administrator's explicit publish/rollback does so.
+	return nil
 }
 func (s *Service) Revisions(ctx context.Context) ([]revisionRow, error) {
 	rows := []revisionRow{}
-	e := s.db.WithContext(ctx).Order("id DESC").Limit(100).Find(&rows).Error
+	e := s.db.WithContext(ctx).Order("revision DESC").Limit(100).Find(&rows).Error
 	return rows, e
 }
-func (s *Service) Rollback(ctx context.Context, id string, actor int64, ip string) (Document, error) {
+func (s *Service) Rollback(ctx context.Context, id string, expectedRevision int64, actor int64, ip string) (Document, error) {
 	var r revisionRow
 	if e := s.db.WithContext(ctx).Where("id=?", id).First(&r).Error; e != nil {
 		return Document{}, e
@@ -615,6 +620,9 @@ func (s *Service) Rollback(ctx context.Context, id string, actor int64, ip strin
 	current, e := s.Draft(ctx)
 	if e != nil {
 		return d, e
+	}
+	if expectedRevision != current.Revision {
+		return d, errors.New("内容已更新，请刷新后重试")
 	}
 	d.Revision = current.Revision
 	return s.Save(ctx, d, true, actor, ip, "rollback")
