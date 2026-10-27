@@ -1262,7 +1262,7 @@ func (s *Service) DeleteCategory(ctx context.Context, id int64) error {
 
 func (s *Service) Accounts(ctx context.Context, keyword string, status *bool, p, z int) ([]Account, int64, error) {
 	p, z = page(p, z)
-	q := s.db.WithContext(ctx).Table(accountsTable + " pa").Select("pa.*,c.username").Joins("LEFT JOIN customer.customers c ON c.id=pa.user_id")
+	q := s.db.WithContext(ctx).Table(accountsTable + " pa").Select("pa.*,CAST(pa.user_id AS CHAR) AS username").Joins("LEFT JOIN customer.customers c ON c.id=pa.user_id")
 	if keyword != "" {
 		q = q.Where("c.username LIKE ? OR CAST(pa.user_id AS CHAR) LIKE ?", "%"+keyword+"%", "%"+keyword+"%")
 	}

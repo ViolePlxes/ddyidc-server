@@ -313,7 +313,7 @@ func (h *authHandler) writeCustomerLogin(w http.ResponseWriter, r *http.Request,
 	if events, ok := h.hooks.(AuthEventHooks); ok {
 		events.AfterAuthEvent(r.Context(), "login", customer.ID)
 	}
-	user := map[string]any{"id": strconv.FormatInt(customer.ID, 10), "account": customer.Username, "name": customer.Username, "role": "customer"}
+	user := map[string]any{"id": strconv.FormatInt(customer.ID, 10), "account": strconv.FormatInt(customer.ID, 10), "name": strconv.FormatInt(customer.ID, 10), "role": "customer"}
 	if customer.Nickname != nil && *customer.Nickname != "" {
 		user["name"] = *customer.Nickname
 	}
@@ -642,7 +642,7 @@ func (h *authHandler) userMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "账号不存在，请重新登录")
 		return
 	}
-	user := map[string]any{"id": strconv.FormatInt(customer.ID, 10), "account": customer.Username, "name": customer.Username, "role": "customer"}
+	user := map[string]any{"id": strconv.FormatInt(customer.ID, 10), "account": strconv.FormatInt(customer.ID, 10), "name": strconv.FormatInt(customer.ID, 10), "role": "customer"}
 	if customer.Nickname != nil && *customer.Nickname != "" {
 		user["name"] = *customer.Nickname
 	}

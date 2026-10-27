@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"ddyidc/internal/historyarchive"
 	dom "ddyidc/internal/instance/domain"
 	repo "ddyidc/internal/instance/repository"
 	"ddyidc/internal/remoteconsole"
@@ -269,14 +270,17 @@ func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*Li
 				InstanceID int64
 				ReadOnly   bool
 			}
-			if s.db.WithContext(ctx).Table("system.v10_instance_source").Select("instance_id,read_only").Where("instance_id IN ?", legacyIDs).Find(&sources).Error == nil {
-				editable := map[int64]bool{}
-				for _, source := range sources {
-					editable[source.InstanceID] = !source.ReadOnly
-				}
-				for i, host := range rows {
-					if editable[host.ID] {
-						items[i].ReadOnly = outbound.DetailReadOnly()
+			table, _, tableErr := historyarchive.Table(s.db.WithContext(ctx), "instances")
+			if tableErr == nil {
+				if s.db.WithContext(ctx).Table(table).Select("instance_id,read_only").Where("instance_id IN ?", legacyIDs).Find(&sources).Error == nil {
+					editable := map[int64]bool{}
+					for _, source := range sources {
+						editable[source.InstanceID] = !source.ReadOnly
+					}
+					for i, host := range rows {
+						if editable[host.ID] {
+							items[i].ReadOnly = outbound.DetailReadOnly()
+						}
 					}
 				}
 			}
@@ -307,8 +311,11 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	legacyFinalized := false
 	if host.ModuleType == "legacy_snapshot" && s.db != nil {
 		var migration struct{ ReadOnly bool }
-		if err := s.db.WithContext(ctx).Table("system.v10_instance_source").Select("read_only").Where("instance_id=?", host.ID).Take(&migration).Error; err == nil {
-			legacyFinalized = !migration.ReadOnly
+		table, _, tableErr := historyarchive.Table(s.db.WithContext(ctx), "instances")
+		if tableErr == nil {
+			if err := s.db.WithContext(ctx).Table(table).Select("read_only").Where("instance_id=?", host.ID).Take(&migration).Error; err == nil {
+				legacyFinalized = !migration.ReadOnly
+			}
 		}
 	}
 	result := &DetailView{

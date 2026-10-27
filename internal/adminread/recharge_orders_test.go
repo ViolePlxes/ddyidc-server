@@ -55,7 +55,7 @@ func TestRechargeReadProjectionMySQL(t *testing.T) {
 	tx := db.Begin()
 	defer tx.Rollback()
 	for _, sql := range []string{
-		"INSERT INTO customer.customers VALUES(9007199254740993,'recharge_qa','10000000000','qa@example.invalid')",
+		"INSERT INTO customer.customers VALUES(9007199254740993,'v10_11722339','10000000000','qa@example.invalid')",
 		"INSERT INTO payment.recharge_orders VALUES(9007199254740994,'QA-RECHARGE-100%',9007199254740993,12345,66,'alipay',2,NOW(),NOW(),NOW()),(9007199254740995,'QA-RECHARGE-PENDING',9007199254740993,1,0,'wechat',1,NULL,NOW(),NOW())",
 		"INSERT INTO payment.payments VALUES(9101,'QA-ATTEMPT-1','recharge',9007199254740994,9007199254740993,'alipay','QAOUT1','QA-TRADE',12345,'paid',NOW(),NOW()),(9102,'QA-ATTEMPT-2','recharge',9007199254740994,9007199254740993,'alipay','QAOUT2','',12345,'failed',NULL,NOW()),(9103,'WRONG-OWNER','recharge',9007199254740994,1,'alipay','BAD','BAD',12345,'paid',NOW(),NOW())",
 		"INSERT INTO billing.transactions VALUES(9201,'QA-CREDIT',9007199254740993,'recharge',1,123.45,'payment',9101,NOW()),(9202,'BAD-OWNER',1,'recharge',1,999.00,'payment',9101,NOW()),(9203,'BAD-TYPE',9007199254740993,'recharge',1,999.00,'external_payment',9101,NOW()),(9204,'BAD-PAYMENT',9007199254740993,'recharge',1,999.00,'payment',9103,NOW())",
@@ -68,10 +68,10 @@ func TestRechargeReadProjectionMySQL(t *testing.T) {
 	if err := rechargeQuery(tx, rechargeFilter{}).Select(rechargeProjection).Order("r.id").Scan(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 2 || rows[0].ID != "9007199254740994" || rows[0].CustomerID != "9007199254740993" || rows[0].Amount != "123.45" || rows[0].Bonus != "0.66" || rows[0].CreditCount != 1 || rows[0].CreditedAmount != "123.45" || rows[0].CreditedAt == nil || rows[1].Amount != "0.01" || rows[1].PaidAt != nil || rows[1].CreditCount != 0 {
+	if len(rows) != 2 || rows[0].ID != "9007199254740994" || rows[0].CustomerID != "9007199254740993" || rows[0].Username != "9007199254740993" || rows[0].Amount != "123.45" || rows[0].Bonus != "0.66" || rows[0].CreditCount != 1 || rows[0].CreditedAmount != "123.45" || rows[0].CreditedAt == nil || rows[1].Amount != "0.01" || rows[1].PaidAt != nil || rows[1].CreditCount != 0 {
 		t.Fatalf("incorrect projection: %+v", rows)
 	}
-	for keyword, want := range map[string]int64{"QA-TRADE": 1, "BAD": 0, "100%": 1, "PENDING": 1, "9007199254740993": 2, "recharge_qa": 2, "' OR 1=1 --": 0} {
+	for keyword, want := range map[string]int64{"QA-TRADE": 1, "BAD": 0, "100%": 1, "PENDING": 1, "9007199254740993": 2, "v10_11722339": 2, "' OR 1=1 --": 0} {
 		var count int64
 		if err := rechargeQuery(tx, rechargeFilter{Keyword: keyword}).Count(&count).Error; err != nil || count != want {
 			t.Fatalf("keyword %q count=%d want=%d err=%v", keyword, count, want, err)

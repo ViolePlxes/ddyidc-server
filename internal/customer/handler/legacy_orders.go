@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"ddyidc/internal/historyarchive"
 	"net/http"
 	"strconv"
 	"time"
@@ -36,20 +37,30 @@ func (h *authHandler) legacyOrders(w http.ResponseWriter, r *http.Request) {
 	if n, e := strconv.Atoi(r.URL.Query().Get("pageSize")); e == nil && n > 0 && n <= 100 {
 		size = n
 	}
+	table, _, err := historyarchive.Table(db.G.WithContext(r.Context()), "orders")
+	if err != nil {
+		writeError(w, 500, "查询历史订单失败")
+		return
+	}
+	items, _, err := historyarchive.Table(db.G.WithContext(r.Context()), "items")
+	if err != nil {
+		writeError(w, 500, "查询历史订单失败")
+		return
+	}
 	var tables int64
-	if err := db.G.WithContext(r.Context()).Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='system' AND TABLE_NAME='v10_historical_orders'").Scan(&tables).Error; err != nil {
+	if err := db.G.WithContext(r.Context()).Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE CONCAT(TABLE_SCHEMA,'.',TABLE_NAME)=?", table).Scan(&tables).Error; err != nil {
 		writeError(w, 500, "查询历史订单失败")
 		return
 	}
 	rows := []legacyOrder{}
 	var total int64
 	if tables != 0 {
-		query := db.G.WithContext(r.Context()).Table("system.v10_historical_orders").Where("customer_id=? AND read_only=1", claims.UserID)
+		query := db.G.WithContext(r.Context()).Table(table).Where("customer_id=? AND read_only=1", claims.UserID)
 		if err := query.Count(&total).Error; err != nil {
 			writeError(w, 500, "查询历史订单失败")
 			return
 		}
-		if err := query.Select("*,COALESCE((SELECT GROUP_CONCAT(i.description ORDER BY i.id SEPARATOR ' / ') FROM system.v10_historical_order_items i WHERE i.order_id=system.v10_historical_orders.id),'历史订单') product_name").Order("created_at DESC,id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
+		if err := query.Select("*,COALESCE((SELECT GROUP_CONCAT(i.description ORDER BY i.id SEPARATOR ' / ') FROM " + items + " i WHERE i.order_id=" + table + ".id),'历史订单') product_name").Order("created_at DESC,id DESC").Offset((page - 1) * size).Limit(size).Find(&rows).Error; err != nil {
 			writeError(w, 500, "查询历史订单失败")
 			return
 		}

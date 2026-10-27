@@ -109,7 +109,7 @@ func (s *Service) Domains(ctx context.Context, userID int64) ([]DomainRecord, er
 
 func (s *Service) AdminDomains(ctx context.Context, keyword string) ([]DomainRecord, error) {
 	var rows []DomainRecord
-	q := s.db.WithContext(ctx).Table(domainsTable + " d").Select("d.*,c.username").Joins("LEFT JOIN customer.customers c ON c.id=d.user_id").Where("d.deleted=0")
+	q := s.db.WithContext(ctx).Table(domainsTable + " d").Select("d.*,CAST(d.user_id AS CHAR) AS username").Joins("LEFT JOIN customer.customers c ON c.id=d.user_id").Where("d.deleted=0")
 	if keyword = strings.TrimSpace(keyword); keyword != "" {
 		like := "%" + keyword + "%"
 		q = q.Where("d.domain LIKE ? OR c.username LIKE ? OR d.service_no LIKE ?", like, like, like)
