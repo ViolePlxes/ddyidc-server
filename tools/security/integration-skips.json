@@ -760,5 +760,9 @@
   "ddyidc/TestPromoCodeMigrationMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_home_referral.sh; simulate preceding schema inside disposable MySQL, apply/replay059, preserve legacy code/attribution/counts/financial ledger. Skip is not a pass."
+  },
+  "ddyidc/internal/adminread/TestRechargeReadProjectionMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_admin_recharge_reads.sh against disposable Unix-socket MySQL. Verify exact yuan display, customer/payment/ledger association, keyword escaping and read-only row counts. A skip is not a pass."
   }
 }
