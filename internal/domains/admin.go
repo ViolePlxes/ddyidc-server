@@ -53,7 +53,7 @@ func adminAssetQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("system.domain_assets a").Joins("LEFT JOIN customer.customers c ON c.id=a.customer_id")
 }
 
-const adminAssetColumns = "a.id,a.customer_id,COALESCE(c.username,'已删除客户') AS customer_name,a.domain,a.status,a.expires_at,a.updated_at"
+const adminAssetColumns = "a.id,a.customer_id,CASE WHEN c.username REGEXP '^v10[_-][0-9]+$' THEN CAST(c.id AS CHAR) ELSE COALESCE(c.username,'已删除客户') END AS customer_name,a.domain,a.status,a.expires_at,a.updated_at"
 
 func (s *Service) AdminAssets(ctx context.Context, f AdminAssetFilter) (*AdminAssetPage, error) {
 	if f.Page < 1 || f.Page > 100000 || f.PageSize < 1 || f.PageSize > 100 || len(f.Keyword) > 253 {

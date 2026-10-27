@@ -639,7 +639,7 @@ func (s *Service) Group(ctx context.Context, id, clientID int64, admin bool) (*G
 	settings, _ := s.Settings(ctx)
 	selects := "r.*"
 	if settings.ShowMemberName {
-		selects += ", COALESCE(c.nickname,c.username,'') AS member_name"
+		selects += ", COALESCE(NULLIF(c.nickname,''),CAST(c.id AS CHAR),'') AS member_name"
 	}
 	if settings.ShowMemberPhone {
 		selects += ", COALESCE(c.phone,'') AS member_phone"
@@ -771,7 +771,7 @@ func (s *Service) ListLeaders(ctx context.Context, activityID *int64, status *ui
 		return nil, 0, err
 	}
 	var rows []Record
-	err := q.Select("r.*,COALESCE(c.nickname,c.username,'') AS member_name").Preload("Activity").Order("r.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error
+	err := q.Select("r.*,COALESCE(NULLIF(c.nickname,''),CAST(c.id AS CHAR),'') AS member_name").Preload("Activity").Order("r.created_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&rows).Error
 	return rows, total, err
 }
 

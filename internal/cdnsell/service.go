@@ -507,7 +507,7 @@ func (s *Service) AdminOverview(ctx context.Context) (map[string]any, error) {
 }
 func (s *Service) Customers(ctx context.Context) ([]CustomerSummary, error) {
 	var rows []CustomerSummary
-	e := s.db.WithContext(ctx).Table("customer.customers c").Select("c.id user_id,c.username,COALESCE(SUM(b.remaining_bytes),0) remaining_bytes,COALESCE(SUM(b.consumed_bytes),0) used_bytes,SUM(CASE WHEN b.status='running' THEN 1 ELSE 0 END) active_batches").Joins("LEFT JOIN system.cdnsell_batches b ON b.user_id=c.id").Group("c.id,c.username").Having("COUNT(b.id)>0").Order("c.id DESC").Scan(&rows).Error
+	e := s.db.WithContext(ctx).Table("customer.customers c").Select("c.id user_id,CAST(c.id AS CHAR) AS username,COALESCE(SUM(b.remaining_bytes),0) remaining_bytes,COALESCE(SUM(b.consumed_bytes),0) used_bytes,SUM(CASE WHEN b.status='running' THEN 1 ELSE 0 END) active_batches").Joins("LEFT JOIN system.cdnsell_batches b ON b.user_id=c.id").Group("c.id,c.username").Having("COUNT(b.id)>0").Order("c.id DESC").Scan(&rows).Error
 	return rows, e
 }
 

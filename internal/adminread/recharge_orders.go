@@ -91,7 +91,7 @@ func rechargeQuery(db *gorm.DB, f rechargeFilter) *gorm.DB {
 }
 
 const rechargeLedgerMatch = " FROM billing.transactions bt JOIN payment.payments lp ON lp.id=bt.related_id AND lp.biz_type='recharge' AND lp.biz_id=r.id AND lp.customer_id=r.customer_id WHERE bt.related_type='payment' AND bt.customer_id=r.customer_id AND bt.type='recharge' AND bt.direction=1"
-const rechargeProjection = "CAST(r.id AS CHAR) id,r.recharge_no,CAST(r.customer_id AS CHAR) customer_id,COALESCE(c.username,'') username,CAST(r.amount/100 AS DECIMAL(14,2)) amount,CAST(COALESCE(r.bonus,0)/100 AS DECIMAL(14,2)) bonus,r.channel,r.status,r.paid_at,r.created_at,r.updated_at," +
+const rechargeProjection = "CAST(r.id AS CHAR) id,r.recharge_no,CAST(r.customer_id AS CHAR) customer_id,CAST(r.customer_id AS CHAR) username,CAST(r.amount/100 AS DECIMAL(14,2)) amount,CAST(COALESCE(r.bonus,0)/100 AS DECIMAL(14,2)) bonus,r.channel,r.status,r.paid_at,r.created_at,r.updated_at," +
 	"COALESCE((SELECT p.payment_no FROM payment.payments p WHERE p.biz_type='recharge' AND p.biz_id=r.id AND p.customer_id=r.customer_id ORDER BY p.created_at DESC,p.id DESC LIMIT 1),'') payment_no," +
 	"COALESCE((SELECT p.status FROM payment.payments p WHERE p.biz_type='recharge' AND p.biz_id=r.id AND p.customer_id=r.customer_id ORDER BY p.created_at DESC,p.id DESC LIMIT 1),'') payment_status," +
 	"(SELECT COUNT(*)" + rechargeLedgerMatch + ") credit_count,(SELECT CAST(COALESCE(SUM(bt.amount),0) AS DECIMAL(14,2))" + rechargeLedgerMatch + ") credited_amount,(SELECT MIN(bt.created_at)" + rechargeLedgerMatch + ") credited_at"

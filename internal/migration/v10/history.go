@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	balance "ddyidc/internal/billing/balance"
+	"ddyidc/internal/historyarchive"
 	"ddyidc/internal/shared/snowflake"
 	_ "embed"
 	"encoding/hex"
@@ -87,6 +88,15 @@ func historySources(source *gorm.DB) (map[string][]map[string]any, error) {
 // SupplementHistory is an isolated offline archive import. It NEVER calls the
 // balance service, payment engine, live ticket handler, callbacks or providers.
 func SupplementHistory(ctx context.Context, source, target *gorm.DB, sourceSocket, targetSocket, digest string) (*HistoryReport, error) {
+	if target == nil {
+		return nil, errors.New("offline target required")
+	}
+	if ready, err := historyarchive.Ready(target.WithContext(ctx)); err != nil {
+		return nil, err
+	} else if ready {
+		return nil, errors.New("legacy importer retired; archive is authoritative")
+	}
+
 	if sourceSocket == targetSocket || !isolated(sourceSocket) || !isolated(targetSocket) || len(digest) != 64 {
 		return nil, errors.New("isolated history databases required")
 	}

@@ -307,7 +307,7 @@ func (s *Store) ListAdminOrders(page, pageSize int, keyword, status string) (Ups
 		return UpstreamOrderResult{}, err
 	}
 	var rows []UpstreamOrderRow
-	if err := base.Select("o.id, o.order_no, c.username AS user, c.email, c.phone AS mobile, COALESCE(up.name, '') AS product_name, COALESCE(o.pay_type, 0) AS pay_type, o.status, o.pay_amount/100.0 AS amount, uo.cost AS cost, o.created_at").Order("o.created_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(&rows).Error; err != nil {
+	if err := base.Select("o.id, o.order_no, CAST(o.customer_id AS CHAR) AS user, c.email, c.phone AS mobile, COALESCE(up.name, '') AS product_name, COALESCE(o.pay_type, 0) AS pay_type, o.status, o.pay_amount/100.0 AS amount, uo.cost AS cost, o.created_at").Order("o.created_at DESC").Limit(pageSize).Offset((page - 1) * pageSize).Scan(&rows).Error; err != nil {
 		return UpstreamOrderResult{}, err
 	}
 	for i := range rows {

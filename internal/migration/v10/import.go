@@ -5,6 +5,7 @@ package v10
 
 import (
 	"context"
+	"ddyidc/internal/historyarchive"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -89,6 +90,15 @@ func nullable(value string) *string {
 // Source account money is decimal yuan, explicitly verified before conversion.
 // Four-place renewal prices use MySQL exact ROUND(...,2), never truncation.
 func Import(ctx context.Context, source, target *gorm.DB, sourceSocket, targetSocket, digest string) (*Report, error) {
+	if target == nil {
+		return nil, errors.New("offline target required")
+	}
+	if ready, err := historyarchive.Ready(target.WithContext(ctx)); err != nil {
+		return nil, err
+	} else if ready {
+		return nil, errors.New("legacy importer retired; archive is authoritative")
+	}
+
 	if sourceSocket == targetSocket || !isolated(sourceSocket) || !isolated(targetSocket) || !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(digest) {
 		return nil, errors.New("independent isolated VM sockets and backup digest required")
 	}

@@ -764,5 +764,21 @@
   "ddyidc/internal/adminread/TestRechargeReadProjectionMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_admin_recharge_reads.sh against disposable Unix-socket MySQL. Verify exact yuan display, customer/payment/ledger association, keyword escaping and read-only row counts. A skip is not a pass."
+  },
+  "ddyidc/internal/customer/handler/TestArchivedPasswordLoginUpgradeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with RETIRED_HISTORY_SOCKET=/tmp/ddoidc-legacy-retirement-<run>/mysql.sock against a socket-only restored frozen VM copy after tools/retire_legacy_ids.py. Verify history ownership and exact order amounts, current customer IDs, original-password upgrade, finalized instance read-only fences and retired importer refusal before/after source table removal. See docs/legacy-identifier-retirement.md and the 2026-10-27 VM evidence. A skip is not a pass; production data must never be used in CI."
+  },
+  "ddyidc/internal/customer/handler/TestRetiredHistoryReadAPI": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with RETIRED_HISTORY_SOCKET=/tmp/ddoidc-legacy-retirement-<run>/mysql.sock against a socket-only restored frozen VM copy after tools/retire_legacy_ids.py. Verify history ownership and exact order amounts, current customer IDs, original-password upgrade, finalized instance read-only fences and retired importer refusal before/after source table removal. See docs/legacy-identifier-retirement.md and the 2026-10-27 VM evidence. A skip is not a pass; production data must never be used in CI."
+  },
+  "ddyidc/internal/instance/service/TestArchivedFinalizedDetailMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with RETIRED_HISTORY_SOCKET=/tmp/ddoidc-legacy-retirement-<run>/mysql.sock against a socket-only restored frozen VM copy after tools/retire_legacy_ids.py. Verify history ownership and exact order amounts, current customer IDs, original-password upgrade, finalized instance read-only fences and retired importer refusal before/after source table removal. See docs/legacy-identifier-retirement.md and the 2026-10-27 VM evidence. A skip is not a pass; production data must never be used in CI."
+  },
+  "ddyidc/internal/migration/v10/TestRetiredImportersRefuseReplay": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with RETIRED_HISTORY_SOCKET=/tmp/ddoidc-legacy-retirement-<run>/mysql.sock against a socket-only restored frozen VM copy after tools/retire_legacy_ids.py. Verify history ownership and exact order amounts, current customer IDs, original-password upgrade, finalized instance read-only fences and retired importer refusal before/after source table removal. See docs/legacy-identifier-retirement.md and the 2026-10-27 VM evidence. A skip is not a pass; production data must never be used in CI."
   }
 }

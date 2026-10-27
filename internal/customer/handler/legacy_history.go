@@ -1,6 +1,7 @@
 package customer
 
 import (
+	"ddyidc/internal/historyarchive"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/db"
 	"encoding/json"
@@ -69,13 +70,18 @@ func (h *authHandler) legacyHistory(w http.ResponseWriter, r *http.Request) {
 		size = n
 	}
 	rows := []legacyHistoryRow{}
+	table, _, err := historyarchive.Table(db.G.WithContext(r.Context()), "records")
+	if err != nil {
+		writeError(w, 500, "历史记录查询失败")
+		return
+	}
 	var total, tables int64
-	if err := db.G.Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='system' AND TABLE_NAME='v10_history_records'").Scan(&tables).Error; err != nil {
+	if err := db.G.Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE CONCAT(TABLE_SCHEMA,'.',TABLE_NAME)=?", table).Scan(&tables).Error; err != nil {
 		writeError(w, 500, "历史记录查询失败")
 		return
 	}
 	if tables > 0 {
-		q := db.G.WithContext(r.Context()).Table("system.v10_history_records").Where("customer_id=? AND kind=? AND read_only=1", claims.UserID, kind)
+		q := db.G.WithContext(r.Context()).Table(table).Where("customer_id=? AND kind=? AND read_only=1", claims.UserID, kind)
 		if err := q.Count(&total).Error; err != nil {
 			writeError(w, 500, "历史记录查询失败")
 			return
@@ -99,8 +105,22 @@ func (h *authHandler) legacyTicket(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "历史工单标识无效")
 		return
 	}
+	table, archived, tableErr := historyarchive.Table(db.G.WithContext(r.Context()), "records")
+	if tableErr != nil {
+		writeError(w, 500, "历史工单查询失败")
+		return
+	}
+	var tables int64
+	if err := db.G.Raw("SELECT COUNT(*) FROM information_schema.TABLES WHERE CONCAT(TABLE_SCHEMA,'.',TABLE_NAME)=?", table).Scan(&tables).Error; err != nil {
+		writeError(w, 500, "历史工单查询失败")
+		return
+	}
+	if tables == 0 {
+		writeError(w, 404, "历史工单不存在")
+		return
+	}
 	rows := []legacyHistoryRow{}
-	q := db.G.WithContext(r.Context()).Table("system.v10_history_records").Where("customer_id=? AND kind='ticket' AND id=? AND read_only=1", claims.UserID, id)
+	q := db.G.WithContext(r.Context()).Table(table).Where("customer_id=? AND kind='ticket' AND id=? AND read_only=1", claims.UserID, id)
 	if err := q.Find(&rows).Error; err != nil {
 		writeError(w, 500, "历史工单查询失败")
 		return
@@ -110,7 +130,11 @@ func (h *authHandler) legacyTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	replies := []legacyHistoryRow{}
-	if err := db.G.WithContext(r.Context()).Table("system.v10_history_records").Where("customer_id=? AND kind='reply' AND source_ticket_id=? AND read_only=1", claims.UserID, rows[0].SourceID).Order("created_at,source_id").Find(&replies).Error; err != nil {
+	parentColumn, parentID, replyOrder := "source_ticket_id", rows[0].SourceID, "created_at,source_id"
+	if archived {
+		parentColumn, parentID, replyOrder = "ticket_id", rows[0].ID, "created_at,id"
+	}
+	if err := db.G.WithContext(r.Context()).Table(table).Where("customer_id=? AND kind='reply' AND "+parentColumn+"=? AND read_only=1", claims.UserID, parentID).Order(replyOrder).Find(&replies).Error; err != nil {
 		writeError(w, 500, "历史回复查询失败")
 		return
 	}

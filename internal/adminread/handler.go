@@ -88,8 +88,8 @@ type normalizedCustomerInput struct {
 }
 
 const customerProjection = "CAST(c.id AS CHAR) AS id, " +
-	"c.username, COALESCE(c.real_name,c.nickname,'') AS name, COALESCE(cp.company,'') AS company, " +
-	"COALESCE((SELECT CASE WHEN cr.type = 2 THEN COALESCE(NULLIF(cr.company_name, ''), cr.name) ELSE cr.name END FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), NULLIF(cp.company, ''), NULLIF(c.real_name, ''), NULLIF(c.nickname, ''), c.username) AS display_name, " +
+	"CASE WHEN c.username REGEXP '^v10[_-][0-9]+$' THEN CAST(c.id AS CHAR) ELSE c.username END AS username, COALESCE(c.real_name,c.nickname,'') AS name, COALESCE(cp.company,'') AS company, " +
+	"COALESCE((SELECT CASE WHEN cr.type = 2 THEN COALESCE(NULLIF(cr.company_name, ''), cr.name) ELSE cr.name END FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), NULLIF(cp.company, ''), NULLIF(c.real_name, ''), NULLIF(c.nickname, ''), CAST(c.id AS CHAR)) AS display_name, " +
 	"COALESCE((SELECT cr.status FROM customer.customer_realname cr WHERE cr.customer_id = c.id ORDER BY cr.id DESC LIMIT 1), 0) AS realname_status, " +
 	"COALESCE(c.email, '') AS email, COALESCE(c.phone, '') AS phone, c.status, c.level, " +
 	"COALESCE((SELECT GROUP_CONCAT(DISTINCT oa.platform ORDER BY oa.platform SEPARATOR ',') FROM customer.oauth_accounts oa WHERE oa.customer_id = c.id), '') AS social_login, " +
@@ -313,7 +313,7 @@ func (h *handler) orderRows(r *http.Request, page, pageSize int, status *uint8, 
 	var rows []orderRow
 	err := h.orderQuery(r, status, keyword).
 		Joins("LEFT JOIN customer.customer_realname cr ON cr.id = (SELECT MAX(cr2.id) FROM customer.customer_realname cr2 WHERE cr2.customer_id = o.customer_id)").
-		Select("CAST(o.id AS CHAR) AS id, o.order_no, COALESCE(c.username, '') AS username, CAST(o.customer_id AS CHAR) AS customer_id, COALESCE(c.phone, '') AS customer_phone, COALESCE(cr.name, '') AS verified_name, COALESCE(cr.status, 0) AS realname_status, COALESCE(oi.product_name, '') AS product_name, o.pay_amount, o.status, COALESCE(o.pay_type, 0) AS pay_type, o.created_at").
+		Select("CAST(o.id AS CHAR) AS id, o.order_no, CAST(o.customer_id AS CHAR) AS username, CAST(o.customer_id AS CHAR) AS customer_id, COALESCE(c.phone, '') AS customer_phone, COALESCE(cr.name, '') AS verified_name, COALESCE(cr.status, 0) AS realname_status, COALESCE(oi.product_name, '') AS product_name, o.pay_amount, o.status, COALESCE(o.pay_type, 0) AS pay_type, o.created_at").
 		Order("o.created_at DESC, o.id DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&rows).Error
 	for i := range rows {
