@@ -181,7 +181,7 @@ func (s *Store) failProvision(table string, link *model.UpstreamOrder, failure e
 	err := result.Error
 	// Only fixed diagnostic fields; never include failure.Error(), URLs,
 	// upstream response text, authentication or the customer's configuration.
-	raw, _ := json.Marshal(map[string]any{"event": "procurement_failed", "order_id": link.OrderID, "procurement_id": link.ID, "supplier_id": link.SupplierID, "stage": evidence.Stage, "code": evidence.Code, "http_status": evidence.HTTPStatus, "supplier_status": evidence.SupplierStatus, "evidence_persisted": err == nil})
+	raw, _ := json.Marshal(map[string]any{"event": "procurement_failed", "order_id": link.OrderID, "procurement_id": link.ID, "supplier_id": link.SupplierID, "stage": evidence.Stage, "code": evidence.Code, "http_status": evidence.HTTPStatus, "supplier_status": evidence.SupplierStatus, "transport_phase": evidence.TransportPhase, "request_written": evidence.RequestWritten, "first_byte": evidence.FirstByte, "elapsed_ms": evidence.ElapsedMS, "evidence_persisted": err == nil})
 	log.Print(string(raw))
 	if retry && err == nil && result.RowsAffected == 1 {
 		return &contracts.SafePreflightRetry{Cause: evidence}

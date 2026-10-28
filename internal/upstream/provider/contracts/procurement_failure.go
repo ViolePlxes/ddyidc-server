@@ -14,12 +14,20 @@ type ProcurementFailure struct {
 	Code           string
 	HTTPStatus     int
 	SupplierStatus int
+	TransportPhase string
+	RequestWritten bool
+	FirstByte      bool
+	ElapsedMS      int64
 	Cause          error `json:"-"`
 }
 
 func (e *ProcurementFailure) Error() string {
 	safe := sanitizeProcurementFailure(*e)
-	return fmt.Sprintf("采购失败 [stage=%s code=%s http=%d supplier=%d]，需人工核对，禁止重复下单", safe.Stage, safe.Code, safe.HTTPStatus, safe.SupplierStatus)
+	transport := ""
+	if safe.TransportPhase != "" {
+		transport = fmt.Sprintf(" transport=%s written=%t first_byte=%t elapsed_ms=%d", safe.TransportPhase, safe.RequestWritten, safe.FirstByte, safe.ElapsedMS)
+	}
+	return fmt.Sprintf("采购失败 [stage=%s code=%s http=%d supplier=%d%s]，需人工核对，禁止重复下单", safe.Stage, safe.Code, safe.HTTPStatus, safe.SupplierStatus, transport)
 }
 
 func (e *ProcurementFailure) Unwrap() error { return e.Cause }
@@ -52,6 +60,17 @@ func ClassifyProcurementFailure(stage string, err error) *ProcurementFailure {
 }
 
 func sanitizeProcurementFailure(value ProcurementFailure) ProcurementFailure {
+	switch value.TransportPhase {
+	case "", "connection_wait", "dns", "connect", "tls", "request_write", "response_headers", "response_body":
+	default:
+		value.TransportPhase = "connection_wait"
+	}
+	if value.ElapsedMS < 0 {
+		value.ElapsedMS = 0
+	}
+	if value.ElapsedMS > 3600000 {
+		value.ElapsedMS = 3600000
+	}
 	switch value.Stage {
 	case "validation", "provider", "quote", "cart_add", "cart_settle", "invoice_created", "balance_read", "payment", "paid", "active":
 	default:

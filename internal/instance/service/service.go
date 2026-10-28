@@ -65,6 +65,7 @@ type ListInput struct {
 }
 
 type ListItem struct {
+	DeliveryPending  bool   `json:"deliveryPending"`
 	ProductionLocked bool   `json:"productionLocked"`
 	AutoRenew        bool   `json:"autoRenew"`
 	ReadOnly         bool   `json:"readOnly"`
@@ -331,6 +332,12 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
 	}
 	result.CurrentImageID, result.CurrentImageName = snapshotImage(snapshot)
+	if pendingUnbound(host) {
+		result.ReadOnly = true
+		result.Warning = "产品正在开通，完成后将自动显示连接信息；暂时无需重复下单"
+		result.Capabilities = contracts.InstanceCapabilities{}
+		return result, nil
+	}
 	if s.db != nil {
 		var lock ProductionLock
 		if err := s.db.WithContext(ctx).Where("instance_id=?", host.ID).Take(&lock).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -503,6 +510,9 @@ func (s *Service) Images(ctx context.Context, customerID, instanceID int64) (*Im
 	if err != nil {
 		return nil, err
 	}
+	if pendingUnbound(host) {
+		return nil, fmt.Errorf("%w: 产品正在开通", ErrUnsupported)
+	}
 	if s.providers == nil {
 		return nil, fmt.Errorf("%w: 该实例没有可用的镜像目录", ErrUnsupported)
 	}
@@ -570,6 +580,9 @@ func (s *Service) Action(ctx context.Context, customerID, instanceID int64, in A
 	host, err := s.owned(ctx, customerID, instanceID)
 	if err != nil {
 		return nil, err
+	}
+	if pendingUnbound(host) {
+		return nil, fmt.Errorf("%w: 产品正在开通", ErrUnsupported)
 	}
 	if host.Status == 6 {
 		return nil, ErrUnsupported
@@ -840,10 +853,18 @@ func (s *Service) provider(host *dom.Host) (contracts.InstanceProvider, string) 
 	return instanceProvider, ""
 }
 
+func pendingUnbound(host *dom.Host) bool {
+	return (host.Status == 1 || host.Status == 2) && strings.TrimSpace(host.UpstreamInstanceID) == ""
+}
+
 func listItem(host *dom.Host) ListItem {
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
 	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
 	result.Hostname = snapshot.Hostname
+	if pendingUnbound(host) {
+		result.ReadOnly = true
+		result.DeliveryPending = true
+	}
 	result.OperatingSystem = host.OperatingSystem
 	result.RenewalAmount = snapshot.RenewalAmount
 	if result.OperatingSystem == "" {

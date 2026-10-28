@@ -16,6 +16,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -949,10 +950,18 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			observed.Timeout = 8 * time.Second
 		}
 		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID, LimitRequests: p.Supplier.LimitRequests}
+		var trace *procurementTrace
+		if p.procurementContext {
+			trace = newProcurementTrace()
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace.hooks()))
+		}
 		response, err := observed.Do(req)
 		if err != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, 0, nil, err, remoteAudit)
 			lastErr = err
+			if trace != nil {
+				lastErr = trace.failure(err, 0)
+			}
 			if attempt+1 < attempts {
 				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
 					return nil, 0, err
@@ -960,6 +969,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 				continue
 			}
 			break
+		}
+		if trace != nil {
+			trace.setPhase("response_body")
 		}
 		payload, readErr := io.ReadAll(io.LimitReader(response.Body, (20<<20)+1))
 		response.Body.Close()
@@ -969,6 +981,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if readErr != nil {
 			writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, nil, readErr, remoteAudit)
 			lastErr = readErr
+			if trace != nil {
+				lastErr = trace.failure(readErr, response.StatusCode)
+			}
 			if attempt+1 < attempts {
 				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
 					return nil, 0, err

@@ -51,7 +51,7 @@ func loadRecovery(tx *gorm.DB, id int64) (recoveryState, error) {
 		return s, tasks.ErrReconcile
 	}
 	var hosts int64
-	if err := tx.Table("instance.instances").Where("id=?", s.Unit.InstanceID).Count(&hosts).Error; err != nil || hosts != 0 {
+	if err := tx.Table("instance.instances").Where("id=? AND NOT (customer_id=? AND order_id=? AND order_item_id=? AND status=2 AND COALESCE(upstream_instance_id,'')='' AND deleted_at IS NULL)", s.Unit.InstanceID, s.Unit.CustomerID, s.Unit.OrderID, s.Unit.OrderItemID).Count(&hosts).Error; err != nil || hosts != 0 {
 		return s, tasks.ErrReconcile
 	}
 	if err := tx.Table("order.unit_procurements").Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND order_id=?", s.Unit.ID, s.Unit.OrderID).Take(&s.Purchase).Error; err != nil {
