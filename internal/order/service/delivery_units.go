@@ -74,9 +74,6 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 		if err := tx.Model(&deliveryUnit{}).Where("order_id=?", orderID).Count(&existing).Error; err != nil {
 			return err
 		}
-		if existing > 0 {
-			return nil
-		}
 		var refunds int64
 		if err := checkReviewedRefundHold(tx, orderID); err != nil {
 			return err
@@ -86,6 +83,26 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 		}
 		if refunds != 0 {
 			return errors.New("订单存在退款意图，禁止交付")
+		}
+		if existing > 0 {
+			// Repair display records only. Never enqueue or reset an existing unit.
+			var units []deliveryUnit
+			if err := tx.Where("order_id=? AND customer_id=?", orderID, customerID).Find(&units).Error; err != nil {
+				return err
+			}
+			if int64(len(units)) != existing {
+				return errors.New("交付单元归属不一致，禁止补建")
+			}
+			for _, unit := range units {
+				var item dom.OrderItem
+				if err := tx.Where("id=? AND order_id=?", unit.OrderItemID, orderID).Take(&item).Error; err != nil {
+					return err
+				}
+				if err := ensurePendingProduct(tx, order, item, unit); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		var legacy int64
 		if err := tx.Table("order.upstream_orders").Where("order_id=?", orderID).Count(&legacy).Error; err != nil {
@@ -110,12 +127,51 @@ func (s *Service) ProvisionAfterPayment(ctx context.Context, customerID, orderID
 			if err := tx.Create(&unit).Error; err != nil {
 				return err
 			}
+			if err := ensurePendingProduct(tx, order, item, unit); err != nil {
+				return err
+			}
 			if err := tasks.EnqueuePayment(tx, fmt.Sprintf("delivery-unit:%d", unit.ID), tasks.PaymentPayload{CustomerID: customerID, BusinessID: unit.ID, OrderID: orderID, BusinessType: "order_unit", Channel: method}); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+// A paid product exists before any supplier I/O. Reservation identity, payment,
+// procurement and confirmed machine activation are separate facts.
+func ensurePendingProduct(tx *gorm.DB, order dom.Order, item dom.OrderItem, unit deliveryUnit) error {
+	if unit.CustomerID != order.CustomerID || unit.OrderID != order.ID || unit.OrderItemID != item.ID || item.OrderID != order.ID || unit.InstanceID <= 0 {
+		return errors.New("待开通产品归属不匹配")
+	}
+	if unit.UnitNo == 1 && item.InstanceID != nil && *item.InstanceID != unit.InstanceID {
+		return errors.New("订单已关联其他产品，禁止补建重复记录")
+	}
+	var host instancedom.Host
+	err := tx.Unscoped().Where("id=?", unit.InstanceID).Take(&host).Error
+	if err == nil {
+		if host.DeletedAt.Valid || host.CustomerID != order.CustomerID || host.OrderID != order.ID || host.OrderItemID != item.ID || host.ProductID != item.ProductID {
+			return errors.New("待开通产品关联冲突，需人工核对")
+		}
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	if unit.Status == "complete" {
+		return errors.New("已交付产品记录缺失，需人工核对")
+	}
+	host = instancedom.Host{ID: unit.InstanceID, InstanceNo: generateInstanceNo(), TenantID: order.TenantID,
+		CustomerID: order.CustomerID, OrderID: order.ID, OrderItemID: item.ID, ProductID: item.ProductID,
+		ProductName: item.ProductName, ModuleType: item.ModuleType, ConfigSnapshot: item.ConfigSnapshot,
+		Status: 2, PowerStatus: "provisioning", OwnershipVersion: 1}
+	if err := tx.Create(&host).Error; err != nil {
+		return err
+	}
+	if unit.UnitNo == 1 {
+		return tx.Model(&dom.OrderItem{}).Where("id=? AND order_id=? AND (instance_id IS NULL OR instance_id=?)", item.ID, order.ID, unit.InstanceID).Update("instance_id", unit.InstanceID).Error
+	}
+	return nil
 }
 
 func (s *Service) ProvisionDeliveryUnit(ctx context.Context, customerID, unitID int64, method string) error {

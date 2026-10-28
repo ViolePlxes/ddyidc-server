@@ -744,7 +744,7 @@ func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64
 		if result.RowsAffected != 1 {
 			return errors.New("订单开通任务已被处理")
 		}
-		return nil
+		return ensurePendingProduct(tx, lockedOrder, *item, *unit)
 	}); err != nil {
 		return fmt.Errorf("锁定开通任务失败: %w", err)
 	}
@@ -795,8 +795,19 @@ func (s *Service) provisionSingle(ctx context.Context, customerID, orderID int64
 		if err := tx.WithContext(ctx).Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND status=?", orderID, dom.OrderStatusPaid).First(&locked).Error; err != nil {
 			return err
 		}
-		if e := tx.WithContext(ctx).Create(host).Error; e != nil {
-			return e
+		// Preserve the paid product identity and any later customer edits.
+		updates := map[string]any{"status": host.Status, "power_status": "", "primary_ip": host.PrimaryIP,
+			"upstream_provider_id": host.UpstreamProviderID, "upstream_instance_id": host.UpstreamInstanceID,
+			"activated_at": host.ActivatedAt, "expires_at": host.ExpiresAt, "updated_at": now}
+		if !active {
+			updates["power_status"] = "provisioning"
+		}
+		saved := tx.WithContext(ctx).Model(&instancedom.Host{}).Where("id=? AND customer_id=? AND order_id=? AND order_item_id=? AND status=2 AND COALESCE(upstream_instance_id,'')=''", instanceID, customerID, orderID, item.ID).Updates(updates)
+		if saved.Error != nil {
+			return saved.Error
+		}
+		if saved.RowsAffected != 1 {
+			return errors.New("待开通产品状态或归属已变化，禁止覆盖")
 		}
 		if e := tx.WithContext(ctx).Create(upstreamHost).Error; e != nil {
 			return e

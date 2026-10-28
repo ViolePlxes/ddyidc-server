@@ -88,8 +88,18 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 			t.Fatal("wrong owner planned units")
 		}
 	}
+	var visible, fakeActive int64
+	if err := database.Table("instance.instances").Where("customer_id=77 AND order_id IN (93001,93002,93010) AND status=2 AND COALESCE(upstream_instance_id,'')='' AND activated_at IS NULL AND expires_at IS NULL").Count(&visible).Error; err != nil || visible != 13 {
+		t.Fatalf("paid products missing before supplier I/O: %d %v", visible, err)
+	}
+	database.Table("instance.instances").Where("order_id IN (93001,93002,93010) AND status<>2").Count(&fakeActive)
+	if fakeActive != 0 {
+		t.Fatal("placeholder invented activation")
+	}
+
 	t.Log("quantities 1/2/10 with 8 concurrent planners each: exactly N distinct instance reservations and N durable tasks; wrong owner denied; no supplier I/O")
-	var invoices, charges atomic.Int64
+	var invoices, charges, settleCalls atomic.Int64
+	var failureMode atomic.Int32
 	var recoveryDeleted atomic.Bool
 	var quoteBlock atomic.Bool
 	recoveryDeleted.Store(true)
@@ -130,12 +140,31 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 			// Finance's v10-compatible cart_data protocol does not require i.
 			fmt.Fprint(w, `{"status":200,"data":{}}`)
 		case "/cart/settle":
+			settleCalls.Add(1)
+			if failureMode.Load() == 1 {
+				conn, _, e := w.(http.Hijacker).Hijack()
+				if e != nil {
+					t.Error(e)
+					return
+				}
+				conn.Close()
+				return
+			}
+			if failureMode.Load() == 2 {
+				fmt.Fprint(w, `{"status":400,"msg":"synthetic balance rejected"}`)
+				return
+			}
 			r.ParseForm()
 			if r.Form.Get("cart_data[pid]") != "353" || r.Form.Get("cart_data[billingcycle]") != "monthly" || r.Form.Get("cart_data[qty]") != "1" || len(r.Form["pos[]"]) != 0 {
 				t.Error("settlement lost exact Finance product/cycle or guessed a cart index")
 			}
 			fmt.Fprintf(w, `{"status":200,"data":{"invoiceid":%d,"amount":"1.00"}}`, 200000+invoices.Add(1))
 		case "/apply_credit":
+			if failureMode.Load() == 3 {
+				charges.Add(1)
+				fmt.Fprint(w, `{"status":1001,"data":{"hostid":[]}}`)
+				return
+			}
 			n := charges.Add(1)
 			if n == 2 {
 				http.Error(w, "isolated unknown payment result", 500)
@@ -205,9 +234,7 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 		var count int64
 		database.Table("instance.instances").Where("order_id=?", orderID).Count(&count)
 		want := int64(len(units))
-		if orderID == 93002 {
-			want = 1
-		}
+
 		if count != want {
 			t.Fatalf("order=%d instances=%d want=%d", orderID, count, want)
 		}
@@ -315,6 +342,26 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 		}
 	}
 	t.Log("preflight timeout: zero writes; durable backoff; same-unit retry exactly one invoice/payment; terminal exhaustion; unknown remains blocked")
+	// Re-running planning repairs a missing UNKNOWN display row only. No task,
+	// invoice, payment, ownership or supplier association may be replayed.
+	var missingID int64
+	database.Raw("SELECT instance_id FROM `order`.delivery_units WHERE order_id=93002 AND status='unknown'").Scan(&missingID)
+	if e := database.Exec("DELETE FROM instance.instances WHERE id=? AND status=2 AND COALESCE(upstream_instance_id,'')=''", missingID).Error; e != nil {
+		t.Fatal(e)
+	}
+	beforeRepairInvoices, beforeRepairCharges := invoices.Load(), charges.Load()
+	if e := service.ProvisionAfterPayment(ctx, 77, 93002, "alipay"); e != nil {
+		t.Fatal(e)
+	}
+	if invoices.Load() != beforeRepairInvoices || charges.Load() != beforeRepairCharges {
+		t.Fatal("display repair caused supplier I/O")
+	}
+	var repaired int64
+	database.Table("instance.instances").Where("id=? AND status=2 AND customer_id=77 AND COALESCE(upstream_instance_id,'')=''", missingID).Count(&repaired)
+	if repaired != 1 {
+		t.Fatal("unknown product not visible")
+	}
+
 	var failedUnit int64
 	database.Raw("SELECT id FROM `order`.delivery_units WHERE order_id=93002 AND status='unknown'").Scan(&failedUnit)
 	var failedTask tasks.Task
@@ -373,6 +420,60 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 		t.Fatal("missing atomic remote evidence audit", err)
 	}
 	t.Log("controlled remote recovery: unrelated invoice/deleted instance/replay denied; verified active host attaches locally with NEW purchases disabled; zero additional invoices/charges")
+
+	if err := database.Model(&upstreammodel.UpstreamProduct{}).Where("id=?", product.ID).Update("auto_setup", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	var ledgerBefore, ledgerAfter int64
+	if e := database.Table("billing.transactions").Count(&ledgerBefore).Error; e != nil {
+		t.Fatal(e)
+	}
+	for _, mode := range []int32{1, 2, 3} {
+		failureMode.Store(mode)
+		oid := int64(98000 + mode)
+		iid := oid + 100
+		if e := database.Exec("INSERT INTO `order`.orders(id,order_no,customer_id,status,pay_amount) VALUES(?,?,77,2,100)", oid, fmt.Sprintf("PAID_PENDING_%d", mode)).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := database.Exec("INSERT INTO `order`.order_items(id,order_id,product_id,product_name,module_type,config_snapshot,qty,duration_months,unit_price,subtotal) VALUES(?,?,91001,'pending fixture','cloud','{}',1,1,100,100)", iid, oid).Error; e != nil {
+			t.Fatal(e)
+		}
+		if e := service.ProvisionAfterPayment(ctx, 77, oid, "alipay"); e != nil {
+			t.Fatal(e)
+		}
+		var unit struct {
+			ID, InstanceID int64
+			Status         string
+		}
+		if e := database.Table("order.delivery_units").Where("order_id=?", oid).Take(&unit).Error; e != nil {
+			t.Fatal(e)
+		}
+		beforeCharges, beforeSettles := charges.Load(), settleCalls.Load()
+		if e := service.ProvisionDeliveryUnit(ctx, 77, unit.ID, "alipay"); e == nil {
+			t.Fatalf("mode=%d accepted uncertain delivery", mode)
+		}
+		var count int64
+		if e := database.Table("instance.instances").Where("id=? AND customer_id=77 AND status=2 AND COALESCE(upstream_instance_id,'')='' AND activated_at IS NULL AND expires_at IS NULL", unit.InstanceID).Count(&count).Error; e != nil || count != 1 {
+			t.Fatalf("mode=%d lost paid product: %d %v", mode, count, e)
+		}
+		expectedCharges := beforeCharges
+		if mode == 3 {
+			expectedCharges++
+		}
+		if charges.Load() != expectedCharges || settleCalls.Load() != beforeSettles+1 {
+			t.Fatal("failure crossed unexpected supplier write boundary")
+		}
+		if e := service.ProvisionDeliveryUnit(ctx, 77, unit.ID, "alipay"); e == nil || charges.Load() != expectedCharges || settleCalls.Load() != beforeSettles+1 {
+			t.Fatal("unknown delivery repeated supplier writes")
+		}
+		if e := service.ProvisionAfterPayment(ctx, 77, oid, "alipay"); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := database.Table("billing.transactions").Count(&ledgerAfter).Error; e != nil || ledgerAfter != ledgerBefore {
+		t.Fatal("delivery/display changed customer ledger")
+	}
+	t.Log("settlement disconnect, supplier rejection, paid empty-host response: paid products remain pending; repeat calls make zero extra supplier writes; customer ledger unchanged")
 
 	t.Log("CONTROLLED HTTP supplier + real MySQL: 1/10 units fully delivered; 2 units partial success preserves remote invoice, unknown unit never repurchased; not real third-party acceptance")
 
