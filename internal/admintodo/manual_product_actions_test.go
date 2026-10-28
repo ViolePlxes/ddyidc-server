@@ -102,6 +102,64 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 	if e != nil || normal.Total != 1 || normal.Items[0].IPAddress != "192.0.2.9" {
 		t.Fatal("normal state/IP not persisted", normal, e)
 	}
+	// Verified-normal work is available through its explicit filter, but never
+	// counted as pending. Unrelated operations cannot reopen old exceptions.
+	assertPending := func(want int64) {
+		t.Helper()
+		page, err := List(ctx, tx, "manual-products", Filter{Page: 1, PageSize: 20})
+		if err != nil || page.Total != want {
+			t.Fatalf("pending total=%d want=%d err=%v", page.Total, want, err)
+		}
+		for _, item := range Read(ctx, tx).Items {
+			if item.Key == "manual-products" && (item.Count == nil || *item.Count != want) {
+				t.Fatal("list/count diverged", item)
+			}
+		}
+	}
+	assertPending(0)
+	for n, kind := range []string{"reboot", "hard_reboot", "reset_password", "security_group"} {
+		if err := tx.Exec("INSERT INTO instance.instance_events VALUES(?,901,3,?,DATE_ADD(NOW(),INTERVAL 2 SECOND))", 503+n, kind).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	current, err := manualProductEntry(ctx, tx, "instance", 901)
+	if err != nil || current.Revision != entry.Revision {
+		t.Fatal("unrelated failure invalidated normal decision", err)
+	}
+	assertPending(0)
+	// Preserve valid pre-upgrade decisions without touching business failures.
+	legacy := strings.Replace(manualProductRevisionSQL(), " AND event_type IN ("+manualProductEventTypes+")", "", 1)
+	var oldRevision string
+	if err = tx.Table("(SELECT 'instance' source,'901' id,'77' customer_id,'701' order_id) q").Select(legacy).Scan(&oldRevision).Error; err != nil {
+		t.Fatal(err)
+	}
+	migration, err := os.ReadFile("../shared/migrations/sql/060_manual_product_revision_scope.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Exec("UPDATE system.manual_product_todos SET revision=? WHERE source='instance' AND object_id=901", oldRevision).Error; err != nil {
+		t.Fatal(err)
+	}
+	for n := 0; n < 2; n++ {
+		if err = tx.Exec(string(migration)).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertPending(0)
+	stale := strings.Repeat("a", 64)
+	if err = tx.Exec("UPDATE system.manual_product_todos SET revision=? WHERE object_id=901", stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Exec(string(migration)).Error; err != nil {
+		t.Fatal(err)
+	}
+	assertPending(1)
+	var retained string
+	tx.Table("system.manual_product_todos").Select("revision").Where("object_id=901").Scan(&retained)
+	if retained != stale {
+		t.Fatal("migration adopted stale decision")
+	}
+	tx.Exec("UPDATE system.manual_product_todos SET revision=? WHERE object_id=901", entry.Revision)
 	var auditCount int64
 	if e := tx.Table("system.todo_audits").Count(&auditCount).Error; e != nil || auditCount != 0 {
 		t.Fatal("unrelated refresh history stored", auditCount, e)
@@ -144,6 +202,7 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 	if _, e := manualProductEntry(ctx, tx, "instance", 901); e != nil {
 		t.Fatal("new exception suppressed", e)
 	}
+	assertPending(1)
 	in.RequestID = "STALE-MARK-01"
 	if _, e := ProcessManualProduct(ctx, tx, nil, 1, 901, "127.0.0.1", in); !errors.Is(e, ErrConflict) {
 		t.Fatal("stale mark accepted", e)

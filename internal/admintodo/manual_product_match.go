@@ -22,7 +22,7 @@ func manualProductMatches(db *gorm.DB, entry Entry, host dom.Host, facts *instan
 	}
 	var events []dom.Event
 	if entry.Source == "instance" {
-		if e := db.Where("instance_id=? AND status=3 AND event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id)", host.ID).Find(&events).Error; e != nil {
+		if e := db.Where("instance_id=? AND status=3 AND event_type IN ("+manualProductEventTypes+") AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id)", host.ID).Find(&events).Error; e != nil {
 			return false, e
 		}
 	}

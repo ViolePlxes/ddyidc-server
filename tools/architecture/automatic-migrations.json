@@ -18,5 +18,9 @@
   "059_promo_code_governance.sql": {
     "sha256": "f6d579124c5066c7d38c6e2fe71843f5a29d505273e934bd474c5471605ec543",
     "rollbackCompatible": true
+  },
+  "060_manual_product_revision_scope.sql": {
+    "sha256": "9b6cbae7bb90d93ebe0d481de85ac9b76166cbad190d8a7b863b6c24f6fb8a9e",
+    "rollbackCompatible": true
   }
 }
