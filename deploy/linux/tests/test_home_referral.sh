@@ -20,6 +20,6 @@ done
 mysqladmin --no-defaults --socket="$root/mysql.sock" -uroot ping >/dev/null
 export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
 go test -race -v . -run '^(TestOfflineMigrationMySQL|TestPromoCodeMigrationMySQL)$' -count=1
-go test -race -v ./internal/marketing/service -run '^(TestDailyEarningsMySQL|TestHomeInviteLifecycleMySQL|TestPromoCodeGovernanceMySQL)$' -count=1
+go test -race -v ./internal/marketing/service -run '^(TestDailyEarningsMySQL|TestHomeInviteLifecycleMySQL|TestPromoCodeGovernanceMySQL|TestCurrentUserDisplayMySQL)$' -count=1
 go test -race -v ./internal/admintodo -run '^TestRegistrationInviteTodoMySQL$' -count=1
 TZ=Asia/Shanghai FOUNDATION_MYSQL_LOCAL_TIME=1 go test -race -v ./internal/marketing/service -run '^TestDailyEarningsMySQL$' -count=1
