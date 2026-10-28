@@ -404,9 +404,7 @@ func (h *handler) list(w http.ResponseWriter, r *http.Request) {
 			fail(w, 500, err.Error())
 			return
 		}
-		var customer struct{ Username string }
-		h.s.db.Table("customer.customers").Select("username").Where("id=?", row.CustomerID).Take(&customer)
-		items = append(items, map[string]any{"record": masked, "username": customer.Username})
+		items = append(items, map[string]any{"record": masked, "username": strconv.FormatInt(row.CustomerID, 10)})
 	}
 	reply(w, 200, map[string]any{"items": items, "total": total}, "")
 }

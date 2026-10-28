@@ -183,7 +183,7 @@ func (r *GormRepository) ListInvites(c context.Context, page, pageSize int, stat
 	}
 	q := r.db.WithContext(c).Table(dom.Invite{}.TableName() + " AS i").
 		Joins("LEFT JOIN customer.customers cu ON cu.id = i.user_id").
-		Select("i.*, cu.username AS username, cu.email AS email")
+		Select("i.*, CAST(i.user_id AS CHAR) AS username, cu.email AS email")
 	if status != nil {
 		if *status == 0 {
 			q = q.Where("i.status=0 OR i.pending_code IS NOT NULL")
@@ -192,7 +192,7 @@ func (r *GormRepository) ListInvites(c context.Context, page, pageSize int, stat
 		}
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		q = q.Where("i.code LIKE ? OR cu.username LIKE ?", "%"+kw+"%", "%"+kw+"%")
+		q = q.Where("i.code LIKE ? OR cu.username LIKE ? OR CAST(i.user_id AS CHAR) LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
 	}
 	var total int64
 	if e := q.Count(&total).Error; e != nil {
@@ -268,7 +268,7 @@ func (r *GormRepository) ListRewards(c context.Context, page, pageSize int, stat
 	q := r.db.WithContext(c).Table(dom.Reward{}.TableName() + " AS rw").
 		Joins("LEFT JOIN customer.customers bu ON bu.id = rw.user_id").
 		Joins("LEFT JOIN customer.customers ru ON ru.id = rw.reward_user_id").
-		Select("rw.*, COALESCE(bu.username, '') AS username, COALESCE(ru.username, '') AS reward_user_name")
+		Select("rw.*, CAST(rw.user_id AS CHAR) AS username, CAST(rw.reward_user_id AS CHAR) AS reward_user_name")
 	if status != nil {
 		q = q.Where("rw.status = ?", *status)
 	}
@@ -279,7 +279,7 @@ func (r *GormRepository) ListRewards(c context.Context, page, pageSize int, stat
 		q = q.Where("rw.reward_user_id = ?", rewardUserID)
 	}
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		q = q.Where("rw.order_no LIKE ? OR bu.username LIKE ? OR ru.username LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
+		q = q.Where("rw.order_no LIKE ? OR bu.username LIKE ? OR ru.username LIKE ? OR CAST(rw.user_id AS CHAR) LIKE ? OR CAST(rw.reward_user_id AS CHAR) LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
 	}
 	var total int64
 	if e := q.Count(&total).Error; e != nil {
@@ -753,7 +753,7 @@ func (r *GormRepository) salesCustomerQuery(c context.Context, salesID int64) *g
 	paidStatuses := "(2, 5, 6)"
 	return r.db.WithContext(c).Table("system.sales_customers AS sc").
 		Joins("JOIN customer.customers cu ON cu.id = sc.customer_id AND cu.deleted_at IS NULL").
-		Select("cu.id AS customer_id, cu.username, cu.email, cu.phone, cu.real_name AS real_name, cu.status, cu.created_at, "+
+		Select("cu.id AS customer_id, CAST(cu.id AS CHAR) AS username, cu.email, cu.phone, cu.real_name AS real_name, cu.status, cu.created_at, "+
 			"(SELECT COUNT(*) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS order_count, "+
 			"(SELECT COALESCE(SUM(o.pay_amount), 0) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS total_spend, "+
 			"(SELECT MAX(o.paid_at) FROM `order`.orders o WHERE o.customer_id = cu.id AND o.status IN "+paidStatuses+") AS last_pay_at, "+
@@ -770,7 +770,7 @@ func (r *GormRepository) ListSalesCustomers(c context.Context, salesID int64, pa
 	}
 	base := r.salesCustomerQuery(c, salesID)
 	if kw := strings.TrimSpace(keyword); kw != "" {
-		base = base.Where("cu.username LIKE ? OR cu.email LIKE ?", "%"+kw+"%", "%"+kw+"%")
+		base = base.Where("cu.username LIKE ? OR cu.email LIKE ? OR CAST(cu.id AS CHAR) LIKE ?", "%"+kw+"%", "%"+kw+"%", "%"+kw+"%")
 	}
 	var total int64
 	if e := base.Count(&total).Error; e != nil {

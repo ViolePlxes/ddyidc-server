@@ -133,7 +133,7 @@ func (s *Service) VerifyInviteCode(ctx context.Context, code string) (string, er
 	if customer == nil {
 		return "", errors.New("推广人不存在")
 	}
-	return customer.Username, nil
+	return formatInt64(customer.ID), nil
 }
 
 // VerifySalesCode 注册页校验客服工号。
