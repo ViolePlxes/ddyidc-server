@@ -52,6 +52,7 @@ type Entry struct {
 	Revision               string               `json:"revision,omitempty"`
 }
 type Filter struct {
+	includeNormal                                                   bool // Internal action lookup; never accepted from HTTP parameters.
 	Page, PageSize                                                  int
 	Keyword, CustomerID, Status, Source, ID, CreatedFrom, CreatedTo string
 	History                                                         bool
@@ -137,6 +138,9 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 	q := db.Table("(" + sql + ") q").Joins("LEFT JOIN customer.customers c ON c.id=q.customer_id")
 	if kind == "manual-products" && !f.History {
 		q = q.Where("NOT EXISTS(SELECT 1 FROM system.manual_product_todos m WHERE m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.state='processed' AND m.revision=" + manualProductRevisionSQL() + ")")
+	}
+	if kind == "manual-products" && !f.includeNormal && f.Status != "normal" {
+		q = q.Where("NOT EXISTS(SELECT 1 FROM system.manual_product_todos m WHERE m.source=q.source AND m.object_id=CAST(q.id AS UNSIGNED) AND m.state='normal' AND m.revision=" + manualProductRevisionSQL() + ")")
 	}
 	if len([]rune(f.Keyword)) > 100 {
 		return nil, ErrQuery

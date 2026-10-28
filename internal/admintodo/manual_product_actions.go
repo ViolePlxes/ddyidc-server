@@ -26,7 +26,7 @@ func manualProductRevisionSQL() string {
 		return "(SELECT CONCAT(COUNT(*),':',COALESCE(DATE_FORMAT(MAX(updated_at),'%Y-%m-%d %H:%i:%s.%f'),'')) FROM " + table + " WHERE " + predicate + ")"
 	}
 	return "SHA2(CONCAT(q.source,':',q.id,':',q.customer_id,':'," +
-		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_events", "instance_id=CAST(q.id AS UNSIGNED) AND status=3") + " ELSE '' END,':'," +
+		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_events", "instance_id=CAST(q.id AS UNSIGNED) AND status=3 AND event_type IN ("+manualProductEventTypes+")") + " ELSE '' END,':'," +
 		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_renewals", "instance_id=CAST(q.id AS UNSIGNED) AND state IN ('uncertain','failed','verifying')") + " ELSE '' END,':'," +
 		"CASE WHEN q.source='instance' THEN " + aggregate("instance.instance_upgrades", "instance_id=CAST(q.id AS UNSIGNED) AND state IN ('creating','paying','uncertain','verifying')") + " ELSE '' END,':'," +
 		aggregate("`order`.delivery_units", "((q.source='instance' AND instance_id=CAST(q.id AS UNSIGNED)) OR (q.source='order' AND order_item_id=CAST(q.id AS UNSIGNED))) AND status IN ('unknown','failed')") + ",':'," +
@@ -51,7 +51,7 @@ type ManualProductResult struct {
 }
 
 func manualProductEntry(ctx context.Context, db *gorm.DB, source string, id int64) (Entry, error) {
-	page, e := List(ctx, db, "manual-products", Filter{Source: source, ID: strconv.FormatInt(id, 10), Page: 1, PageSize: 1})
+	page, e := List(ctx, db, "manual-products", Filter{includeNormal: true, Source: source, ID: strconv.FormatInt(id, 10), Page: 1, PageSize: 1})
 	if e != nil {
 		return Entry{}, e
 	}
