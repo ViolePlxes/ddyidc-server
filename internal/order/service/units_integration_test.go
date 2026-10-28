@@ -430,8 +430,8 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 	}
 	for _, mode := range []int32{1, 2, 3} {
 		failureMode.Store(mode)
-		oid := int64(98000 + mode)
-		iid := oid + 100
+		oid := snowflake.GenID()
+		iid := snowflake.GenID()
 		if e := database.Exec("INSERT INTO `order`.orders(id,order_no,customer_id,status,pay_amount) VALUES(?,?,77,2,100)", oid, fmt.Sprintf("PAID_PENDING_%d", mode)).Error; e != nil {
 			t.Fatal(e)
 		}
