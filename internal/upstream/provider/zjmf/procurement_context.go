@@ -10,7 +10,7 @@ func (p *Provider) CreateOrderContext(ctx context.Context, order contracts.Order
 	q := *p
 	q.instanceContext = ctx
 	// Procurement writes can complete remotely after a short client timeout.
-	// Keep the caller's cancellation, but use the normal 30s HTTP bound and
+	// Keep the caller's cancellation, but use the procurement-specific HTTP budget and
 	// retain single-attempt writes instead of the instance-read 8s bound.
 	q.procurementContext = true
 	return q.CreateOrder(order)

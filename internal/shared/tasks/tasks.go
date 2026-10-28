@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/workgate"
+	"ddyidc/pkg/procurementbudget"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -115,7 +116,7 @@ func Claim(ctx context.Context, database *gorm.DB) (*Task, error) {
 			return err
 		}
 		task.LeaseToken = hex.EncodeToString(token)
-		result := tx.Model(&Task{}).Where("id=? AND status='pending'", task.ID).Updates(map[string]any{"status": "running", "lease_token": task.LeaseToken, "lease_until": gorm.Expr("DATE_ADD(NOW(3), INTERVAL 180 SECOND)"), "attempt": gorm.Expr("attempt+1"), "updated_at": gorm.Expr("NOW(3)")})
+		result := tx.Model(&Task{}).Where("id=? AND status='pending'", task.ID).Updates(map[string]any{"status": "running", "lease_token": task.LeaseToken, "lease_until": gorm.Expr("DATE_ADD(NOW(3), INTERVAL ? SECOND)", int(taskLease(&task)/time.Second)), "attempt": gorm.Expr("attempt+1"), "updated_at": gorm.Expr("NOW(3)")})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -179,7 +180,7 @@ func Run(ctx context.Context, database *gorm.DB, handle func(context.Context, *T
 				if task == nil {
 					return nil
 				}
-				runCtx, stop := context.WithTimeout(ctx, 2*time.Minute)
+				runCtx, stop := context.WithTimeout(ctx, taskExecution(task))
 				started := time.Now()
 				logTask(task, "started", 0)
 				runErr := func() (err error) {
@@ -223,4 +224,19 @@ func logTask(task *Task, result string, duration int64) {
 	}
 	raw, _ := json.Marshal(fields)
 	log.Print(string(raw))
+}
+
+// Only paid delivery units receive the longer procurement window. The lease
+// always outlives execution and finalization; expired work is never replayed.
+func taskExecution(task *Task) time.Duration {
+	if task.Kind == "post_payment" && strings.HasPrefix(task.TaskKey, "delivery-unit:") {
+		return procurementbudget.Execution
+	}
+	return 2 * time.Minute
+}
+func taskLease(task *Task) time.Duration {
+	if taskExecution(task) == procurementbudget.Execution {
+		return procurementbudget.Lease
+	}
+	return 3 * time.Minute
 }

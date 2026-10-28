@@ -238,13 +238,24 @@ func NewSingleAttemptClient(timeout time.Duration) *http.Client {
 	return newClient(timeout, true)
 }
 
+// NewProcurementClient allows slow supplier responses up to the request budget.
+// Charged writes must not replay on stale pooled connections. All destination,
+// DNS pinning, redirect and response-size policies remain shared.
+func NewProcurementClient(timeout time.Duration) *http.Client {
+	return newClientWithHeaderTimeout(timeout, true, timeout)
+}
+
 func newClient(timeout time.Duration, singleAttempt bool) *http.Client {
+	return newClientWithHeaderTimeout(timeout, singleAttempt, 15*time.Second)
+}
+
+func newClientWithHeaderTimeout(timeout time.Duration, singleAttempt bool, headers time.Duration) *http.Client {
 	base := http.DefaultTransport.(*http.Transport).Clone()
 	base.DisableKeepAlives = singleAttempt
 	base.Proxy = nil // Do not permit environment proxies to bypass IP validation.
 	base.DialContext = DialContext
 	base.MaxConnsPerHost = 16
-	base.ResponseHeaderTimeout = 15 * time.Second
+	base.ResponseHeaderTimeout = headers
 	base.MaxResponseHeaderBytes = 1 << 20
 	return &http.Client{Timeout: timeout, Transport: transport{base}, CheckRedirect: func(next *http.Request, via []*http.Request) error {
 		if len(via) == 0 || len(via) > 3 {

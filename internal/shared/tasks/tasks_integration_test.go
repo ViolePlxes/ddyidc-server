@@ -75,7 +75,7 @@ func TestDurableTasksMySQL(t *testing.T) {
 	if count != 0 {
 		t.Fatal("task escaped business rollback")
 	}
-	if err := database.Transaction(func(tx *gorm.DB) error { return EnqueuePayment(tx, "claim", payload) }); err != nil {
+	if err := database.Transaction(func(tx *gorm.DB) error { return EnqueuePayment(tx, "delivery-unit:timeout-budget", payload) }); err != nil {
 		t.Fatal(err)
 	}
 	var claimed atomic.Int32
@@ -104,6 +104,13 @@ func TestDurableTasksMySQL(t *testing.T) {
 	wg.Wait()
 	if claimed.Load() != 1 {
 		t.Fatalf("claims=%d", claimed.Load())
+	}
+	var remaining int
+	if err := database.Raw("SELECT TIMESTAMPDIFF(SECOND,NOW(3),lease_until) FROM system.durable_tasks WHERE id=?", selected.ID).Scan(&remaining).Error; err != nil {
+		t.Fatal(err)
+	}
+	if remaining < 350 || remaining > 360 {
+		t.Fatalf("procurement lease=%ds, want six minutes", remaining)
 	}
 	oldToken := selected.LeaseToken
 	selected.LeaseToken = "forged"

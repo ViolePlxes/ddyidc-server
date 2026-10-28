@@ -31,6 +31,7 @@ import (
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/internal/upstream/testpolicy"
 	"ddyidc/pkg/outbound"
+	"ddyidc/pkg/procurementbudget"
 )
 
 const (
@@ -40,8 +41,9 @@ const (
 )
 
 var (
-	client = outbound.NewClient(requestTimeout)
-	tokens = struct {
+	client            = outbound.NewClient(requestTimeout)
+	procurementClient = outbound.NewProcurementClient(procurementbudget.Request)
+	tokens            = struct {
 		sync.Mutex
 		values map[string]cachedJWT
 	}{values: make(map[string]cachedJWT)}
@@ -945,11 +947,15 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 		if jwt != "" {
 			req.Header.Set("Authorization", "Bearer "+jwt)
 		}
-		observed := *client
+		selectedClient := client
+		if p.procurementContext {
+			selectedClient = procurementClient
+		}
+		observed := *selectedClient
 		if scoped && !p.procurementContext {
 			observed.Timeout = 8 * time.Second
 		}
-		observed.Transport = metrics.Transport{Base: client.Transport, SupplierID: p.Supplier.ID, LimitRequests: p.Supplier.LimitRequests}
+		observed.Transport = metrics.Transport{Base: selectedClient.Transport, SupplierID: p.Supplier.ID, LimitRequests: p.Supplier.LimitRequests}
 		var trace *procurementTrace
 		if p.procurementContext {
 			trace = newProcurementTrace()
@@ -1166,6 +1172,13 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (result *contracts.Ups
 	// CreateOrderContext, without mutating a shared provider used by readers.
 	copy := *p
 	copy.procurementContext = true
+	parent := copy.instanceContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	bounded, cancel := context.WithTimeout(parent, procurementbudget.Execution)
+	defer cancel()
+	copy.instanceContext = bounded
 	p = &copy
 	stage := "validation"
 	defer func() {
