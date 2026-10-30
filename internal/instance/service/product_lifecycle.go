@@ -217,7 +217,10 @@ func (s *Service) expirySyncTick(ctx context.Context) {
 		key.State = "pending"
 		key.NextAttemptAt = now
 		key.UpdatedAt = now
-		if err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&key).Error; err != nil {
+		// INSERT IGNORE keeps the runtime account on the intended column-level
+		// privileges: GORM's ON DUPLICATE KEY UPDATE (DoNothing) needs UPDATE on
+		// instance_id, which the least-privilege grant deliberately omits.
+		if err := s.db.WithContext(ctx).Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&key).Error; err != nil {
 			log.Print("EXPIRY_SYNC event persistence failed")
 			continue
 		}
