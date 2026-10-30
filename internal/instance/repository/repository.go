@@ -56,7 +56,7 @@ func (r *GormRepository) List(c context.Context, page, limit int, filters map[st
 	if limit < 1 {
 		limit = 20
 	}
-	q := r.db.WithContext(c).Table(hostTable)
+	q := r.db.WithContext(c).Table(hostTable).Where("deleted_at IS NULL")
 	if limit > 100 {
 		limit = 100
 	}
