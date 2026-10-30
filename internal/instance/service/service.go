@@ -502,6 +502,15 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
 		"operating_system": result.OperatingSystem, "last_synced_at": now,
 	}
+	// The supplier keeps service lifecycle (Active/Suspended/...) apart from the
+	// machine power state. Persist both so the cached list never keeps showing
+	// "running" after the supplier suspended an expired service.
+	if result.InfoSource == "upstream" {
+		updates["status"] = status
+		if result.PowerStatus != "" {
+			updates["power_status"] = result.PowerStatus
+		}
+	}
 	if s.db != nil {
 		display, _ := json.Marshal(listDisplay{Hostname: result.Hostname, Port: result.Port, OperatingSystem: result.OperatingSystem, BillingCycle: result.BillingCycle, RenewalAmount: result.RenewalAmount})
 		// Merge display facts atomically; preserve configuration, credentials and concurrent edits.
