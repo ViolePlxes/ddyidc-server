@@ -144,6 +144,21 @@ type UpstreamOrderResult struct {
 	BalanceBefore           float64
 	BalanceAfter            float64
 }
+
+// InvoiceHostMatch is a read-only reconciliation fact: the upstream host whose
+// paid invoice matches a procurement record whose payment response was lost.
+// It intentionally carries no credentials or procurement cost.
+type InvoiceHostMatch struct {
+	HostID    string `json:"hostId"`
+	InvoiceID string `json:"invoiceId"`
+	OrderID   string `json:"orderId"`
+	ProductID string `json:"productId"`
+	Status    string `json:"status"`
+	PrimaryIP string `json:"primaryIp,omitempty"`
+	Domain    string `json:"domain,omitempty"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+}
 type RenewResult struct {
 	Status, DueTime string
 	Cost            float64

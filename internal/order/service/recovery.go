@@ -68,15 +68,44 @@ func loadRecovery(tx *gorm.DB, id int64) (recoveryState, error) {
 // Missing invoice facts, deleted hosts and existing local instances fail closed.
 func (s *Service) ReconcileRemoteDelivery(ctx context.Context, id, adminID int64, ip, reason, remoteID string) error {
 	reason = strings.TrimSpace(reason)
-	hostID, err := strconv.ParseInt(remoteID, 10, 64)
-	if id <= 0 || adminID <= 0 || strings.TrimSpace(ip) == "" || len(ip) > 64 || reason == "" || utf8.RuneCountInString(reason) > 100 || err != nil || hostID <= 0 || strconv.FormatInt(hostID, 10) != remoteID {
+	remoteID = strings.TrimSpace(remoteID)
+	if id <= 0 || adminID <= 0 || strings.TrimSpace(ip) == "" || len(ip) > 64 || reason == "" || utf8.RuneCountInString(reason) > 100 {
 		return tasks.ErrReconcile
+	}
+	if remoteID != "" {
+		hostID, err := strconv.ParseInt(remoteID, 10, 64)
+		if err != nil || hostID <= 0 || strconv.FormatInt(hostID, 10) != remoteID {
+			return tasks.ErrReconcile
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	var before recoveryState
 	if err := s.repo.Transaction(ctx, func(tx *gorm.DB) error { var err error; before, err = loadRecovery(tx, id); return err }); err != nil {
 		return err
+	}
+	if remoteID == "" {
+		remoteID = before.Purchase.UpstreamHostID
+	}
+	// An operator may not know the host id after paying the invoice upstream.
+	// Discover it read-only from the persisted invoice before binding.
+	if remoteID == "" {
+		if upstream.Default == nil {
+			return tasks.ErrReconcile
+		}
+		since := time.Unix(before.Purchase.UpdatedAt, 0)
+		if before.Purchase.CreatedAt > 0 && before.Purchase.CreatedAt < before.Purchase.UpdatedAt {
+			since = time.Unix(before.Purchase.CreatedAt, 0)
+		}
+		found, err := upstream.Default.FindInvoiceHost(ctx, before.Purchase.SupplierID, before.Purchase.UpstreamOrderID, before.Purchase.UpstreamProductID, since)
+		if err != nil || found == nil || found.Match == nil || found.Match.HostID == "" || found.BoundInstanceID != "" {
+			return tasks.ErrReconcile
+		}
+		remoteID = found.Match.HostID
+	}
+	hostID, err := strconv.ParseInt(remoteID, 10, 64)
+	if err != nil || hostID <= 0 {
+		return tasks.ErrReconcile
 	}
 	if before.Purchase.UpstreamHostID != "" && before.Purchase.UpstreamHostID != remoteID {
 		return tasks.ErrReconcile
