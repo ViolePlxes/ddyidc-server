@@ -156,6 +156,16 @@ type DetailView struct {
 	Warning            string                         `json:"warning,omitempty"`
 }
 
+// HideProcurement removes supplier-side order identifiers and the procurement
+// amount from a customer-facing detail. FirstPayment is what the platform paid
+// the supplier, never a customer price, and must not reach the console.
+func (v *DetailView) HideProcurement() {
+	v.FirstPayment = ""
+	v.UpstreamOrderID = ""
+	v.UpstreamOrderNo = ""
+	v.InvoiceID = ""
+}
+
 type ImageItem struct {
 	ID      string  `json:"id"`
 	Version string  `json:"version"`

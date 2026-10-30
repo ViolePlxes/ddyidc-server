@@ -161,6 +161,10 @@ func (h *handler) detail(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	if !strings.HasPrefix(r.URL.Path, "/admin/v1/") {
+		// 上游订单号、发票号与首付金额属于平台采购数据，客户接口不得输出。
+		result.HideProcurement()
+	}
 	writeJSON(w, result)
 }
 
