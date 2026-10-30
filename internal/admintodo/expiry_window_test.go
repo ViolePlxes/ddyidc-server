@@ -13,7 +13,7 @@ func TestExpiryCutoffIs72Hours(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := expiryCutoff(now); !got.Equal(now.Add(72*time.Hour)) || got.Location() != time.UTC {
+		if got := expiryCutoff(now); !got.Equal(now.Add(72*time.Hour)) || got.Location() != time.Local {
 			t.Fatalf("cutoff must preserve a 72-hour window across midnight/year: %s", got)
 		}
 	}
@@ -30,7 +30,7 @@ func TestExpiryWindowMySQL(t *testing.T) {
 		"CREATE TEMPORARY TABLE customer.customers(id BIGINT,username VARCHAR(64))",
 		"CREATE TEMPORARY TABLE system.todo_audits(kind VARCHAR(32),source VARCHAR(32),object_id BIGINT,admin_id BIGINT,created_at DATETIME,id BIGINT)",
 		"INSERT INTO customer.customers VALUES(99,'expiry-window-test')",
-		"INSERT INTO instance.instances VALUES(1,99,'soon','SOON',3,1,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(2,99,'within three days','THREE',4,2,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 71 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(3,99,'outside window','FOUR',3,3,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 73 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(4,99,'expired','EXPIRED',3,4,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_SUB(UTC_TIMESTAMP(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(5,99,'permanent','PERMANENT',3,5,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','onetime')),(6,99,'deleted','DELETED',3,6,UTC_TIMESTAMP(),UTC_TIMESTAMP(),DATE_ADD(UTC_TIMESTAMP(),INTERVAL 1 HOUR),UTC_TIMESTAMP(),JSON_OBJECT('billingCycle','monthly'))",
+		"INSERT INTO instance.instances VALUES(1,99,'soon','SOON',3,1,NOW(),NOW(),DATE_ADD(NOW(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(2,99,'within three days','THREE',4,2,NOW(),NOW(),DATE_ADD(NOW(),INTERVAL 71 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(3,99,'outside window','FOUR',3,3,NOW(),NOW(),DATE_ADD(NOW(),INTERVAL 73 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(4,99,'expired','EXPIRED',3,4,NOW(),NOW(),DATE_SUB(NOW(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','monthly')),(5,99,'permanent','PERMANENT',3,5,NOW(),NOW(),DATE_ADD(NOW(),INTERVAL 1 HOUR),NULL,JSON_OBJECT('billingCycle','onetime')),(6,99,'deleted','DELETED',3,6,NOW(),NOW(),DATE_ADD(NOW(),INTERVAL 1 HOUR),NOW(),JSON_OBJECT('billingCycle','monthly'))",
 	} {
 		if err := tx.Exec(sql).Error; err != nil {
 			t.Fatal(err)
