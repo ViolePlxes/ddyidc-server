@@ -338,7 +338,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
 		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
 		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
-		Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
+		Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
 		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
 	}
 	result.CurrentImageID, result.CurrentImageName = snapshotImage(snapshot)
@@ -876,9 +876,19 @@ func pendingUnbound(host *dom.Host) bool {
 	return (host.Status == 1 || host.Status == 2) && strings.TrimSpace(host.UpstreamInstanceID) == ""
 }
 
+// displayStatus follows the supplier binding rather than the local delivery
+// bookkeeping: once a host id is bound the machine exists, even while a delivery
+// unit is still being closed. Customer and admin lists therefore agree.
+func displayStatus(host *dom.Host) uint8 {
+	if (host.Status == 1 || host.Status == 2) && strings.TrimSpace(host.UpstreamInstanceID) != "" {
+		return 3
+	}
+	return host.Status
+}
+
 func listItem(host *dom.Host) ListItem {
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
-	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
 	result.Hostname = snapshot.Hostname
 	if pendingUnbound(host) {
 		result.ReadOnly = true
