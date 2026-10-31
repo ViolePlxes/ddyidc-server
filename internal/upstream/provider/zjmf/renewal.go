@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
@@ -121,7 +122,28 @@ func (p *Provider) PayRenewalInvoice(invoice string) error {
 	if e != nil {
 		return fmt.Errorf("续费支付请求未收到有效响应（网络或超时），是否扣款未知")
 	}
+	var payload struct {
+		Status  int    `json:"status"`
+		Message string `json:"msg"`
+	}
+	if decodeJSON(b, &payload) == nil && payload.Status != 1001 && insufficientUpstreamBalance(payload.Message) {
+		return fmt.Errorf("上游账户余额不足，无法支付续费账单")
+	}
 	return requireUpstreamStatus(b, "renewal payment", 1001)
+}
+
+// The finance API rejects a credit payment when the reseller account balance is
+// too low. Keep that as a precise, non-generic reason for the manual queue.
+func insufficientUpstreamBalance(message string) bool {
+	if strings.TrimSpace(message) == "" {
+		return false
+	}
+	for _, token := range []string{"余额不足", "余额不够", "余额不足够", "insufficient", "not enough balance", "balance is not enough", "credit_not_enough", "insufficient_balance"} {
+		if strings.Contains(strings.ToLower(message), strings.ToLower(token)) {
+			return true
+		}
+	}
+	return false
 }
 
 // Payment verification must not reuse the ten-minute catalogue display cache.
