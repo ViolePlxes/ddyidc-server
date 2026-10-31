@@ -119,7 +119,7 @@ func (p *Provider) CreateRenewalInvoice(id int64, cycle string, duration int64) 
 func (p *Provider) PayRenewalInvoice(invoice string) error {
 	b, e := p.authorizedFormPost("/apply_credit", url.Values{"invoiceid": {invoice}, "use_credit": {"1"}})
 	if e != nil {
-		return fmt.Errorf("续费支付结果待核对")
+		return fmt.Errorf("续费支付请求未收到有效响应（网络或超时），是否扣款未知")
 	}
 	return requireUpstreamStatus(b, "renewal payment", 1001)
 }
