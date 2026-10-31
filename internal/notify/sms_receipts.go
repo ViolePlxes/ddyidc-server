@@ -18,10 +18,16 @@ import (
 const smsReceiptScene = "sms_receipt"
 
 type SMSReceipt struct {
-	Status     string     `json:"status"`
-	Code       string     `json:"code,omitempty"`
-	ReceivedAt *time.Time `json:"receivedAt,omitempty"`
-	CheckedAt  time.Time  `json:"checkedAt"`
+	Status       string     `json:"status"`
+	Code         string     `json:"code,omitempty"`
+	SendAt       *time.Time `json:"sendAt,omitempty"`
+	ReceivedAt   *time.Time `json:"receivedAt,omitempty"`
+	TemplateCode string     `json:"templateCode,omitempty"`
+	TemplateName string     `json:"templateName,omitempty"`
+	Content      string     `json:"content,omitempty"`
+	SmsSize      string     `json:"smsSize,omitempty"`
+	SendStatus   int        `json:"sendStatus,omitempty"`
+	CheckedAt    time.Time  `json:"checkedAt"`
 }
 type smsReceiptQuery interface {
 	QueryReceipt(context.Context, SMSConfig, string, string, time.Time) (SMSReceipt, error)

@@ -5,9 +5,15 @@ import (
 	"errors"
 	dysms "github.com/alibabacloud-go/dysmsapi-20170525/v5/client"
 	"github.com/alibabacloud-go/tea/dara"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// Template names rarely change; cache them per template code to avoid an extra
+// supplier call on every receipt check.
+var smsTemplateNames sync.Map
 
 func (c *aliyunSMSChannel) QueryReceipt(ctx context.Context, config SMSConfig, mobile, bizID string, sentAt time.Time) (SMSReceipt, error) {
 	client, e := c.clientFor(config)
@@ -31,9 +37,42 @@ func (c *aliyunSMSChannel) QueryReceipt(ctx context.Context, config SMSConfig, m
 		if row == nil || row.SendStatus == nil {
 			return SMSReceipt{Status: "receipt_unknown", Code: "INVALID_RECEIPT"}, nil
 		}
-		return classifySMSReceipt(mobile, sentAt, stringValue(row.PhoneNum), stringValue(row.SendDate), stringValue(row.ReceiveDate), stringValue(row.ErrCode), int(*row.SendStatus)), nil
+		receipt := classifySMSReceipt(mobile, sentAt, stringValue(row.PhoneNum), stringValue(row.SendDate), stringValue(row.ReceiveDate), stringValue(row.ErrCode), int(*row.SendStatus))
+		receipt.TemplateCode = stringValue(row.TemplateCode)
+		receipt.Content = stringValue(row.Content)
+		// The detail API does not return the character count: derive it from the
+		// delivered content so operators can compare with the console.
+		receipt.SmsSize = strconv.Itoa(len([]rune(receipt.Content)))
+		receipt.SendStatus = int(*row.SendStatus)
+		if receipt.TemplateCode != "" {
+			receipt.TemplateName = c.templateName(ctx, client, receipt.TemplateCode)
+		}
+		if receipt.SendStatus != 1 {
+			if sent, e := time.ParseInLocation("2006-01-02 15:04:05", stringValue(row.SendDate), time.FixedZone("Asia/Shanghai", 8*3600)); e == nil {
+				utc := sent.UTC()
+				receipt.SendAt = &utc
+			}
+		}
+		return receipt, nil
 	}
 	return SMSReceipt{Status: "receipt_pending", Code: "NO_RECEIPT_YET"}, nil
+}
+
+// The supplier's template name is only available from the template API; a
+// failure here must never fail the receipt itself.
+func (c *aliyunSMSChannel) templateName(ctx context.Context, client *dysms.Client, code string) string {
+	if cached, ok := smsTemplateNames.Load(code); ok {
+		return cached.(string)
+	}
+	response, err := client.GetSmsTemplateWithContext(ctx, (&dysms.GetSmsTemplateRequest{}).SetTemplateCode(code), &dara.RuntimeOptions{})
+	if err != nil || response == nil || response.Body == nil || stringValue(response.Body.Code) != "OK" {
+		return ""
+	}
+	name := stringValue(response.Body.TemplateName)
+	if name != "" {
+		smsTemplateNames.Store(code, name)
+	}
+	return name
 }
 func receiptQueryDates(sentAt time.Time) []string {
 	local := sentAt.In(time.FixedZone("Asia/Shanghai", 8*3600))
