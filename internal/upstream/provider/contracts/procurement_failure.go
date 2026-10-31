@@ -77,7 +77,7 @@ func sanitizeProcurementFailure(value ProcurementFailure) ProcurementFailure {
 		value.Stage = "provider"
 	}
 	switch value.Code {
-	case "unclassified", "cancelled", "timeout", "network", "checkpoint_failed", "http_rejected", "authentication_rejected", "budget_exceeded", "invalid_cart_position", "unexpected_invoice", "invalid_response", "invoice_missing", "supplier_rejected", "quote_invalid":
+	case "unclassified", "cancelled", "timeout", "network", "checkpoint_failed", "http_rejected", "authentication_rejected", "budget_exceeded", "invalid_cart_position", "unexpected_invoice", "invalid_response", "invoice_missing", "supplier_rejected", "quote_invalid", "payment_not_sent":
 	default:
 		value.Code = "unclassified"
 	}

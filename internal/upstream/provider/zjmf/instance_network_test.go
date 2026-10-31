@@ -75,7 +75,7 @@ func TestInstanceRateQueueHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	start := time.Now()
-	if waitForRequestSlotContext(ctx, "unit-test", time.Second) == nil || time.Since(start) > time.Second {
+	if waitForRequestSlotContext(ctx, "unit-test", time.Second, 0) == nil || time.Since(start) > time.Second {
 		t.Fatal("rate queue ignored cancellation")
 	}
 }
