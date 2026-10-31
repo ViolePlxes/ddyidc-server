@@ -38,6 +38,7 @@ type notifyRepository interface {
 	HasSuccessfulLog(context.Context, string, string) (bool, error)
 	ClaimExpiry(context.Context, string, int64, int64, string, string) (bool, error)
 	FinishExpiry(context.Context, string, int64, int64, string, string) error
+	UpsertTestTask(context.Context, string, string, string, string, string, time.Time) error
 }
 
 type Manager struct {
@@ -299,7 +300,8 @@ func (m *Manager) sendChannel(ctx context.Context, template *NotificationTemplat
 	return m.sendChannelWithRetry(ctx, template, channel, target, params, businessID, true)
 }
 
-func (m *Manager) sendChannelWithRetry(ctx context.Context, template *NotificationTemplate, channel, target string, params map[string]string, businessID string, retry bool) error {
+func (m *Manager) sendChannelWithRetry(ctx context.Context, template *NotificationTemplate, channel, target string, params map[string]string, businessID string, retry bool, recordTask ...bool) error {
+	testRecord := len(recordTask) > 0 && recordTask[0]
 	config, err := m.loadConfig(ctx)
 	if err != nil {
 		return err
@@ -375,6 +377,16 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 		}
 		logx.Errorf("write failed notify log scene=%s channel=%s: %v", template.Scene, channel, logErr)
 	}
+	if testRecord {
+		// Test sends are mirrored into the notification task list so the
+		// administrator can inspect exactly what the recipient received.
+		if taskErr := m.repo.UpsertTestTask(ctx, channel, masked, snapshot, status, errorText, m.now()); taskErr != nil {
+			logx.Errorf("record test notify task scene=%s channel=%s: %v", template.Scene, channel, taskErr)
+			if err == nil {
+				return fmt.Errorf("写入测试通知任务: %w", taskErr)
+			}
+		}
+	}
 	return err
 }
 
@@ -397,7 +409,22 @@ func (m *Manager) SendTestNotify(ctx context.Context, scene, target string, para
 	return m.sendNotify(ctx, scene, target, params, false)
 }
 
-func (m *Manager) sendNotify(ctx context.Context, scene, target string, params map[string]string, retry bool) error {
+// SendTestNotifyTask sends a test message and mirrors it into the notification
+// task list so administrators can inspect exactly what the recipient received.
+func (m *Manager) SendTestNotifyTask(ctx context.Context, scene, target string, params map[string]string) error {
+	if scene == "expiry_digest" && validMobile(strings.TrimSpace(target)) {
+		config, err := m.loadConfig(ctx)
+		if err != nil {
+			return err
+		}
+		if !m.digestSMSApproved(ctx, config.SMS.Templates[scene]) {
+			return errors.New("汇总到期短信模板尚未审核通过")
+		}
+	}
+	return m.sendNotify(ctx, scene, target, params, false, true)
+}
+
+func (m *Manager) sendNotify(ctx context.Context, scene, target string, params map[string]string, retry bool, recordTask ...bool) error {
 	template, err := m.repo.TemplateByScene(ctx, scene)
 	if err != nil {
 		return err
@@ -420,7 +447,7 @@ func (m *Manager) sendNotify(ctx context.Context, scene, target string, params m
 	businessID := strings.TrimSpace(params["_business_id"])
 	cleanParams := cloneMap(params)
 	delete(cleanParams, "_business_id")
-	return m.sendChannelWithRetry(ctx, template, channel, target, cleanParams, businessID, retry)
+	return m.sendChannelWithRetry(ctx, template, channel, target, cleanParams, businessID, retry, recordTask...)
 }
 
 func (m *Manager) NotifyCustomer(ctx context.Context, scene string, customerID int64, businessID string, params map[string]string) error {

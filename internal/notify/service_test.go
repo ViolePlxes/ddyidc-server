@@ -18,6 +18,7 @@ type fakeNotifyRepository struct {
 	values    map[string]string
 	templates map[string]*NotificationTemplate
 	logs      []NotifyLog
+	testTasks []NotifyLog
 	contact   Contact
 	expiring  []ExpiringInstance
 }
@@ -58,6 +59,10 @@ func (f *fakeNotifyRepository) UpdateTemplate(context.Context, int64, string, st
 }
 func (f *fakeNotifyRepository) CreateLog(_ context.Context, logEntry *NotifyLog) error {
 	f.logs = append(f.logs, *logEntry)
+	return nil
+}
+func (f *fakeNotifyRepository) UpsertTestTask(_ context.Context, channel, target, content, status, errorText string, _ time.Time) error {
+	f.testTasks = append(f.testTasks, NotifyLog{Channel: channel, Target: target, ContentSnapshot: content, Status: status, Error: errorText})
 	return nil
 }
 func (f *fakeNotifyRepository) ListLogs(context.Context, int, int, string, string, string) ([]NotifyLog, int64, error) {

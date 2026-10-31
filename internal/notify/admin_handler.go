@@ -234,7 +234,7 @@ func (h *adminHandler) testNotify(w http.ResponseWriter, r *http.Request) {
 	if input.Params == nil {
 		input.Params = map[string]string{}
 	}
-	if err := h.manager.SendTestNotify(r.Context(), input.Scene, strings.TrimSpace(input.Target), input.Params); err != nil {
+	if err := h.manager.SendTestNotifyTask(r.Context(), input.Scene, strings.TrimSpace(input.Target), input.Params); err != nil {
 		adminError(w, http.StatusBadGateway, 502, "测试通知发送失败："+safeProviderError(err))
 		return
 	}
