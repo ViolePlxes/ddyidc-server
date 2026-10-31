@@ -11,10 +11,10 @@ import (
 func productProblems(ctx context.Context, db *gorm.DB, instanceID int64) ([]ProductProblem, error) {
 	problems := []ProductProblem{}
 	queries := []string{
-		"SELECT CAST(id AS CHAR) id,'upgrade' source,'upgrade' action,state status,updated_at FROM instance.instance_upgrades WHERE instance_id=? AND state IN ('creating','paying','uncertain','verifying')",
-		"SELECT CAST(id AS CHAR) id,'event' source,event_type action,CAST(status AS CHAR) status,updated_at FROM instance.instance_events WHERE instance_id=? AND status=3 AND event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id)",
-		"SELECT CAST(id AS CHAR) id,'delivery' source,'create' action,status,updated_at FROM `order`.delivery_units WHERE instance_id=? AND status IN ('unknown','failed')",
-		"SELECT CAST(id AS CHAR) id,'renewal' source,'renew' action,state status,updated_at FROM instance.instance_renewals WHERE instance_id=? AND state IN ('uncertain','failed','verifying')",
+		"SELECT CAST(id AS CHAR) id,'upgrade' source,'upgrade' action,state status,'' last_error,updated_at FROM instance.instance_upgrades WHERE instance_id=? AND state IN ('creating','paying','uncertain','verifying')",
+		"SELECT CAST(id AS CHAR) id,'event' source,event_type action,CAST(status AS CHAR) status,COALESCE(error_msg,'') last_error,updated_at FROM instance.instance_events WHERE instance_id=? AND status=3 AND event_type IN ('create','suspend','terminate','destroy','renew','sync_due_time','unsuspend') AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=instance.instance_events.id)",
+		"SELECT CAST(id AS CHAR) id,'delivery' source,'create' action,status,'' last_error,updated_at FROM `order`.delivery_units WHERE instance_id=? AND status IN ('unknown','failed')",
+		"SELECT CAST(id AS CHAR) id,'renewal' source,'renew' action,state status,COALESCE(last_error,'') last_error,updated_at FROM instance.instance_renewals WHERE instance_id=? AND state IN ('uncertain','failed','verifying')",
 	}
 	for _, query := range queries {
 		var rows []ProductProblem
