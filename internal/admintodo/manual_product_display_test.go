@@ -25,7 +25,7 @@ func TestManualProductDisplayMySQL(t *testing.T) {
 		"INSERT INTO instance.instances(id,customer_id,order_id,expires_at,upstream_provider_id,upstream_instance_id) VALUES(99001,99002,99003,'2026-11-13 01:30:00',99004,'remote1')",
 		"INSERT INTO customer.customers(id,username) VALUES(99002,'V10-legacy-do-not-display')",
 		"INSERT INTO customer.customer_realname(id,customer_id,name,status,updated_at) VALUES(99007,99002,'synthetic verified name',2,NOW())",
-		"INSERT INTO instance.instance_events VALUES(99008,99001,3,'create',NOW())",
+		"INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(99008,99001,3,'create',NOW())",
 		"UPDATE instance.instances SET product_name='test product',instance_no='test-99001',created_at=NOW(),updated_at=NOW() WHERE id=99001",
 		"INSERT INTO common.suppliers(id,url) VALUES(99004,'https://www.qkidc.cn')",
 		"INSERT INTO `order`.upstream_orders(id,order_id,supplier_id,upstream_order_id,upstream_host_id) VALUES(99005,99003,99004,'946271','remote1')",
@@ -82,6 +82,9 @@ func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
+	if err := tx.Exec("UPDATE instance.instance_renewals SET last_error='isolated renewal failure' WHERE id=99108").Error; err != nil {
+		t.Fatal(err)
+	}
 	page, e := List(context.Background(), tx, "manual-products", Filter{Page: 1, PageSize: 20, CustomerID: "99102"})
 	if e != nil {
 		t.Fatal(e)
@@ -90,6 +93,9 @@ func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {
 		t.Fatalf("want one renewal and one independent purchase, got %d", page.Total)
 	}
 	for _, row := range page.Items {
+		if row.InstanceID == "99101" && row.Reason != "isolated renewal failure" {
+			t.Fatalf("renewal reason missing: %q", row.Reason)
+		}
 		if row.OrderID == "99106" && row.Source == "order" {
 			t.Fatal("duplicate renewal row")
 		}

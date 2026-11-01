@@ -1301,11 +1301,7 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (result *contracts.Ups
 	payer.paymentContext = true
 	payBody, err := payer.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
 	if err != nil {
-		var failure *contracts.ProcurementFailure
-		if errors.As(err, &failure) && failure.RequestWritten {
-			return nil, fmt.Errorf("pay upstream invoice: %w", err)
-		}
-		return nil, &contracts.ProcurementFailure{Stage: "payment", Code: "payment_not_sent", RequestWritten: false, Cause: err}
+		return nil, fmt.Errorf("pay upstream invoice: %w", classifyInvoicePaymentFailure(err))
 	}
 	if err := requireProcurementStatus(payBody, 1001); err != nil {
 		// An unexpected reply does not prove that credit was not consumed.

@@ -16,10 +16,10 @@ func TestUnboundDeliveryRejectsOtherItemMySQL(t *testing.T) {
 	for _, sql := range []string{
 		"CREATE TEMPORARY TABLE `order`.orders(id BIGINT,customer_id BIGINT,status INT)",
 		"CREATE TEMPORARY TABLE `order`.order_items(id BIGINT,order_id BIGINT)",
-		"CREATE TEMPORARY TABLE system.durable_tasks(id BIGINT,kind VARCHAR(32),payload JSON,attempt INT,status VARCHAR(32))",
+		"CREATE TEMPORARY TABLE system.durable_tasks(id BIGINT,kind VARCHAR(32),payload JSON,attempt INT,status VARCHAR(32),safe_error TEXT)",
 		"INSERT INTO `order`.orders VALUES(91001,99001,2),(91002,99002,2)",
 		"INSERT INTO `order`.order_items VALUES(92001,91001),(92002,91002)",
-		"INSERT INTO system.durable_tasks VALUES(93001,'post_payment','{\"customerId\":99002,\"businessId\":91002,\"businessType\":\"order\"}',1,'unknown'),(93002,'post_payment','{\"customerId\":99001,\"businessId\":91002,\"businessType\":\"order\"}',1,'unknown')",
+		"INSERT INTO system.durable_tasks(id,kind,payload,attempt,status) VALUES(93001,'post_payment','{\"customerId\":99002,\"businessId\":91002,\"businessType\":\"order\"}',1,'unknown'),(93002,'post_payment','{\"customerId\":99001,\"businessId\":91002,\"businessType\":\"order\"}',1,'unknown')",
 	} {
 		if e := tx.Exec(sql).Error; e != nil {
 			t.Fatal(e)

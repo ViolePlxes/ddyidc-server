@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
+	orderapi "ddyidc/internal/order/api"
 	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/shared/productionlock"
 	"ddyidc/internal/upstream/provider/contracts"
@@ -27,14 +28,7 @@ func closeDeliveryForBoundHost(tx *gorm.DB, instanceID, orderID, orderItemID int
 			return err
 		}
 	}
-	var pending int64
-	if err := tx.Raw("SELECT COUNT(*) FROM `order`.delivery_units WHERE order_id=? AND status<>'complete'", orderID).Row().Scan(&pending); err != nil {
-		return err
-	}
-	if pending == 0 {
-		return tx.Exec("UPDATE `order`.orders SET status=6, updated_at=NOW(3) WHERE id=? AND status=2", orderID).Error
-	}
-	return nil
+	return orderapi.CompleteDeliveredOrder(tx, orderID)
 }
 func (s *Service) SetManagement(db *gorm.DB) { s.db = db }
 

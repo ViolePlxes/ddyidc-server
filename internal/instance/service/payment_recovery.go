@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	orderapi "ddyidc/internal/order/api"
 	"fmt"
 	"log"
 	"strconv"
@@ -164,14 +165,8 @@ func (s *Service) bindInvoiceHost(ctx context.Context, row unpaidPayment, match 
 				return err
 			}
 		}
-		var pending int64
-		if err := tx.Raw("SELECT COUNT(*) FROM `order`.delivery_units WHERE order_id=? AND status<>'complete'", row.OrderID).Row().Scan(&pending); err != nil {
+		if err := orderapi.CompleteDeliveredOrder(tx, row.OrderID); err != nil {
 			return err
-		}
-		if pending == 0 {
-			if err := tx.Exec("UPDATE `order`.orders SET status=6, updated_at=NOW(3) WHERE id=? AND status=2", row.OrderID).Error; err != nil {
-				return err
-			}
 		}
 		var customerID int64
 		if err := tx.Raw("SELECT customer_id FROM instance.instances WHERE id=?", row.InstanceID).Row().Scan(&customerID); err != nil {
