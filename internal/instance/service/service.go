@@ -510,6 +510,12 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		if result.PowerStatus != "" {
 			updates["power_status"] = result.PowerStatus
 		}
+		// The supplier is authoritative for the service period: a renewal that
+		// was paid there but lost its local confirmation must still move the
+		// expiry, otherwise the local expiry worker would suspend a live host.
+		if detail.ExpiresAt != nil {
+			updates["expires_at"] = *detail.ExpiresAt
+		}
 	}
 	if s.db != nil {
 		display, _ := json.Marshal(listDisplay{Hostname: result.Hostname, Port: result.Port, OperatingSystem: result.OperatingSystem, BillingCycle: result.BillingCycle, RenewalAmount: result.RenewalAmount})
