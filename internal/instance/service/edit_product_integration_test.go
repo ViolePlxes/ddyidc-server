@@ -120,7 +120,9 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 		"CREATE TABLE IF NOT EXISTS system.marketplace_listings(product_id BIGINT,status VARCHAR(20))",
 		"CREATE TABLE IF NOT EXISTS system.push_transfers(instance_id BIGINT,status VARCHAR(20))",
 		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(instance_id BIGINT,order_id BIGINT,state VARCHAR(20))",
-		"CREATE TABLE IF NOT EXISTS `order`.orders(id BIGINT PRIMARY KEY,status INT)",
+		"CREATE TABLE IF NOT EXISTS `order`.orders(id BIGINT PRIMARY KEY,status INT,updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS `order`.delivery_units(id BIGINT PRIMARY KEY,order_id BIGINT,order_item_id BIGINT,instance_id BIGINT,status VARCHAR(32),updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS `order`.order_items(id BIGINT PRIMARY KEY,order_id BIGINT,delivery_status INT,updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS payment.machine_refund_actions(application_id BIGINT PRIMARY KEY,state VARCHAR(30))",
 		"CREATE TABLE IF NOT EXISTS payment.machine_refund_legs(application_id BIGINT,instance_id BIGINT,state VARCHAR(30))",
 	} {
@@ -422,7 +424,7 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 	})
 	run("pending renewal prevents product changes", func(t *testing.T, f *editProductFixture) {
 		id := snowflake.GenID()
-		f.db.Exec("INSERT INTO `order`.orders VALUES(?,1)", id)
+		f.db.Exec("INSERT INTO `order`.orders(id,status) VALUES(?,1)", id)
 		f.db.Exec("INSERT INTO instance.instance_renewals VALUES(?,?,'unpaid')", f.host.ID, id)
 		if e := f.edit(); e == nil {
 			t.Fatal("pending renewal rebound")
@@ -519,4 +521,30 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 			t.Fatalf("duplicate target: successes=%d bindings=%d", successes.Load(), count)
 		}
 	})
+	run("binding closes verified delivery in the same transaction", func(t *testing.T, f *editProductFixture) {
+		f.mapProduct(t, 404)
+		for _, q := range []string{
+			"INSERT INTO `order`.orders(id,status) VALUES(910,2)",
+			"INSERT INTO `order`.order_items(id,order_id,delivery_status) VALUES(911,910,3)",
+		} {
+			if err := f.db.Exec(q).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := f.db.Exec("INSERT INTO `order`.delivery_units(id,order_id,order_item_id,instance_id,status) VALUES(912,910,911,?,'unknown')", f.host.ID).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := f.edit(); err != nil {
+			t.Fatal(err)
+		}
+		var status int
+		var unit string
+		if err := f.db.Raw("SELECT status FROM `order`.orders WHERE id=910").Scan(&status).Error; err != nil || status != 6 {
+			t.Fatalf("order status=%d err=%v", status, err)
+		}
+		if err := f.db.Raw("SELECT status FROM `order`.delivery_units WHERE id=912").Scan(&unit).Error; err != nil || unit != "complete" {
+			t.Fatalf("unit=%s err=%v", unit, err)
+		}
+	})
+
 }
