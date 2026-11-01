@@ -25,16 +25,16 @@ func TestProductProblemsMixedCollationMySQL(t *testing.T) {
 	defer pool.Close()
 	for _, sql := range []string{
 		"CREATE DATABASE IF NOT EXISTS instance", "CREATE DATABASE IF NOT EXISTS `order`", "CREATE DATABASE IF NOT EXISTS `system`",
-		"CREATE TABLE instance.instance_events(id BIGINT,instance_id BIGINT,event_type VARCHAR(32),status INT,updated_at DATETIME) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+		"CREATE TABLE instance.instance_events(id BIGINT,instance_id BIGINT,event_type VARCHAR(32),status INT,updated_at DATETIME,error_msg TEXT,created_at DATETIME(3)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 		"CREATE TABLE `order`.delivery_units(id BIGINT,instance_id BIGINT,status VARCHAR(32),updated_at DATETIME) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
-		"CREATE TABLE instance.instance_renewals(id BIGINT,instance_id BIGINT,state VARCHAR(32),updated_at DATETIME) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
+		"CREATE TABLE instance.instance_renewals(id BIGINT,instance_id BIGINT,state VARCHAR(32),updated_at DATETIME,last_error VARCHAR(255)) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci",
 		"CREATE TABLE instance.instance_upgrades(id BIGINT,instance_id BIGINT,state VARCHAR(32),updated_at DATETIME) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci",
 		"CREATE TABLE system.todo_event_resolutions(event_id BIGINT)",
-		"INSERT INTO instance.instance_events VALUES(1,77,'create',3,'2026-10-06 10:00:00'),(2,77,'renew',3,'2026-10-06 10:01:00'),(3,78,'create',3,'2026-10-06 10:02:00'),(4,77,'create',2,'2026-10-06 10:03:00')",
+		"INSERT INTO instance.instance_events(id,instance_id,event_type,status,updated_at) VALUES(1,77,'create',3,'2026-10-06 10:00:00'),(2,77,'renew',3,'2026-10-06 10:01:00'),(3,78,'create',3,'2026-10-06 10:02:00'),(4,77,'create',2,'2026-10-06 10:03:00')",
 		"INSERT INTO instance.instance_upgrades VALUES(9,77,'verifying','2026-10-06 13:00:00'),(10,77,'complete','2026-10-06 13:00:00'),(11,78,'uncertain','2026-10-06 13:00:00')",
 		"INSERT INTO system.todo_event_resolutions VALUES(2)",
 		"INSERT INTO `order`.delivery_units VALUES(5,77,'unknown','2026-10-06 11:00:00'),(6,77,'complete','2026-10-06 11:00:00')",
-		"INSERT INTO instance.instance_renewals VALUES(7,77,'verifying','2026-10-06 12:00:00'),(8,77,'complete','2026-10-06 12:00:00')",
+		"INSERT INTO instance.instance_renewals(id,instance_id,state,updated_at) VALUES(7,77,'verifying','2026-10-06 12:00:00'),(8,77,'complete','2026-10-06 12:00:00')",
 	} {
 		if e := db.Exec(sql).Error; e != nil {
 			t.Fatal(e)

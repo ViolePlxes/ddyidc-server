@@ -19,6 +19,7 @@ type Config struct {
 	Bucket          string `json:"bucket"`
 	Prefix          string `json:"prefix"`
 	RetentionDays   int    `json:"retentionDays"`
+	RetentionCount  int    `json:"retentionCount"`
 	AccessKeyID     string `json:"accessKeyId,omitempty"`
 	AccessKeySecret string `json:"accessKeySecret,omitempty"`
 }
@@ -28,12 +29,13 @@ type PublicConfig struct {
 	Bucket           string `json:"bucket"`
 	Prefix           string `json:"prefix"`
 	RetentionDays    int    `json:"retentionDays"`
+	RetentionCount   int    `json:"retentionCount"`
 	AccessKeyMasked  string `json:"accessKeyMasked"`
 	SecretConfigured bool   `json:"secretConfigured"`
 }
 
 func defaults() Config {
-	return Config{Endpoint: "https://oss-cn-hangzhou.aliyuncs.com", Prefix: "ddyidc/", RetentionDays: 30}
+	return Config{Endpoint: "https://oss-cn-hangzhou.aliyuncs.com", Prefix: "ddyidc/", RetentionDays: 30, RetentionCount: 2}
 }
 func (c Config) public() PublicConfig {
 	masked := ""
@@ -42,7 +44,7 @@ func (c Config) public() PublicConfig {
 	} else if c.AccessKeyID != "" {
 		masked = "****"
 	}
-	return PublicConfig{c.Enabled, c.Endpoint, c.Bucket, c.Prefix, c.RetentionDays, masked, c.AccessKeySecret != ""}
+	return PublicConfig{c.Enabled, c.Endpoint, c.Bucket, c.Prefix, c.RetentionDays, c.RetentionCount, masked, c.AccessKeySecret != ""}
 }
 
 var endpointHost = regexp.MustCompile(`^oss-[a-z0-9-]+\.aliyuncs\.com$`)
@@ -72,6 +74,9 @@ func validate(c *Config) error {
 	}
 	if c.RetentionDays < 1 || c.RetentionDays > 3650 {
 		return errors.New("保留天数须为 1 至 3650")
+	}
+	if c.RetentionCount < 0 || c.RetentionCount > 3650 {
+		return errors.New("保留份数须为 0 至 3650")
 	}
 	if c.Enabled && (c.Bucket == "" || c.AccessKeyID == "" || c.AccessKeySecret == "") {
 		return errors.New("请先配置 Bucket 和 AccessKey")

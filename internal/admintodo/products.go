@@ -25,6 +25,7 @@ type ProductProblem struct {
 	Source    string    `json:"source"`
 	Action    string    `json:"action"`
 	Status    string    `json:"status"`
+	LastError string    `json:"lastError,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 

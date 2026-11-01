@@ -21,8 +21,8 @@ type ExpiryNotifier interface {
 }
 
 type expiryHistoryRow struct {
-	Channel, Status, Error, BusinessID string
-	CreatedAt                          time.Time
+	Channel, Status, Error, BusinessID, Target, Content string
+	CreatedAt                                           time.Time
 }
 
 func RegisterExpiryWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Manager, notifier ExpiryNotifier) {
@@ -48,12 +48,12 @@ func RegisterExpiryWorkflows(server *rest.Server, db *gorm.DB, manager *auth.Man
 		}
 		if r.Method == http.MethodGet {
 			rows := []expiryHistoryRow{}
-			if db.WithContext(r.Context()).Table("system.notify_logs").Select("channel,status,error,business_id,created_at").Where("scene='expiry' AND (business_id=? OR business_id LIKE ?)", strconv.FormatInt(id, 10), strconv.FormatInt(id, 10)+":%").Order("created_at DESC,id DESC").Limit(100).Scan(&rows).Error != nil {
+			if db.WithContext(r.Context()).Table("system.notify_logs").Select("channel,status,error,business_id,target,content_snapshot AS content,created_at").Where("scene='expiry' AND (business_id=? OR business_id LIKE ?)", strconv.FormatInt(id, 10), strconv.FormatInt(id, 10)+":%").Order("created_at DESC,id DESC").Limit(100).Scan(&rows).Error != nil {
 				reply(w, 503, nil, "提醒记录暂不可用")
 				return
 			}
 			var batches []expiryHistoryRow
-			if e := db.WithContext(r.Context()).Table("system.notification_tasks t").Joins("JOIN system.notification_task_items i ON i.task_id=t.id").Select("t.channel,t.status,t.error,CAST(t.id AS CHAR) business_id,t.created_at").Where("i.instance_id=?", id).Order("t.created_at DESC,t.id DESC").Limit(100).Scan(&batches).Error; e != nil {
+			if e := db.WithContext(r.Context()).Table("system.notification_tasks t").Joins("JOIN system.notification_task_items i ON i.task_id=t.id").Select("t.channel,t.status,t.error,CAST(t.id AS CHAR) business_id,t.target,t.content_snapshot AS content,t.created_at").Where("i.instance_id=?", id).Order("t.created_at DESC,t.id DESC").Limit(100).Scan(&batches).Error; e != nil {
 				reply(w, 503, nil, "汇总提醒记录暂不可用")
 				return
 			}

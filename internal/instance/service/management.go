@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	dom "ddyidc/internal/instance/domain"
+	orderapi "ddyidc/internal/order/api"
 	"ddyidc/internal/remoteconsole"
 	"ddyidc/internal/shared/productionlock"
 	"ddyidc/internal/upstream/provider/contracts"
@@ -15,6 +16,20 @@ import (
 	"time"
 )
 
+// closeDeliveryForBoundHost makes the order state follow an administrator's
+// upstream binding so the customer product list and the admin product list
+// agree immediately after the binding is saved.
+func closeDeliveryForBoundHost(tx *gorm.DB, instanceID, orderID, orderItemID int64) error {
+	if err := tx.Exec("UPDATE `order`.delivery_units SET status='complete', updated_at=NOW(3) WHERE instance_id=? AND order_id=? AND status IN ('unknown','failed')", instanceID, orderID).Error; err != nil {
+		return err
+	}
+	if orderItemID > 0 {
+		if err := tx.Exec("UPDATE `order`.order_items SET delivery_status=2, updated_at=NOW(3) WHERE id=? AND order_id=?", orderItemID, orderID).Error; err != nil {
+			return err
+		}
+	}
+	return orderapi.CompleteDeliveredOrder(tx, orderID)
+}
 func (s *Service) SetManagement(db *gorm.DB) { s.db = db }
 
 type EditInput struct {
@@ -209,6 +224,15 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		}
 		if e := tx.Model(&current).Updates(updates).Error; e != nil {
 			return e
+		}
+		// Binding an upstream host finishes a delivery that failed before the
+		// supplier reported the host. Without this the order keeps showing
+		// "provisioning" on the customer page while the admin list already
+		// shows the machine as running.
+		if value, ok := updates["upstream_instance_id"]; ok && h.OrderID > 0 && fmt.Sprint(value) != "" && fmt.Sprint(value) != h.UpstreamInstanceID {
+			if e := closeDeliveryForBoundHost(tx, id, h.OrderID, h.OrderItemID); e != nil {
+				return e
+			}
 		}
 		response := map[string]any{"saved": true, "productOnly": in.ProductOnly}
 		for _, key := range []string{"upstream_instance_id", "product_id"} {

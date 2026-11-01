@@ -18,7 +18,7 @@ func TestManualProductCompleteRenewalMatchMySQL(t *testing.T) {
 	host := dom.Host{ID: 903, CustomerID: 77, OwnershipVersion: 1, UpstreamProviderID: &provider, UpstreamInstanceID: "903", PrimaryIP: "192.0.2.3", ConfigSnapshot: `{"configOptions":{"a":{"field":"cpu","displayValue":"4 核"}}}`}
 	for _, sql := range []string{
 		"INSERT INTO instance.instances(id,customer_id,order_id,ownership_version,upstream_provider_id,upstream_instance_id,primary_ip,created_at,updated_at) VALUES(903,77,703,1,88,'903','192.0.2.3',NOW(),NOW())",
-		"INSERT INTO instance.instance_renewals VALUES(603,903,703,77,1,88,'903','monthly',1,'2026-09-01 09:00:00','uncertain',NOW())",
+		"INSERT INTO instance.instance_renewals(id,instance_id,order_id,customer_id,ownership_version,supplier_id,host_id,cycle,duration,base_expiry,state,updated_at) VALUES(603,903,703,77,1,88,'903','monthly',1,'2026-09-01 09:00:00','uncertain',NOW())",
 	} {
 		if e := tx.Exec(sql).Error; e != nil {
 			t.Fatal(e)
@@ -44,7 +44,7 @@ func TestManualProductCompleteRenewalMatchMySQL(t *testing.T) {
 		t.Fatal("wrong CPU accepted", e)
 	}
 	facts.Config = []contracts.InstanceConfig{{Field: "cpu", Value: "4"}}
-	if e := tx.Exec("INSERT INTO instance.instance_events VALUES(503,903,3,'suspend',NOW())").Error; e != nil {
+	if e := tx.Exec("INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(503,903,3,'suspend',NOW())").Error; e != nil {
 		t.Fatal(e)
 	}
 	if ok, e := manualProductMatches(tx, entry, host, facts); e != nil || ok {

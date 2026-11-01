@@ -2,6 +2,7 @@ package order_test
 
 import (
 	"context"
+	orderapi "ddyidc/internal/order/api"
 	orderrepo "ddyidc/internal/order/repository"
 	ordersvc "ddyidc/internal/order/service"
 	"ddyidc/internal/shared/snowflake"
@@ -476,5 +477,59 @@ func TestDeliveryUnitsMySQL(t *testing.T) {
 	t.Log("settlement disconnect, supplier rejection, paid empty-host response: paid products remain pending; repeat calls make zero extra supplier writes; customer ledger unchanged")
 
 	t.Log("CONTROLLED HTTP supplier + real MySQL: 1/10 units fully delivered; 2 units partial success preserves remote invoice, unknown unit never repurchased; not real third-party acceptance")
+
+	t.Run("bound delivery order API is atomic and requires all units", func(t *testing.T) {
+		for _, sql := range []string{
+			"INSERT INTO `order`.orders(id,order_no,customer_id,status,pay_amount) VALUES(93091,'BOUND-API-1',77,2,100),(93092,'BOUND-API-2',77,2,200)",
+			"INSERT INTO `order`.delivery_units(id,order_id,order_item_id,unit_no,customer_id,instance_id,status) VALUES(93911,93091,94091,1,77,94111,'unknown'),(93921,93092,94092,1,77,94121,'complete'),(93922,93092,94092,2,77,94122,'unknown')",
+		} {
+			if err := database.Exec(sql).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		check := func(id int64, want int) {
+			t.Helper()
+			var status int
+			if err := database.Raw("SELECT status FROM `order`.orders WHERE id=?", id).Scan(&status).Error; err != nil || status != want {
+				t.Fatalf("order %d status=%d err=%v", id, status, err)
+			}
+		}
+		if err := orderapi.CompleteDeliveredOrder(database, 93092); err != nil {
+			t.Fatal(err)
+		}
+		check(93092, 2)
+		rollback := errors.New("rollback fixture")
+		complete := func(tx *gorm.DB) error {
+			if err := tx.Exec("UPDATE `order`.delivery_units SET status='complete' WHERE order_id=93091").Error; err != nil {
+				return err
+			}
+			return orderapi.CompleteDeliveredOrder(tx, 93091)
+		}
+		if err := database.Transaction(func(tx *gorm.DB) error {
+			if err := complete(tx); err != nil {
+				return err
+			}
+			return rollback
+		}); !errors.Is(err, rollback) {
+			t.Fatal(err)
+		}
+		check(93091, 2)
+		if err := database.Transaction(complete); err != nil {
+			t.Fatal(err)
+		}
+		check(93091, 6)
+		if err := orderapi.CompleteDeliveredOrder(database, 93091); err != nil {
+			t.Fatal(err)
+		}
+		check(93091, 6)
+		if err := database.Exec("INSERT INTO `order`.orders(id,order_no,customer_id,status,pay_amount) VALUES(93099,'EMPTY-BOUND-TEST',77,2,100)").Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := orderapi.CompleteDeliveredOrder(database, 93099); err != nil {
+			t.Fatal(err)
+		}
+		check(93099, 2)
+	})
 
 }

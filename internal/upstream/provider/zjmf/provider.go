@@ -80,6 +80,7 @@ type Provider struct {
 	Supplier           contracts.Supplier
 	instanceContext    context.Context
 	procurementContext bool
+	paymentContext     bool
 }
 
 func New(s contracts.Supplier) *Provider { return &Provider{Supplier: s} }
@@ -931,7 +932,16 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			}
 		}
 		if isQKIDC && (p.Supplier.LimitRequests || metrics.IsBackground(ctx)) {
-			if err := waitForRequestSlotContext(ctx, parsed.Hostname(), 2*time.Second); err != nil {
+			slotLimit := 8 * time.Second
+			if p.paymentContext {
+				// Payment runs after the invoice exists: give it a much longer
+				// queue budget instead of aborting the only payment attempt.
+				slotLimit = 25 * time.Second
+			}
+			if err := waitForRequestSlotContext(ctx, parsed.Hostname(), 2*time.Second, slotLimit); err != nil {
+				if p.paymentContext {
+					return nil, 0, &contracts.ProcurementFailure{Stage: "payment", Code: "payment_not_sent", RequestWritten: false, Cause: err}
+				}
 				return nil, 0, err
 			}
 		}
@@ -1280,9 +1290,18 @@ func (p *Provider) CreateOrder(order contracts.OrderInfo) (result *contracts.Ups
 	if err := checkpoint("payment", invoiceID, ""); err != nil {
 		return nil, err
 	}
-	payBody, err := p.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
+	// Payment must not inherit the procurement budget: by the time the invoice
+	// exists that budget may be nearly gone, and aborting here would leave a
+	// paid order with an unpaid upstream invoice. A pre-send failure is a
+	// definite "not sent" (and therefore retryable), never an unknown charge.
+	payCtx, payCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer payCancel()
+	payer := *p
+	payer.instanceContext = payCtx
+	payer.paymentContext = true
+	payBody, err := payer.authorizedFormPost("/apply_credit", applyCreditForm(order, invoiceID, true))
 	if err != nil {
-		return nil, fmt.Errorf("pay upstream invoice: %w", err)
+		return nil, fmt.Errorf("pay upstream invoice: %w", classifyInvoicePaymentFailure(err))
 	}
 	if err := requireProcurementStatus(payBody, 1001); err != nil {
 		// An unexpected reply does not prove that credit was not consumed.

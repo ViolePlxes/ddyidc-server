@@ -185,7 +185,9 @@ func (h *handler) dashboard(w http.ResponseWriter, r *http.Request) {
 		{h.db.WithContext(ctx).Table("customer.customers").Where("deleted_at IS NULL"), &counts.TotalCustomers},
 		{h.db.WithContext(ctx).Table("customer.customers").Where("deleted_at IS NULL AND created_at >= DATE_SUB(CURRENT_DATE(), INTERVAL WEEKDAY(CURRENT_DATE()) DAY)"), &counts.NewCustomersThisWeek},
 		{h.db.WithContext(ctx).Table("instance.instances").Where("deleted_at IS NULL"), &counts.TotalInstances},
-		{h.db.WithContext(ctx).Table("instance.instances").Where("deleted_at IS NULL AND status = ?", 2), &counts.RunningInstances},
+		// 运行实例只统计 status=3（运行中）；开通中(2)、已停机/暂停(4)、
+		// 已过期/异常(5)、已删除/终止(6) 都不计入。
+		{h.db.WithContext(ctx).Table("instance.instances").Where("deleted_at IS NULL AND status = ?", 3), &counts.RunningInstances},
 		{h.db.WithContext(ctx).Table("`order`.orders").Where("status = ?", 1), &counts.PendingOrders},
 		{h.db.WithContext(ctx).Table("ticket.ticket").Where("status <> ?", 4), &counts.OpenTickets},
 	}

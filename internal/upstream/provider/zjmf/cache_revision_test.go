@@ -64,11 +64,11 @@ func TestSharedRequestSlot(t *testing.T) {
 	cache.RDB = client
 	t.Cleanup(func() { cache.RDB = previous })
 	ctx := context.Background()
-	if err := waitForRequestSlotContext(ctx, "fixture.invalid", 80*time.Millisecond); err != nil {
+	if err := waitForRequestSlotContext(ctx, "fixture.invalid", 80*time.Millisecond, 0); err != nil {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := waitForRequestSlotContext(ctx, "fixture.invalid", 80*time.Millisecond); err != nil {
+	if err := waitForRequestSlotContext(ctx, "fixture.invalid", 80*time.Millisecond, 0); err != nil {
 		t.Fatal(err)
 	}
 	if time.Since(start) < 60*time.Millisecond {
@@ -76,11 +76,11 @@ func TestSharedRequestSlot(t *testing.T) {
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if err := waitForRequestSlotContext(cancelled, "fixture.invalid", time.Second); err == nil {
+	if err := waitForRequestSlotContext(cancelled, "fixture.invalid", time.Second, 0); err == nil {
 		t.Fatal("cancelled wait admitted")
 	}
 	_ = client.Close()
-	if err := waitForRequestSlotContext(ctx, "fixture.invalid", time.Second); err == nil {
+	if err := waitForRequestSlotContext(ctx, "fixture.invalid", time.Second, 0); err == nil {
 		t.Fatal("coordination failure admitted request")
 	}
 }

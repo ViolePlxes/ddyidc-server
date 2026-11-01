@@ -36,8 +36,11 @@ func requestBackoff(ctx context.Context, scoped, qkidc bool, attempt int) error 
 		return nil
 	}
 }
-func waitForRequestSlotContext(ctx context.Context, host string, minimum time.Duration) error {
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+func waitForRequestSlotContext(ctx context.Context, host string, minimum, limit time.Duration) error {
+	if limit <= 0 {
+		limit = 8 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	if cache.RDB != nil {
 		return waitSharedRequestSlot(ctx, host, minimum)

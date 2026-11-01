@@ -149,6 +149,15 @@ func (r *Repository) CreateLog(ctx context.Context, v *NotifyLog) error {
 	return r.db.WithContext(ctx).Table(v.TableName()).Create(v).Error
 }
 
+// UpsertTestTask mirrors an administrator test message into the notification
+// task list. customer_id=0 marks the row as a test send; one row per channel
+// per day keeps the list stable across repeated tests.
+func (r *Repository) UpsertTestTask(ctx context.Context, channel, target, content, status, errorText string, at time.Time) error {
+	day := at.In(time.FixedZone("CST", 8*3600)).Format("2006-01-02")
+	return r.db.WithContext(ctx).Exec("INSERT INTO system.notification_tasks (id,customer_id,notify_date,channel,status,`count`,earliest_expiry,scheduled_at,created_at,updated_at,started_at,finished_at,attempts,target,error,request_id,content_snapshot,version) VALUES (?,0,?,?,?,1,NULL,?,?,?,NULL,NULL,0,?,?,?,?,1) ON DUPLICATE KEY UPDATE status=VALUES(status),target=VALUES(target),error=VALUES(error),content_snapshot=VALUES(content_snapshot),scheduled_at=VALUES(scheduled_at),updated_at=VALUES(updated_at),version=version+1",
+		snowflake.GenID(), day, channel, status, at, at, at, target, errorText, "", content).Error
+}
+
 func (r *Repository) ListLogs(ctx context.Context, page, pageSize int, scene, channel, status string) ([]NotifyLog, int64, error) {
 	if page < 1 {
 		page = 1

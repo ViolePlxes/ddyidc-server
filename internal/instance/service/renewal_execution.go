@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -164,7 +165,7 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 			return true, nil
 		}
 		if e = rp.PayRenewalInvoice(r.InvoiceID); e != nil {
-			return true, s.renewalUncertain(ctx, r.ID, "服务续费支付结果未确认，请人工核对")
+			return true, s.renewalUncertain(ctx, r.ID, renewalPaymentReason(e))
 		}
 		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='paying'", r.ID).Updates(map[string]any{"state": "verifying", "updated_at": time.Now()})
 		if persisted.Error != nil {
@@ -186,6 +187,23 @@ func (s *Service) renewalUncertain(ctx context.Context, id int64, message string
 		return err
 	}
 	return errors.New(message)
+}
+
+// The manual todo must always show why the payment is uncertain, so the supplier
+// failure is carried into last_error instead of a generic sentence. Only the
+// classified message is kept: no credentials, URLs or response bodies.
+func renewalPaymentReason(err error) string {
+	detail := ""
+	if err != nil {
+		detail = strings.Join(strings.Fields(err.Error()), " ")
+	}
+	if runes := []rune(detail); len(runes) > 120 {
+		detail = string(runes[:120]) + "…"
+	}
+	if detail == "" {
+		return "服务续费支付结果未确认，请人工核对"
+	}
+	return "服务续费支付结果未确认：" + detail + "，请人工核对"
 }
 func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Time) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

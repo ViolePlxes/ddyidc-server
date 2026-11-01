@@ -24,7 +24,32 @@ func (h *handler) managementRoutes() []rest.Route {
 			rest.Route{Method: http.MethodPut, Path: base + "/auto-renew", Handler: h.autoRenew})
 	}
 	out = append(out, rest.Route{Method: http.MethodPut, Path: "/api/v1/instance/:instanceId/remark", Handler: h.remark})
+	out = append(out, rest.Route{Method: http.MethodDelete, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.remove})
 	return append(out, rest.Route{Method: http.MethodPatch, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.edit})
+}
+
+// remove deletes the local instance record only. Supplier-side termination and
+// refunds stay manual; the request needs a reason and, when an upstream host is
+// still bound, an explicit force plus the exact instance number.
+func (h *handler) remove(w http.ResponseWriter, r *http.Request) {
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r)
+	if id == 0 {
+		return
+	}
+	var in svc.DeleteInput
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in) != nil {
+		writeError(w, 400, "参数错误")
+		return
+	}
+	if e := h.service.Delete(r.Context(), customer, id, clientip.FromRequest(r), in); e != nil {
+		writeServiceError(w, e)
+		return
+	}
+	writeJSON(w, map[string]bool{"deleted": true})
 }
 func (h *handler) productionLock(w http.ResponseWriter, r *http.Request) {
 	customer, ok := h.claims(w, r)

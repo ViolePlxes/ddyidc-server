@@ -150,7 +150,16 @@ func (s *Service) pruneOSS(ctx context.Context, c Config) error {
 		return e
 	}
 	var jobs []Job
-	if e = s.db.Where("uploaded=true AND expired=false AND bucket=? AND endpoint=? AND created_at<?", c.Bucket, c.Endpoint, time.Now().AddDate(0, 0, -c.RetentionDays)).Find(&jobs).Error; e != nil {
+	if c.RetentionCount > 0 {
+		// 按份数保留：只留最近 N 份，其余删除，费用可控。
+		if e = s.db.Where("uploaded=true AND expired=false AND bucket=? AND endpoint=?", c.Bucket, c.Endpoint).Order("created_at DESC").Find(&jobs).Error; e != nil {
+			return errors.New("读取备份保留记录失败")
+		}
+		if len(jobs) <= c.RetentionCount {
+			return nil
+		}
+		jobs = jobs[c.RetentionCount:]
+	} else if e = s.db.Where("uploaded=true AND expired=false AND bucket=? AND endpoint=? AND created_at<?", c.Bucket, c.Endpoint, time.Now().AddDate(0, 0, -c.RetentionDays)).Find(&jobs).Error; e != nil {
 		return errors.New("读取备份保留记录失败")
 	}
 	for _, j := range jobs {

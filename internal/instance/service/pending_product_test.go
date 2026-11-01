@@ -21,3 +21,11 @@ func TestPendingProductLocalDetailAndMutationFence(t *testing.T) {
 		t.Fatal("unbound product executed a supplier operation")
 	}
 }
+
+func TestBoundProductDisplaysRunning(t *testing.T) {
+	h := &dom.Host{ID: 101, CustomerID: 200, Status: 2, PowerStatus: "provisioning", UpstreamInstanceID: "57512", ConfigSnapshot: `{"hostname":"bound-host"}`}
+	row := listItem(h)
+	if row.Status != 3 || row.DeliveryPending || row.ReadOnly {
+		t.Fatalf("bound product must display running: %+v", row)
+	}
+}

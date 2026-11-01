@@ -156,6 +156,16 @@ type DetailView struct {
 	Warning            string                         `json:"warning,omitempty"`
 }
 
+// HideProcurement removes supplier-side order identifiers and the procurement
+// amount from a customer-facing detail. FirstPayment is what the platform paid
+// the supplier, never a customer price, and must not reach the console.
+func (v *DetailView) HideProcurement() {
+	v.FirstPayment = ""
+	v.UpstreamOrderID = ""
+	v.UpstreamOrderNo = ""
+	v.InvoiceID = ""
+}
+
 type ImageItem struct {
 	ID      string  `json:"id"`
 	Version string  `json:"version"`
@@ -328,7 +338,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
 		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
 		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
-		Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
+		Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
 		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
 	}
 	result.CurrentImageID, result.CurrentImageName = snapshotImage(snapshot)
@@ -491,6 +501,15 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 	updates := map[string]any{
 		"primary_ip": result.PrimaryIP, "subnet_mask": result.SubnetMask, "gateway": result.Gateway,
 		"operating_system": result.OperatingSystem, "last_synced_at": now,
+	}
+	// The supplier keeps service lifecycle (Active/Suspended/...) apart from the
+	// machine power state. Persist both so the cached list never keeps showing
+	// "running" after the supplier suspended an expired service.
+	if result.InfoSource == "upstream" {
+		updates["status"] = status
+		if result.PowerStatus != "" {
+			updates["power_status"] = result.PowerStatus
+		}
 	}
 	if s.db != nil {
 		display, _ := json.Marshal(listDisplay{Hostname: result.Hostname, Port: result.Port, OperatingSystem: result.OperatingSystem, BillingCycle: result.BillingCycle, RenewalAmount: result.RenewalAmount})
@@ -857,9 +876,19 @@ func pendingUnbound(host *dom.Host) bool {
 	return (host.Status == 1 || host.Status == 2) && strings.TrimSpace(host.UpstreamInstanceID) == ""
 }
 
+// displayStatus follows the supplier binding rather than the local delivery
+// bookkeeping: once a host id is bound the machine exists, even while a delivery
+// unit is still being closed. Customer and admin lists therefore agree.
+func displayStatus(host *dom.Host) uint8 {
+	if (host.Status == 1 || host.Status == 2) && strings.TrimSpace(host.UpstreamInstanceID) != "" {
+		return 3
+	}
+	return host.Status
+}
+
 func listItem(host *dom.Host) ListItem {
 	_, snapshot := parseSnapshot(host.ConfigSnapshot)
-	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: host.Status, PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
+	result := ListItem{ReadOnly: outbound.DetailReadOnly() || host.ModuleType == "legacy_snapshot", ID: strconv.FormatInt(host.ID, 10), Name: host.InstanceNo, Remark: host.Remark, ProductName: host.ProductName, PrimaryIP: host.PrimaryIP, Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle, CreatedAt: formatTime(host.CreatedAt)}
 	result.Hostname = snapshot.Hostname
 	if pendingUnbound(host) {
 		result.ReadOnly = true

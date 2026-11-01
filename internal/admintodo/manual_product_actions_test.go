@@ -25,14 +25,14 @@ func manualProductFixtureDB(t *testing.T) *gorm.DB {
 
 		"CREATE TABLE IF NOT EXISTS customer.customers(id BIGINT,username VARCHAR(64))",
 		"CREATE TABLE IF NOT EXISTS instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,order_item_id BIGINT,product_id BIGINT DEFAULT 0,module_type VARCHAR(32) DEFAULT 'cloud',config_snapshot JSON,primary_ip VARCHAR(45) DEFAULT '',expires_at DATETIME(3),ownership_version BIGINT,upstream_provider_id BIGINT,upstream_instance_id VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,product_name VARCHAR(128),instance_no VARCHAR(64),created_at DATETIME(3),updated_at DATETIME(3),deleted_at DATETIME NULL)",
-		"CREATE TABLE IF NOT EXISTS instance.instance_events(id BIGINT,instance_id BIGINT,status INT,event_type VARCHAR(32),updated_at DATETIME(3))",
-		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(id BIGINT,instance_id BIGINT,order_id BIGINT,customer_id BIGINT,ownership_version BIGINT,supplier_id BIGINT,host_id VARCHAR(64),cycle VARCHAR(32),duration BIGINT,base_expiry DATETIME(3),state VARCHAR(32),updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS instance.instance_events(id BIGINT,instance_id BIGINT,status INT,event_type VARCHAR(32),updated_at DATETIME(3),error_msg TEXT,created_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(id BIGINT,instance_id BIGINT,order_id BIGINT,customer_id BIGINT,ownership_version BIGINT,supplier_id BIGINT,host_id VARCHAR(64),cycle VARCHAR(32),duration BIGINT,base_expiry DATETIME(3),state VARCHAR(32),updated_at DATETIME(3),last_error VARCHAR(255))",
 		"CREATE TABLE IF NOT EXISTS system.todo_event_resolutions(event_id BIGINT)",
 		"CREATE TABLE IF NOT EXISTS `order`.delivery_units(id BIGINT,unit_no BIGINT DEFAULT 1,instance_id BIGINT,order_item_id BIGINT,order_id BIGINT,customer_id BIGINT,status VARCHAR(32),updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS `order`.orders(id BIGINT,customer_id BIGINT,status INT,order_no VARCHAR(64),created_at DATETIME,paid_at DATETIME)",
 		"CREATE TABLE IF NOT EXISTS `order`.order_items(id BIGINT PRIMARY KEY,order_id BIGINT,product_id BIGINT,product_name VARCHAR(128),delivery_status INT,updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS product.upstream_products(product_id BIGINT,auto_setup INT)",
-		"CREATE TABLE IF NOT EXISTS system.durable_tasks(kind VARCHAR(32),status VARCHAR(32),payload JSON,updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS system.durable_tasks(kind VARCHAR(32),status VARCHAR(32),payload JSON,updated_at DATETIME(3),safe_error TEXT)",
 		"CREATE TABLE IF NOT EXISTS system.todo_audits(id BIGINT PRIMARY KEY,request_id VARCHAR(64) UNIQUE,kind VARCHAR(32),source VARCHAR(32),object_id BIGINT,action VARCHAR(32),admin_id BIGINT,operator_ip VARCHAR(64),notes TEXT,evidence TEXT,created_at DATETIME(3))",
 	}
 	for _, sql := range statements {
@@ -69,7 +69,7 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 	statements := []string{
 
 		"INSERT INTO instance.instances(id,customer_id,order_id,order_item_id,ownership_version,upstream_provider_id,upstream_instance_id,product_name,instance_no,created_at,updated_at,deleted_at) VALUES(901,77,701,0,1,88,'900','fixture','HOST-901',NOW(),NOW(),NULL)",
-		"INSERT INTO instance.instance_events VALUES(501,901,3,'create',NOW())",
+		"INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(501,901,3,'create',NOW())",
 	}
 	for _, sql := range statements {
 		if e := tx.Exec(sql).Error; e != nil {
@@ -118,7 +118,7 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 	}
 	assertPending(0)
 	for n, kind := range []string{"reboot", "hard_reboot", "reset_password", "security_group"} {
-		if err := tx.Exec("INSERT INTO instance.instance_events VALUES(?,901,3,?,DATE_ADD(NOW(),INTERVAL 2 SECOND))", 503+n, kind).Error; err != nil {
+		if err := tx.Exec("INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(?,901,3,?,DATE_ADD(NOW(),INTERVAL 2 SECOND))", 503+n, kind).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -196,7 +196,7 @@ func TestManualProductMarkAndReadOnlyRefreshMySQL(t *testing.T) {
 	if state != 3 {
 		t.Fatal("original failure rewritten")
 	}
-	if e := tx.Exec("INSERT INTO instance.instance_events VALUES(502,901,3,'unsuspend',DATE_ADD(NOW(),INTERVAL 1 SECOND))").Error; e != nil {
+	if e := tx.Exec("INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(502,901,3,'unsuspend',DATE_ADD(NOW(),INTERVAL 1 SECOND))").Error; e != nil {
 		t.Fatal(e)
 	}
 	if _, e := manualProductEntry(ctx, tx, "instance", 901); e != nil {

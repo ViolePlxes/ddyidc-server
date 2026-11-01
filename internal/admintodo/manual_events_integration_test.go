@@ -40,8 +40,8 @@ func TestSixManualActionsMySQL(t *testing.T) {
 		"CREATE TEMPORARY TABLE system.admins(id BIGINT PRIMARY KEY,status INT,is_super INT,auth_version BIGINT)",
 		"INSERT INTO system.admins VALUES(1,1,1,1)",
 		"CREATE TEMPORARY TABLE instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,ownership_version BIGINT,upstream_provider_id BIGINT,upstream_instance_id VARCHAR(64),status INT,expires_at DATETIME,last_synced_at DATETIME,created_at DATETIME,updated_at DATETIME,deleted_at DATETIME NULL)",
-		"CREATE TEMPORARY TABLE instance.instance_events(id BIGINT PRIMARY KEY,instance_id BIGINT,event_type VARCHAR(32),status INT,created_at DATETIME,updated_at DATETIME)",
-		"CREATE TEMPORARY TABLE instance.instance_renewals(instance_id BIGINT,customer_id BIGINT,ownership_version BIGINT,host_id VARCHAR(64),state VARCHAR(32),base_expiry DATETIME,updated_at DATETIME)",
+		"CREATE TEMPORARY TABLE instance.instance_events(id BIGINT PRIMARY KEY,instance_id BIGINT,event_type VARCHAR(32),status INT,created_at DATETIME,updated_at DATETIME,error_msg TEXT)",
+		"CREATE TEMPORARY TABLE instance.instance_renewals(instance_id BIGINT,customer_id BIGINT,ownership_version BIGINT,host_id VARCHAR(64),state VARCHAR(32),base_expiry DATETIME,updated_at DATETIME,last_error VARCHAR(255))",
 		"CREATE TEMPORARY TABLE system.todo_audits(id BIGINT PRIMARY KEY,request_id VARCHAR(64) UNIQUE,kind VARCHAR(32),source VARCHAR(32),object_id BIGINT,action VARCHAR(32),admin_id BIGINT,operator_ip VARCHAR(64),notes TEXT,evidence TEXT,created_at DATETIME)",
 		"CREATE TEMPORARY TABLE system.todo_event_resolutions(event_id BIGINT PRIMARY KEY,instance_id BIGINT,request_id VARCHAR(64) UNIQUE,admin_id BIGINT,reason TEXT,evidence TEXT,facts JSON,created_at DATETIME)",
 	} {
@@ -74,7 +74,7 @@ func TestSixManualActionsMySQL(t *testing.T) {
 			if err := tx.Exec("INSERT INTO instance.instances VALUES(?,7,8,1,9,'remote',5,?,NULL,?,?,NULL)", id, updated, updated, updated).Error; err != nil {
 				t.Fatal(err)
 			}
-			if err := tx.Exec("INSERT INTO instance.instance_events VALUES(?,?,?,3,?,?)", event, id, action, updated, updated).Error; err != nil {
+			if err := tx.Exec("INSERT INTO instance.instance_events(id,instance_id,event_type,status,created_at,updated_at) VALUES(?,?,?,3,?,?)", event, id, action, updated, updated).Error; err != nil {
 				t.Fatal(err)
 			}
 			reader.facts = &instance.TodoFacts{CustomerID: 7, OwnershipVersion: 1, SupplierID: 9, RemoteID: "remote", Status: 3, PowerStatus: "running", ExpiresAt: &expires, QueriedAt: time.Now().UTC()}
@@ -114,7 +114,7 @@ func TestSixManualActionsMySQL(t *testing.T) {
 				if code := call("resolve", requestID); code != 409 {
 					t.Fatal("renew without completed business record accepted", code)
 				}
-				if err := tx.Exec("INSERT INTO instance.instance_renewals VALUES(?,7,1,'remote','completed',?,?)", id, updated, updated.Add(time.Hour)).Error; err != nil {
+				if err := tx.Exec("INSERT INTO instance.instance_renewals(instance_id,customer_id,ownership_version,host_id,state,base_expiry,updated_at) VALUES(?,7,1,'remote','completed',?,?)", id, updated, updated.Add(time.Hour)).Error; err != nil {
 					t.Fatal(err)
 				}
 			}

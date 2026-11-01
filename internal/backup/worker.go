@@ -179,6 +179,11 @@ func (s *Service) backup(ctx context.Context, j *Job) error {
 		if e = s.upload(ctx, c, j); e != nil {
 			return e
 		}
+		// Persist the uploaded marker before pruning: the retention query reads
+		// this table, and an unsaved current job would keep one extra object.
+		if e = s.db.Save(j).Error; e != nil {
+			return errors.New("保存上传记录失败")
+		}
 		if e = s.pruneOSS(ctx, c); e != nil {
 			j.Warning = "备份上传成功，但保留清理失败；下次备份会重试"
 		}

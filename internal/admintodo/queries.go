@@ -15,8 +15,12 @@ import (
 
 var ErrQuery = errors.New("待办查询参数无效")
 
+// instance.instances.expires_at is stored in the database session zone
+// (Asia/Shanghai on the production host). Computing the cutoff in UTC shifted
+// the window by the UTC offset: instances expiring 64-72 hours out disappeared
+// while services that had expired up to 8 hours earlier were still counted.
 func expiryCutoff(now time.Time) time.Time {
-	return now.UTC().Add(72 * time.Hour)
+	return now.In(time.Local).Add(72 * time.Hour)
 }
 
 // Entry exposes only safe summary fields. Attachments and business operations
@@ -33,6 +37,7 @@ type Entry struct {
 	Title                  string               `json:"title"`
 	Number                 string               `json:"number"`
 	Status                 string               `json:"status"`
+	Reason                 string               `json:"reason,omitempty"`
 	RefundableAmount       *string              `json:"refundableAmount,omitempty" gorm:"-"`
 	Amount                 string               `json:"amount"`
 	OrderID                string               `json:"orderId"`
@@ -86,7 +91,7 @@ func projection(kind string) (string, error) {
 	case "provisioning", "expiring":
 		where := provisioningPredicate
 		if kind == "expiring" {
-			where = `i.status IN (1,2,3,4) AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND i.expires_at>UTC_TIMESTAMP() AND i.expires_at<=DATE_ADD(UTC_DATE(), INTERVAL 8 DAY)-INTERVAL 1 SECOND`
+			where = `i.status IN (1,2,3,4) AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.billingCycle')),'') NOT IN ('free','onetime') AND i.expires_at>NOW() AND i.expires_at<=DATE_ADD(UTC_DATE(), INTERVAL 8 DAY)-INTERVAL 1 SECOND`
 		}
 		return `SELECT CAST(i.id AS CHAR) id,'instance' source,CAST(i.customer_id AS CHAR) customer_id,i.product_name title,i.instance_no number,CAST(i.status AS CHAR) status,'' amount,CAST(i.order_id AS CHAR) order_id,CAST(i.id AS CHAR) instance_id,i.created_at,i.updated_at FROM instance.instances i WHERE i.deleted_at IS NULL AND ` + where, nil
 	case "manual-products":
@@ -126,7 +131,7 @@ func query(db *gorm.DB, kind string, f Filter) (*gorm.DB, error) {
 		case "manual-products":
 			sql = strings.Replace(sql, "AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=e.id)", "", 1)
 		case "expiring":
-			sql = strings.Replace(sql, "i.expires_at>UTC_TIMESTAMP() AND ", "", 1)
+			sql = strings.Replace(sql, "i.expires_at>NOW() AND ", "", 1)
 		default:
 			return nil, ErrQuery
 		}

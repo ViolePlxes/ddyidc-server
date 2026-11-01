@@ -17,7 +17,7 @@ func TestProvisioningQueueMySQL(t *testing.T) {
 	defer tx.Rollback()
 	for _, sql := range []string{
 		"CREATE TEMPORARY TABLE instance.instances(id BIGINT PRIMARY KEY,customer_id BIGINT,order_id BIGINT,order_item_id BIGINT,product_name VARCHAR(80),instance_no VARCHAR(80),status INT,power_status VARCHAR(80),activated_at DATETIME NULL,created_at DATETIME,updated_at DATETIME,deleted_at DATETIME NULL)",
-		"CREATE TEMPORARY TABLE instance.instance_events(instance_id BIGINT,from_status INT NULL,to_status INT NULL,status INT)",
+		"CREATE TEMPORARY TABLE instance.instance_events(instance_id BIGINT,from_status INT NULL,to_status INT NULL,status INT,error_msg TEXT,created_at DATETIME(3))",
 		"CREATE TEMPORARY TABLE `order`.orders(id BIGINT PRIMARY KEY,status INT)",
 		"CREATE TABLE IF NOT EXISTS `order`.order_items(id BIGINT PRIMARY KEY,order_id BIGINT,delivery_status INT)",
 		"CREATE TEMPORARY TABLE customer.customers(id BIGINT PRIMARY KEY,username VARCHAR(80))",
@@ -79,7 +79,7 @@ func TestProvisioningQueueMySQL(t *testing.T) {
 			t.Fatal(err)
 		}
 		if tc.eventStatus != 0 {
-			if err := tx.Exec("INSERT INTO instance.instance_events VALUES(?,?,?,?)", id, tc.from, tc.to, tc.eventStatus).Error; err != nil {
+			if err := tx.Exec("INSERT INTO instance.instance_events(instance_id,from_status,to_status,status) VALUES(?,?,?,?)", id, tc.from, tc.to, tc.eventStatus).Error; err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -137,7 +137,7 @@ func TestProvisioningQueueMySQL(t *testing.T) {
 	}
 	// Same row disappears on successful delivery; reverting the transient status
 	// cannot bring it back after evidence of running has been recorded.
-	if err := tx.Exec("INSERT INTO instance.instance_events VALUES(918000001,2,3,2)").Error; err != nil {
+	if err := tx.Exec("INSERT INTO instance.instance_events(instance_id,from_status,to_status,status) VALUES(918000001,2,3,2)").Error; err != nil {
 		t.Fatal(err)
 	}
 	next, err := query(tx.WithContext(context.Background()), "provisioning", Filter{ID: "918000001"})
