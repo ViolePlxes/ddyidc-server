@@ -48,11 +48,16 @@ type Service struct {
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
 	db        *gorm.DB
+	secretKey []byte
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
 	return &Service{repo: repository, providers: providers, quoteReads: &renewalQuoteReads{}}
 }
+
+// SetSecretKey enables encrypted local caching of supplier login details so the
+// credential view keeps working through a transient supplier read failure.
+func (s *Service) SetSecretKey(key []byte) { s.secretKey = append([]byte(nil), key...) }
 
 func (s *Service) SetRemoteConsole(registry *remoteconsole.Registry) { s.remote = registry }
 
@@ -133,6 +138,7 @@ type DetailView struct {
 	ProductID          string                         `json:"productId"`
 	ProductName        string                         `json:"productName"`
 	ModuleType         string                         `json:"moduleType"`
+	OwnershipVersion   string                         `json:"ownershipVersion"`
 	UpstreamInstanceID string                         `json:"upstreamInstanceId,omitempty"`
 	Hostname           string                         `json:"hostname,omitempty"`
 	PrimaryIP          string                         `json:"primaryIp,omitempty"`
@@ -336,6 +342,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
+		OwnershipVersion: strconv.FormatInt(host.OwnershipVersion, 10),
 		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
 		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
 		Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
@@ -509,6 +516,12 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		updates["status"] = status
 		if result.PowerStatus != "" {
 			updates["power_status"] = result.PowerStatus
+		}
+		// The supplier is authoritative for the service period: a renewal that
+		// was paid there but lost its local confirmation must still move the
+		// expiry, otherwise the local expiry worker would suspend a live host.
+		if detail.ExpiresAt != nil {
+			updates["expires_at"] = *detail.ExpiresAt
 		}
 	}
 	if s.db != nil {

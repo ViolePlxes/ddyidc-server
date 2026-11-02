@@ -660,6 +660,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 		panic("payment channel initialization failed: " + err.Error())
 	}
 	instanceSvc := instanceservice.NewService(repositories.Instance, upstreamservice.Default)
+	instanceSvc.SetSecretKey(snapshotKey)
 	upstreamservice.Default.SetSupplierSnapshotWorker(instanceSvc)
 	*cronStarts = append(*cronStarts, upstreamservice.Default.StartSupplierSnapshotScheduler)
 	instanceSvc.SetManagement(db.G)
