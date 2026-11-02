@@ -337,6 +337,7 @@ func (s *Service) syncAdminItemLocked(ctx context.Context, t AdminSyncTask, item
 		if e != nil {
 			return e
 		}
+		s.cacheSupplierCredentials(fields, detail)
 		if e := applySupplierReadSnapshot(&current, detail, fields, options, quoteErr, now); e != nil {
 			return e
 		}

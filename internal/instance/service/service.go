@@ -48,11 +48,16 @@ type Service struct {
 	providers ProviderResolver
 	remote    *remoteconsole.Registry
 	db        *gorm.DB
+	secretKey []byte
 }
 
 func NewService(repository repo.Repository, providers ProviderResolver) *Service {
 	return &Service{repo: repository, providers: providers, quoteReads: &renewalQuoteReads{}}
 }
+
+// SetSecretKey enables encrypted local caching of supplier login details so the
+// credential view keeps working through a transient supplier read failure.
+func (s *Service) SetSecretKey(key []byte) { s.secretKey = append([]byte(nil), key...) }
 
 func (s *Service) SetRemoteConsole(registry *remoteconsole.Registry) { s.remote = registry }
 

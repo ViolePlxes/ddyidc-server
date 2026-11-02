@@ -303,12 +303,17 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 			detailID = detail.ID
 		}
 		log.Printf("CREDENTIALS detail failed instance=%d upstream=%d detail_id=%q err=%v", id, upstreamID, detailID, e)
+		if cached, cacheErr := s.cachedCredentials(h); cacheErr == nil {
+			log.Printf("CREDENTIALS served cached login info instance=%d", id)
+			return cached, nil
+		}
 		return nil, errors.New("读取登录信息失败")
 	}
 	current, e := s.owned(ctx, customerID, id)
 	if e != nil || current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID {
 		return nil, ErrForbidden
 	}
+	s.persistCachedCredentials(h, detail)
 	actor, operator := actionActor(ctx, customerID)
 	now := time.Now()
 	if e = s.repo.CreateEvent(ctx, &dom.Event{InstanceID: id, EventType: "credentials", OperatorType: actor, OperatorID: &operator, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: `{"viewed":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}); e != nil {
