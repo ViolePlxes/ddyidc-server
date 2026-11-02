@@ -138,6 +138,7 @@ type DetailView struct {
 	ProductID          string                         `json:"productId"`
 	ProductName        string                         `json:"productName"`
 	ModuleType         string                         `json:"moduleType"`
+	OwnershipVersion   string                         `json:"ownershipVersion"`
 	UpstreamInstanceID string                         `json:"upstreamInstanceId,omitempty"`
 	Hostname           string                         `json:"hostname,omitempty"`
 	PrimaryIP          string                         `json:"primaryIp,omitempty"`
@@ -341,6 +342,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		OrderID: strconv.FormatInt(host.OrderID, 10), OrderNo: orderNo,
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
+		OwnershipVersion: strconv.FormatInt(host.OwnershipVersion, 10),
 		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
 		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
 		Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,

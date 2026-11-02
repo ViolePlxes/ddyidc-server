@@ -338,6 +338,17 @@ func (s *Service) syncAdminItemLocked(ctx context.Context, t AdminSyncTask, item
 			return e
 		}
 		s.cacheSupplierCredentials(fields, detail)
+		// Finance refreshes the whole host record on a manual pull. Mirror that:
+		// persist the supplier lifecycle and power state alongside expiry/IP/config
+		// so one click leaves the local row consistent with the supplier.
+		status := statusCode(detail.PowerStatus, current.Status)
+		if lifecycle := unavailableLifecycle(detail, current.UpstreamInstanceID); lifecycle != "" {
+			fields["power_status"] = lifecycle
+			status = statusCode(lifecycle, current.Status)
+		} else if detail.PowerStatus != "" {
+			fields["power_status"] = detail.PowerStatus
+		}
+		fields["status"] = status
 		if e := applySupplierReadSnapshot(&current, detail, fields, options, quoteErr, now); e != nil {
 			return e
 		}
