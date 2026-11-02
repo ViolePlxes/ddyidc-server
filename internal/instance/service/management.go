@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+	"log"
 	"strconv"
 	"time"
 )
@@ -288,8 +289,20 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 	if warning != "" {
 		return nil, ErrUnsupported
 	}
-	detail, e := p.GetInstanceDetail(parseHostID(h.UpstreamInstanceID))
+	upstreamID := parseHostID(h.UpstreamInstanceID)
+	detail, e := p.GetInstanceDetail(upstreamID)
+	// A single transient supplier read failure must not surface as "cannot read
+	// login info": retry once before reporting.
 	if e != nil || detail == nil || detail.ID != h.UpstreamInstanceID {
+		time.Sleep(300 * time.Millisecond)
+		detail, e = p.GetInstanceDetail(upstreamID)
+	}
+	if e != nil || detail == nil || detail.ID != h.UpstreamInstanceID {
+		detailID := ""
+		if detail != nil {
+			detailID = detail.ID
+		}
+		log.Printf("CREDENTIALS detail failed instance=%d upstream=%d detail_id=%q err=%v", id, upstreamID, detailID, e)
 		return nil, errors.New("读取登录信息失败")
 	}
 	current, e := s.owned(ctx, customerID, id)
