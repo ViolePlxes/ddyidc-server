@@ -32,7 +32,8 @@ func validateReleaseTree(root string, artifact bool) error {
 		}
 		if artifact {
 			allowed := map[string]bool{".html": true, ".js": true, ".css": true, ".json": true, ".svg": true, ".png": true, ".jpg": true, ".jpeg": true, ".webp": true, ".ico": true, ".woff": true, ".woff2": true, ".ttf": true, ".txt": true, ".gif": true}
-			if !allowed[strings.ToLower(filepath.Ext(name))] {
+			marketingVideo := regexp.MustCompile(`^assets/(hero-reference|exp-main|exp-[1-6]|platform-preview|rem-solution-video)-[A-Za-z0-9_-]{8}\.mp4$`).MatchString(filepath.ToSlash(relative))
+			if !allowed[strings.ToLower(filepath.Ext(name))] && !marketingVideo {
 				return fmt.Errorf("unexpected public release file: %s", relative)
 			}
 			portalManifest := filepath.ToSlash(relative) == "portal/themes.json" || filepath.ToSlash(relative) == "portal/cloudflare-reference.json"
@@ -62,8 +63,12 @@ func validateReleaseTree(root string, artifact bool) error {
 		}
 		return nil
 	})
-	if err != nil { return err }
-	if artifact { return validatePortalReleaseAssets(root) }
+	if err != nil {
+		return err
+	}
+	if artifact {
+		return validatePortalReleaseAssets(root)
+	}
 	return nil
 }
 

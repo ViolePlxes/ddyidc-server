@@ -20,9 +20,10 @@ var errNoCachedCredentials = errors.New("没有缓存的登录信息")
 const credentialsSnapshotKey = "credentialsCiphertext"
 
 type cachedCredentialPayload struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Port     string `json:"port"`
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	Port          string `json:"port"`
+	PortIsDefault bool   `json:"portIsDefault,omitempty"`
 }
 
 func (s *Service) cacheSupplierCredentials(fields map[string]any, detail *contracts.InstanceDetail) {
@@ -40,7 +41,7 @@ func (s *Service) cacheSupplierCredentials(fields map[string]any, detail *contra
 	if json.Unmarshal([]byte(raw), &snapshot) != nil || snapshot == nil {
 		return
 	}
-	payload, err := json.Marshal(cachedCredentialPayload{Username: detail.Username, Password: detail.Password, Port: detail.Port})
+	payload, err := json.Marshal(cachedCredentialPayload{Username: detail.Username, Password: detail.Password, Port: detail.Port, PortIsDefault: detail.PortIsDefault})
 	if err != nil {
 		return
 	}
@@ -84,7 +85,7 @@ func (s *Service) cachedCredentials(h *dom.Host) (*Credentials, error) {
 	if json.Unmarshal([]byte(plain), &payload) != nil {
 		return nil, errNoCachedCredentials
 	}
-	return &Credentials{Username: payload.Username, Password: payload.Password, Port: payload.Port}, nil
+	return &Credentials{Username: payload.Username, Password: payload.Password, Port: payload.Port, PortIsDefault: payload.PortIsDefault}, nil
 }
 
 // persistCachedCredentials keeps the encrypted copy in step with the supplier
@@ -102,6 +103,6 @@ func (s *Service) persistCachedCredentials(h *dom.Host, detail *contracts.Instan
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.db.WithContext(ctx).Model(&dom.Host{}).
-		Where("id=? AND ownership_version=? AND upstream_instance_id=?", h.ID, h.OwnershipVersion, h.UpstreamInstanceID).
+		Where("id=? AND ownership_version=? AND upstream_instance_id=? AND config_snapshot=?", h.ID, h.OwnershipVersion, h.UpstreamInstanceID, h.ConfigSnapshot).
 		Update("config_snapshot", updated).Error
 }

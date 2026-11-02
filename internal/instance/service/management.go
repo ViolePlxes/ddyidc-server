@@ -294,7 +294,11 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 	// A single transient supplier read failure must not surface as "cannot read
 	// login info": retry once before reporting.
 	if e != nil || detail == nil || detail.ID != h.UpstreamInstanceID {
-		time.Sleep(300 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+		}
 		detail, e = p.GetInstanceDetail(upstreamID)
 	}
 	if e != nil || detail == nil || detail.ID != h.UpstreamInstanceID {
@@ -305,19 +309,34 @@ func (s *Service) Credentials(ctx context.Context, customerID, id int64) (*Crede
 		log.Printf("CREDENTIALS detail failed instance=%d upstream=%d detail_id=%q err=%v", id, upstreamID, detailID, e)
 		if cached, cacheErr := s.cachedCredentials(h); cacheErr == nil {
 			log.Printf("CREDENTIALS served cached login info instance=%d", id)
-			return cached, nil
+			return s.finishCredentialRead(ctx, customerID, h, cached)
 		}
 		return nil, errors.New("读取登录信息失败")
 	}
-	current, e := s.owned(ctx, customerID, id)
-	if e != nil || current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID {
+	s.persistCachedCredentials(h, detail)
+	return s.finishCredentialRead(ctx, customerID, h, &Credentials{Username: detail.Username, Password: detail.Password, Port: detail.Port, PortIsDefault: detail.PortIsDefault})
+}
+
+// Live reads and cache fallback share the ownership recheck and mandatory audit.
+func (s *Service) finishCredentialRead(ctx context.Context, customerID int64, h *dom.Host, result *Credentials) (*Credentials, error) {
+	current, e := s.owned(ctx, customerID, h.ID)
+	if e != nil || current.Status == 6 || current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || !sameCredentialProvider(current, h) {
 		return nil, ErrForbidden
 	}
-	s.persistCachedCredentials(h, detail)
-	actor, operator := actionActor(ctx, customerID)
-	now := time.Now()
-	if e = s.repo.CreateEvent(ctx, &dom.Event{InstanceID: id, EventType: "credentials", OperatorType: actor, OperatorID: &operator, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: `{"viewed":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}); e != nil {
+	if e := s.refundMutationAllowed(ctx, s.db, h.ID); e != nil {
 		return nil, e
 	}
-	return &Credentials{Username: detail.Username, Password: detail.Password, Port: detail.Port, PortIsDefault: detail.PortIsDefault}, nil
+	actor, operator := actionActor(ctx, customerID)
+	now := time.Now()
+	if e = s.repo.CreateEvent(ctx, &dom.Event{InstanceID: h.ID, EventType: "credentials", OperatorType: actor, OperatorID: &operator, Status: 2, UpstreamRequest: `{}`, UpstreamResponse: `{"viewed":true}`, CreatedAt: now, UpdatedAt: now, ProcessedAt: &now}); e != nil {
+		return nil, e
+	}
+	return result, nil
+}
+func sameCredentialProvider(a, b *dom.Host) bool {
+	if a.UpstreamProviderID == nil || b.UpstreamProviderID == nil {
+		return a.UpstreamProviderID == b.UpstreamProviderID
+	}
+	return *a.UpstreamProviderID == *b.UpstreamProviderID
+
 }

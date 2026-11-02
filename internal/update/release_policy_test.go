@@ -85,3 +85,22 @@ func TestBrowsersCanLoadBothAssetGenerationsAfterRollback(t *testing.T) {
 		}
 	}
 }
+
+func TestOnlyNamedMarketingVideoAssetsAllowed(t *testing.T) {
+	for _, name := range []string{"hero-reference-ABcd1234.mp4", "exp-6-ABcd1234.mp4", "customer-recording-ABcd1234.mp4", "hero-reference.mp4"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "assets"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "assets", name), []byte("public-video"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			err := validateReleaseTree(root, true)
+			want := name == "hero-reference-ABcd1234.mp4" || name == "exp-6-ABcd1234.mp4"
+			if (err == nil) != want {
+				t.Fatalf("allowed=%v err=%v", want, err)
+			}
+		})
+	}
+}
