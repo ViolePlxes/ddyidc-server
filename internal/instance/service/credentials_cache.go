@@ -103,6 +103,6 @@ func (s *Service) persistCachedCredentials(h *dom.Host, detail *contracts.Instan
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = s.db.WithContext(ctx).Model(&dom.Host{}).
-		Where("id=? AND ownership_version=? AND upstream_instance_id=? AND config_snapshot=?", h.ID, h.OwnershipVersion, h.UpstreamInstanceID, h.ConfigSnapshot).
+		Where("id=? AND ownership_version=? AND upstream_instance_id=? AND config_snapshot=CAST(? AS JSON)", h.ID, h.OwnershipVersion, h.UpstreamInstanceID, h.ConfigSnapshot).
 		Update("config_snapshot", updated).Error
 }

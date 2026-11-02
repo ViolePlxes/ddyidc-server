@@ -296,7 +296,7 @@ func TestAdminListMySQL(t *testing.T) {
 		t.Fatal("mock sync", e)
 	}
 	var synced dom.Host
-	if e = tx.Where("id=99004100").Take(&synced).Error; e != nil || calls != 1 || synced.Status != 3 || synced.Remark != value || synced.CustomerID != 99004001 || synced.PrimaryIP != "203.0.113.8" || strings.Contains(synced.ConfigSnapshot, "REMOTE_PRIVATE") {
+	if e = tx.Where("id=99004100").Take(&synced).Error; e != nil || calls != 1 || synced.Status != 6 || synced.PowerStatus != "deleted" || synced.Remark != value || synced.CustomerID != 99004001 || synced.PrimaryIP != "203.0.113.8" || strings.Contains(synced.ConfigSnapshot, "REMOTE_PRIVATE") {
 		t.Fatal("whitelist or ownership", e, synced.Status)
 	}
 	if e = tx.Table("instance.admin_instance_audits").Where("task_id=?", task.ID).Take(&audit).Error; e != nil || !strings.Contains(audit.AfterValue, "203.0.113.8") || strings.Contains(audit.BeforeValue, "203.0.113.8") || strings.Contains(audit.AfterValue, "PRIVATE") {

@@ -547,4 +547,28 @@ func TestEditUpstreamProductMySQL(t *testing.T) {
 		}
 	})
 
+	// Last case uses production JSON storage; earlier fixtures retain their historical string schema.
+	if e := db.Exec("ALTER TABLE instance.instances MODIFY config_snapshot JSON").Error; e != nil {
+		t.Fatal(e)
+	}
+	run("credential cache preserves concurrent JSON snapshot edits", func(t *testing.T, f *editProductFixture) {
+		// AutoMigrate's string column does not reproduce production JSON equality.
+		f.s.SetSecretKey([]byte(strings.Repeat("x", 32)))
+		h := f.load(t)
+		detail := &contracts.InstanceDetail{Username: "qa-root", Password: "synthetic-password", Port: "22", PortIsDefault: true}
+		f.s.persistCachedCredentials(&h, detail)
+		cached := f.load(t)
+		if _, e := f.s.cachedCredentials(&cached); e != nil {
+			t.Fatal("JSON snapshot cache not persisted", e)
+		}
+		if e := f.db.Exec("UPDATE instance.instances SET config_snapshot=JSON_SET(config_snapshot,'$.concurrentEdit',true) WHERE id=?", h.ID).Error; e != nil {
+			t.Fatal(e)
+		}
+		f.s.persistCachedCredentials(&h, detail)
+		current := f.load(t)
+		if !strings.Contains(current.ConfigSnapshot, "concurrentEdit") {
+			t.Fatal("cache overwrote concurrent edit")
+		}
+	})
+
 }

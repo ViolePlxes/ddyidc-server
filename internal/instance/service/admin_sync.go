@@ -395,7 +395,7 @@ func adminSyncAudit(h dom.Host) map[string]any {
 			config = append(config, c)
 		}
 	}
-	return map[string]any{"primaryIp": h.PrimaryIP, "expiresAt": h.ExpiresAt, "operatingSystem": h.OperatingSystem, "ips": ips, "config": config, "lastSyncedAt": h.LastSyncedAt}
+	return map[string]any{"status": h.Status, "powerStatus": h.PowerStatus, "primaryIp": h.PrimaryIP, "expiresAt": h.ExpiresAt, "operatingSystem": h.OperatingSystem, "ips": ips, "config": config, "lastSyncedAt": h.LastSyncedAt}
 }
 func appendAdminAudit(tx *gorm.DB, admin int64, ip string, id, customer, task int64, action string, before, after any) error {
 	b, _ := json.Marshal(before)
