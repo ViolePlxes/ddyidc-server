@@ -51,6 +51,16 @@ func (s *Service) publicDocument(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "/"
 	}
+	if strings.HasSuffix(path, ".html") {
+		var aliases map[string]string
+		if data, err := os.ReadFile(filepath.Join(s.dist, "portal/routes.json")); err == nil && json.Unmarshal(data, &aliases) == nil {
+			if target := aliases[path]; target != "" && pagePath.MatchString(target) && !strings.HasPrefix(target, "//") {
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+				return
+			}
+		}
+	}
+
 	if !pagePath.MatchString(path) && path != "/robots.txt" && path != "/sitemap.xml" && path != "/llms.txt" {
 		http.NotFound(w, r)
 		return
@@ -126,7 +136,30 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		}
 		return claims
 	}
+	registerPortalRoutes(server, s, authorize)
+}
+
+// Production always passes the authenticated administrator guard above.
+func registerPortalRoutes(server *rest.Server, s *Service, authorize func(http.ResponseWriter, *http.Request) *auth.Claims) {
+	server.AddRoute(rest.Route{Method: "POST", Path: "/admin/v1/portal/formal-draft", Handler: func(w http.ResponseWriter, r *http.Request) {
+		if authorize(w, r) == nil {
+			return
+		}
+		var input struct {
+			Document Document `json:"document"`
+		}
+		if !decode(w, r, &input) {
+			return
+		}
+		document, err := FormalDraft(input.Document)
+		if err != nil {
+			reply(w, 400, nil, err.Error())
+			return
+		}
+		reply(w, 200, document, "")
+	}})
 	server.AddRoute(rest.Route{Method: "GET", Path: "/api/v1/portal/document", Handler: s.publicDocument})
+	server.AddRoute(rest.Route{Method: "GET", Path: "/api/v1/portal/content", Handler: s.publicContent})
 	for _, path := range []string{"site", "revision", "pages"} {
 		scope := path
 		server.AddRoute(rest.Route{Method: "GET", Path: "/api/v1/portal/" + scope, Handler: func(w http.ResponseWriter, r *http.Request) {
@@ -135,14 +168,15 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 				reply(w, 503, nil, "公开内容暂时不可用")
 				return
 			}
+			published := publicContent(snap)
 			switch scope {
 			case "site":
-				reply(w, 200, map[string]any{"site": snap.Document.Site, "revision": snap.Document.Revision}, "")
+				reply(w, 200, map[string]any{"site": published.Site, "revision": published.Revision}, "")
 			case "revision":
 				reply(w, 200, map[string]any{"revision": snap.Document.Revision, "generation": snap.Fingerprint}, "")
 			case "pages":
 				out := []Page{}
-				for _, p := range pagesFor(snap) {
+				for _, p := range published.Pages {
 					out = append(out, p)
 				}
 				reply(w, 200, out, "")
