@@ -1,0 +1,1574 @@
+{
+  "pages": [
+    {
+      "id": "official-company",
+      "path": "/company",
+      "title": "企业信息",
+      "kind": "page",
+      "layout": "overview",
+      "enabled": true,
+      "seo": {
+        "title": "企业信息",
+        "description": "多多云面向网站、应用与开发环境，提供云资源选配及在线服务管理入口。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-company",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "围绕业务需求，连接云资源与服务",
+          "text": "多多云通过产品目录和统一控制台，连接资源选配、实例管理、订单记录与服务支持。用户可按业务需要查看产品配置、计费周期及可用资源，并在账户中管理已购买服务。",
+          "items": [
+            {
+              "id": "official-company-row-0",
+              "title": "按需选择资源",
+              "text": "查看产品配置与计费方式，按实际业务需求选择适合的资源。",
+              "href": "/products",
+              "label": "浏览云产品"
+            },
+            {
+              "id": "official-company-row-1",
+              "title": "集中管理服务",
+              "text": "在用户中心查看实例、订单、账户记录与服务进度。",
+              "href": "/console",
+              "label": "进入控制台"
+            },
+            {
+              "id": "official-company-row-2",
+              "title": "在线获取支持",
+              "text": "登录后提交工单，说明问题及相关订单，持续查看回复与处理进展。",
+              "href": "/console/tickets/create",
+              "label": "提交工单"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-about",
+      "path": "/about",
+      "title": "关于多多云",
+      "kind": "page",
+      "layout": "overview",
+      "enabled": true,
+      "seo": {
+        "title": "关于多多云",
+        "description": "了解多多云的平台服务与使用方式。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-about",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "让云资源选择与管理更清晰",
+          "text": "从产品选配到日常服务管理，多多云提供统一的线上入口。产品规格、可选周期、销售状态与费用，以产品配置及订单确认页面为准。",
+          "items": [
+            {
+              "id": "official-about-row-0",
+              "title": "产品与服务",
+              "text": "了解计算、域名和内容分发的产品入口。",
+              "href": "/products",
+              "label": "了解详情"
+            },
+            {
+              "id": "official-about-row-1",
+              "title": "账户与记录",
+              "text": "集中查看已购服务及订单信息。",
+              "href": "/console/orders",
+              "label": "了解详情"
+            },
+            {
+              "id": "official-about-row-2",
+              "title": "服务沟通",
+              "text": "通过工单提交需求、补充资料并跟进进度。",
+              "href": "/help",
+              "label": "了解详情"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-contact",
+      "path": "/contact",
+      "title": "联系我们",
+      "kind": "page",
+      "layout": "contact",
+      "enabled": true,
+      "seo": {
+        "title": "联系我们",
+        "description": "产品咨询、账户使用和订单问题，请通过工单联系多多云。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-contact",
+          "type": "contact_cards",
+          "enabled": true,
+          "sort": 0,
+          "title": "按问题类型获取支持",
+          "text": "登录账户后提交工单。请提供问题描述、发生时间、相关订单或实例编号及必要截图；请勿在公开描述中提交账户密码、验证码或密钥。",
+          "items": [
+            {
+              "id": "official-contact-row-0",
+              "title": "产品咨询",
+              "text": "说明使用场景、配置需求与计划周期，便于核对可用产品。",
+              "href": "/console/tickets/create",
+              "label": "提交咨询"
+            },
+            {
+              "id": "official-contact-row-1",
+              "title": "订单与账户",
+              "text": "针对支付状态、订单进度及账户使用问题提交工单。",
+              "href": "/console/tickets/create",
+              "label": "提交问题"
+            },
+            {
+              "id": "official-contact-row-2",
+              "title": "使用帮助",
+              "text": "先查阅常用操作指南，再根据需要补充工单信息。",
+              "href": "/help",
+              "label": "查看帮助"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-service-guarantees",
+      "path": "/service-guarantees",
+      "title": "服务支持与保障",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "服务支持与保障",
+        "description": "了解多多云的服务支持渠道与操作边界。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-support",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "服务支持流程",
+          "text": "支持范围以所购产品说明、订单及服务条款为准。涉及费用、到期时间或数据操作时，请先核对账户内的实际记录。",
+          "items": [
+            {
+              "id": "official-support-row-0",
+              "title": "查看记录",
+              "text": "先在控制台确认实例、订单和支付状态。",
+              "href": "/console",
+              "label": "了解详情"
+            },
+            {
+              "id": "official-support-row-1",
+              "title": "提交工单",
+              "text": "描述问题及相关信息，保留可复核的时间与截图。",
+              "href": "/console/tickets/create",
+              "label": "了解详情"
+            },
+            {
+              "id": "official-support-row-2",
+              "title": "跟进处理",
+              "text": "在我的工单中查看回复并按需补充信息。",
+              "href": "/console/tickets",
+              "label": "了解详情"
+            }
+          ],
+          "href": "",
+          "label": ""
+        },
+        {
+          "id": "official-support-faq",
+          "type": "faq",
+          "enabled": true,
+          "sort": 0,
+          "title": "常见服务问题",
+          "text": "",
+          "items": [
+            {
+              "id": "official-support-faq-row-0",
+              "title": "支付后暂未看到最终状态怎么办？",
+              "text": "请查看订单与实例当前进度，不要反复付款或重复提交相同操作；如需核实，请通过工单提供订单编号。",
+              "href": "",
+              "label": ""
+            },
+            {
+              "id": "official-support-faq-row-1",
+              "title": "服务范围和退款规则在哪里查看？",
+              "text": "请查阅具体产品说明、购买确认信息及服务条款。不同产品的适用条件可能不同。",
+              "href": "",
+              "label": ""
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-solutions",
+      "path": "/solutions",
+      "title": "解决方案",
+      "kind": "page",
+      "layout": "solutions",
+      "enabled": true,
+      "seo": {
+        "title": "解决方案",
+        "description": "围绕网站、应用和内容交付场景，选择相应资源与管理方式。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-solutions",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "从实际业务出发，组合云资源",
+          "text": "先明确计算、网络、访问量及管理需求，再核对具体产品配置。方案介绍不替代产品页面的技术参数或服务范围。",
+          "items": [
+            {
+              "id": "official-solutions-row-0",
+              "title": "网站与应用运行",
+              "text": "按应用需求选择云服务器，结合域名管理建立访问入口。",
+              "href": "/cloud",
+              "label": "查看计算资源"
+            },
+            {
+              "id": "official-solutions-row-1",
+              "title": "内容访问与分发",
+              "text": "了解内容分发服务，按业务可用范围查看用量及服务记录。",
+              "href": "/cdn",
+              "label": "了解内容分发"
+            },
+            {
+              "id": "official-solutions-row-2",
+              "title": "开发与测试环境",
+              "text": "根据阶段性需求选择资源配置和周期，集中管理实例与订单。",
+              "href": "/products",
+              "label": "选择云产品"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-referral",
+      "path": "/referral",
+      "title": "推广合作",
+      "kind": "page",
+      "layout": "partners",
+      "enabled": true,
+      "seo": {
+        "title": "推广合作",
+        "description": "通过我的推广管理专属优惠码、推广关系与已确认收益。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-referral",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "在账户内管理推广记录",
+          "text": "登录后进入“我的推广”，查看优惠码、推广记录和收益信息。适用范围、结算状态及可操作事项，以账户页面和平台当前规则为准。",
+          "items": [
+            {
+              "id": "official-referral-row-0",
+              "title": "管理优惠码",
+              "text": "在我的推广中设置或查看专属优惠码。",
+              "href": "/console/promo",
+              "label": "我的推广"
+            },
+            {
+              "id": "official-referral-row-1",
+              "title": "分享服务入口",
+              "text": "在推广页面获取可分享的链接，请以实际展示内容向他人介绍产品。",
+              "href": "/console/promo",
+              "label": "查看推广入口"
+            },
+            {
+              "id": "official-referral-row-2",
+              "title": "查询收益记录",
+              "text": "收益以系统已确认记录为准，请勿将待确认数据视为可用余额。",
+              "href": "/console/promo",
+              "label": "查看收益"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-agency",
+      "path": "/agency",
+      "title": "合作咨询",
+      "kind": "page",
+      "layout": "partners",
+      "enabled": true,
+      "seo": {
+        "title": "合作咨询",
+        "description": "面向有云资源采购与服务合作需求的用户提供咨询入口。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-agency",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "沟通需求，再确定合作方式",
+          "text": "如有批量资源采购、客户服务或业务合作需求，可通过工单说明业务场景、资源需求及期望合作方式。是否支持及具体条件，以双方确认的信息为准。",
+          "items": [],
+          "href": "/console/tickets/create",
+          "label": "提交合作咨询"
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-panel",
+      "path": "/panel",
+      "title": "统一控制台",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "统一控制台",
+        "description": "集中管理实例、订单、账户与服务工单。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-panel",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "一个入口，查看服务全流程",
+          "text": "登录用户中心，按功能菜单查看实例状态、续费入口、订单与账户记录。可操作项受实例状态、账户权限和安全校验限制。",
+          "items": [
+            {
+              "id": "official-panel-row-0",
+              "title": "实例管理",
+              "text": "查看产品状态和详情，通过可用操作入口管理服务。",
+              "href": "/console/instances",
+              "label": "我的产品"
+            },
+            {
+              "id": "official-panel-row-1",
+              "title": "订单查询",
+              "text": "核对业务订单的支付状态与处理进度。",
+              "href": "/console/orders",
+              "label": "我的订单"
+            },
+            {
+              "id": "official-panel-row-2",
+              "title": "账户安全",
+              "text": "管理账户安全设置，妥善保管登录信息与验证码。",
+              "href": "/console/security",
+              "label": "安全设置"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-campaigns",
+      "path": "/campaigns",
+      "title": "活动中心",
+      "kind": "page",
+      "layout": "campaign",
+      "enabled": true,
+      "seo": {
+        "title": "活动中心",
+        "description": "查看平台当前可参与的活动及具体规则。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-campaigns",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "以活动页面为准，选择适合的资源",
+          "text": "优惠、资格、库存、有效时间及奖励条件，以当前活动页面与订单确认信息为准。未展示或已结束的活动不构成持续优惠承诺。",
+          "items": [
+            {
+              "id": "official-campaigns-row-0",
+              "title": "云服务器拼团",
+              "text": "了解可参与的拼团活动、成团条件及订单进度。",
+              "href": "/groupbuy",
+              "label": "查看拼团活动"
+            },
+            {
+              "id": "official-campaigns-row-1",
+              "title": "常规产品选配",
+              "text": "按实际配置和计费周期查看当前产品信息。",
+              "href": "/products",
+              "label": "浏览云产品"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-cloud",
+      "path": "/cloud",
+      "title": "云服务器",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "云服务器",
+        "description": "按需选择计算、内存、存储与网络资源。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-cloud",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "云服务器服务说明",
+          "text": "按需选择计算、内存、存储与网络资源。",
+          "items": [
+            {
+              "id": "official-cloud-row-0",
+              "title": "配置选配",
+              "text": "查看当前产品可选规格与计费周期，在订单提交前核对费用。",
+              "href": "/products",
+              "label": "选择产品"
+            },
+            {
+              "id": "official-cloud-row-1",
+              "title": "日常管理",
+              "text": "在我的产品中查看状态、详情及可用操作。",
+              "href": "/console/instances",
+              "label": "管理实例"
+            },
+            {
+              "id": "official-cloud-row-2",
+              "title": "续费与到期",
+              "text": "按实例页面显示的到期时间安排续费，付款后核对订单处理状态。",
+              "href": "/console/instances",
+              "label": "查看到期信息"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-cdn",
+      "path": "/cdn",
+      "title": "内容分发",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "内容分发",
+        "description": "通过控制台查看内容分发服务及用量记录。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-cdn",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "内容分发服务说明",
+          "text": "通过控制台查看内容分发服务及用量记录。",
+          "items": [
+            {
+              "id": "official-cdn-row-0",
+              "title": "查看服务入口",
+              "text": "进入内容分发菜单查看账户可用服务与相关配置。",
+              "href": "/console/cdnsell",
+              "label": "内容分发"
+            },
+            {
+              "id": "official-cdn-row-1",
+              "title": "核对使用情况",
+              "text": "计量与费用以账户页面和服务规则为准，按需求安排资源使用。",
+              "href": "/console/cdnsell",
+              "label": "查看服务"
+            },
+            {
+              "id": "official-cdn-row-2",
+              "title": "获取帮助",
+              "text": "说明访问场景和遇到的问题，通过工单获取支持。",
+              "href": "/console/tickets/create",
+              "label": "提交工单"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-domain",
+      "path": "/domain",
+      "title": "域名服务",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "域名服务",
+        "description": "在用户中心查看域名服务及相关管理入口。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-domain",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "域名服务服务说明",
+          "text": "在用户中心查看域名服务及相关管理入口。",
+          "items": [
+            {
+              "id": "official-domain-row-0",
+              "title": "域名管理",
+              "text": "进入域名菜单查看当前可用功能与账户中的域名信息。",
+              "href": "/console/domains",
+              "label": "域名管理"
+            },
+            {
+              "id": "official-domain-row-1",
+              "title": "核对服务条件",
+              "text": "域名注册、续费和管理能力，以页面实际开放的功能与规则为准。",
+              "href": "/console/domains",
+              "label": "查看功能"
+            },
+            {
+              "id": "official-domain-row-2",
+              "title": "业务咨询",
+              "text": "如需核对域名服务适用范围，请通过工单咨询。",
+              "href": "/console/tickets/create",
+              "label": "提交咨询"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-security",
+      "path": "/security",
+      "title": "账户与操作安全",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "账户与操作安全",
+        "description": "使用安全设置及操作确认保护账户与云资源。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-security",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "账户与操作安全服务说明",
+          "text": "使用安全设置及操作确认保护账户与云资源。",
+          "items": [
+            {
+              "id": "official-security-row-0",
+              "title": "账户安全",
+              "text": "在安全设置中维护登录保护，妥善保存验证信息。",
+              "href": "/console/security",
+              "label": "安全设置"
+            },
+            {
+              "id": "official-security-row-1",
+              "title": "实名信息",
+              "text": "按账户页面要求提交资料，并查看审核状态。",
+              "href": "/console/certification",
+              "label": "实名认证"
+            },
+            {
+              "id": "official-security-row-2",
+              "title": "操作前核对",
+              "text": "涉及系统重装、删除或其他数据变更时，先备份数据并核对目标实例。",
+              "href": "/console/instances",
+              "label": "管理产品"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-icp",
+      "path": "/icp",
+      "title": "备案指引",
+      "kind": "page",
+      "layout": "service",
+      "enabled": true,
+      "seo": {
+        "title": "备案指引",
+        "description": "查询备案信息和官方办理渠道。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-icp",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "以官方要求及接入服务商说明为准",
+          "text": "网站备案的适用条件、材料和办理流程，请核对主管部门及实际接入服务商的最新要求。此页面提供查询指引，不代表平台承诺代办或具备特定备案资质。",
+          "items": [
+            {
+              "id": "official-icp-row-0",
+              "title": "官方查询入口",
+              "text": "通过工业和信息化部备案系统查询相关信息。",
+              "href": "https://beian.miit.gov.cn/",
+              "label": "前往官方查询"
+            },
+            {
+              "id": "official-icp-row-1",
+              "title": "咨询产品适用范围",
+              "text": "如需核对具体产品是否满足您的使用需求，请先提交工单咨询。",
+              "href": "/console/tickets/create",
+              "label": "咨询服务"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-company-environment",
+      "path": "/company-environment",
+      "title": "公司环境",
+      "kind": "page",
+      "layout": "overview",
+      "enabled": false,
+      "seo": {
+        "title": "公司环境",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-honors",
+      "path": "/honors",
+      "title": "荣誉资质",
+      "kind": "page",
+      "layout": "certificates",
+      "enabled": false,
+      "seo": {
+        "title": "荣誉资质",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-licenses",
+      "path": "/licenses",
+      "title": "许可证书",
+      "kind": "page",
+      "layout": "certificates",
+      "enabled": false,
+      "seo": {
+        "title": "许可证书",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-sponsors",
+      "path": "/sponsors",
+      "title": "合作伙伴",
+      "kind": "page",
+      "layout": "overview",
+      "enabled": false,
+      "seo": {
+        "title": "合作伙伴",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-recruit",
+      "path": "/recruit",
+      "title": "人才招聘",
+      "kind": "page",
+      "layout": "careers",
+      "enabled": false,
+      "seo": {
+        "title": "人才招聘",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-aup",
+      "path": "/aup",
+      "title": "可接受使用政策",
+      "kind": "page",
+      "layout": "overview",
+      "enabled": false,
+      "seo": {
+        "title": "可接受使用政策",
+        "description": "",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-news",
+      "path": "/news",
+      "title": "新闻公告",
+      "kind": "page",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "新闻公告",
+        "description": "查看平台已发布的服务通知与公告。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-help",
+      "path": "/help",
+      "title": "帮助中心",
+      "kind": "page",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "帮助中心",
+        "description": "查看产品选配、实例管理、订单与账户的常用操作指南。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-products",
+      "path": "/products",
+      "title": "云产品与服务",
+      "kind": "products",
+      "layout": "catalog",
+      "enabled": true,
+      "seo": {
+        "title": "云产品与服务",
+        "description": "查看当前可选云产品，按业务需求选择配置与计费周期。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-catalog",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "先核对配置，再确认订单",
+          "text": "产品名称、规格、库存与费用读取产品目录。订单提交前，请再次核对资源配置、购买周期和最终应付金额。",
+          "items": [],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-help-choose-products",
+      "path": "/help/choose-products",
+      "title": "如何选配云产品",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何选配云产品",
+        "description": "进入产品目录，查看配置与计费周期，确认适用场景后再提交订单。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-choose-products",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "进入产品目录，查看配置与计费周期，确认适用场景后再提交订单。",
+          "items": [
+            {
+              "id": "official-guide-choose-products-row-0",
+              "title": "选择产品",
+              "text": "进入订购页面，按分类查看可选产品。",
+              "href": "/console/products",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-choose-products-row-1",
+              "title": "核对配置",
+              "text": "根据需求选择可用配置、地域及计费周期；以配置页面实际选项为准。",
+              "href": "/console/products",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-choose-products-row-2",
+              "title": "确认订单",
+              "text": "核对购买周期与应付金额后，再选择可用支付方式。",
+              "href": "/console/orders",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-help-manage-instances",
+      "path": "/help/manage-instances",
+      "title": "如何查看与管理实例",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何查看与管理实例",
+        "description": "通过我的产品查看实例状态、到期时间和可用操作。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-manage-instances",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "通过我的产品查看实例状态、到期时间和可用操作。",
+          "items": [
+            {
+              "id": "official-guide-manage-instances-row-0",
+              "title": "查看产品",
+              "text": "在我的产品中查找对应实例，进入详情核对信息。",
+              "href": "/console/instances",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-manage-instances-row-1",
+              "title": "按状态操作",
+              "text": "只使用页面当前允许的操作。重装或删除前请备份数据并核对实例。",
+              "href": "/console/instances",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-manage-instances-row-2",
+              "title": "处理异常",
+              "text": "状态或订单进度需核实时，通过工单提供相关编号和发生时间。",
+              "href": "/console/tickets/create",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-help-orders-and-payment",
+      "path": "/help/orders-and-payment",
+      "title": "如何核对订单与支付状态",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何核对订单与支付状态",
+        "description": "以账户内的订单和支付记录为准核对交易进度。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-orders-and-payment",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "以账户内的订单和支付记录为准核对交易进度。",
+          "items": [
+            {
+              "id": "official-guide-orders-and-payment-row-0",
+              "title": "查询订单",
+              "text": "进入订单列表，查看目标订单的类型、金额和状态。",
+              "href": "/console/orders",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-orders-and-payment-row-1",
+              "title": "核对支付",
+              "text": "完成付款后返回订单页面确认状态。状态未确认时，请勿重复付款。",
+              "href": "/console/orders",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-orders-and-payment-row-2",
+              "title": "提交核实",
+              "text": "如状态持续异常，通过工单提供订单编号与必要截图，请勿提供支付密码。",
+              "href": "/console/tickets/create",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-help-renew-services",
+      "path": "/help/renew-services",
+      "title": "如何安排产品续费",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何安排产品续费",
+        "description": "按实例页面显示的到期时间与可用续费入口安排续费。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-renew-services",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "按实例页面显示的到期时间与可用续费入口安排续费。",
+          "items": [
+            {
+              "id": "official-guide-renew-services-row-0",
+              "title": "查看到期时间",
+              "text": "在我的产品中核对到期时间和当前状态。",
+              "href": "/console/instances",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-renew-services-row-1",
+              "title": "选择续费周期",
+              "text": "进入续费流程，核对周期、金额及支付方式后确认。",
+              "href": "/console/instances",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-renew-services-row-2",
+              "title": "确认续费结果",
+              "text": "付款后查看订单处理进度和产品到期时间，异常时提交工单核实。",
+              "href": "/console/orders",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-help-account-security",
+      "path": "/help/account-security",
+      "title": "如何保护账户安全",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何保护账户安全",
+        "description": "管理账户安全设置，不向他人提供密码、验证码或密钥。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-account-security",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "管理账户安全设置，不向他人提供密码、验证码或密钥。",
+          "items": [
+            {
+              "id": "official-guide-account-security-row-0",
+              "title": "检查安全设置",
+              "text": "进入安全设置，按页面实际功能维护登录保护。",
+              "href": "/console/security",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-account-security-row-1",
+              "title": "保护验证信息",
+              "text": "验证码仅用于本人发起的操作；不要在工单正文或截图中公开密码和密钥。",
+              "href": "/console/security",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-account-security-row-2",
+              "title": "遇到异常",
+              "text": "如发现异常登录或操作记录，请及时通过工单联系支持。",
+              "href": "/console/tickets/create",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-help-submit-ticket",
+      "path": "/help/submit-ticket",
+      "title": "如何提交服务工单",
+      "kind": "article",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "如何提交服务工单",
+        "description": "提供可核对的问题信息，便于跟进处理。",
+        "keywords": "多多云,云服务器,云资源管理",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-guide-submit-ticket",
+          "type": "steps",
+          "enabled": true,
+          "sort": 0,
+          "title": "操作步骤",
+          "text": "提供可核对的问题信息，便于跟进处理。",
+          "items": [
+            {
+              "id": "official-guide-submit-ticket-row-0",
+              "title": "填写问题",
+              "text": "说明问题现象、发生时间及相关订单或实例编号。",
+              "href": "/console/tickets/create",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-submit-ticket-row-1",
+              "title": "补充必要资料",
+              "text": "可附必要截图并遮挡敏感信息，不提交密码、验证码或密钥。",
+              "href": "/console/tickets/create",
+              "label": "进入功能"
+            },
+            {
+              "id": "official-guide-submit-ticket-row-2",
+              "title": "跟进回复",
+              "text": "在我的工单中查看回复，按需补充信息。",
+              "href": "/console/tickets",
+              "label": "进入功能"
+            }
+          ],
+          "href": "",
+          "label": ""
+        }
+      ],
+      "updatedAt": "",
+      "contentType": "help",
+      "categoryId": "official-guides"
+    },
+    {
+      "id": "official-policy-service",
+      "path": "/terms/service",
+      "title": "用户服务协议",
+      "kind": "page",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "用户服务协议",
+        "description": "多多云用户服务协议",
+        "keywords": "",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-policy-service-0",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "协议说明",
+          "text": "此协议（合同书）适用于河北大齐数据有限公司运营的多多云IDC品牌。任何个人或法人实体，当其订购多多云IDC的产品或服务时，即成为本协议所指的“用户”。\n\n当您购买多多云IDC的产品或服务时，您必须同意本 “服务条款”；已经购买多多云IDC的产品或服务并完成支付的，视为同意本“服务条款”。\n\n多多云IDC保留在任何时间修改本服务条款的权利。本条款的修改，增加或删减在此页更新后立即生效。"
+        },
+        {
+          "id": "official-policy-service-1",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 10,
+          "title": "禁止的内容",
+          "text": "多多云IDC所提供的服务只允许用在合法的范围内，多多云IDC不会为客户使用多多云IDC的产品/服务所产生的行为负责。\n\n多多云IDC所提供的域名、虚拟主机、VPS、独立服务器等所有产品禁止（但不局限于）以下内容：\n\n1. 安装x-ui或vpn代理协议或其他任何网络中转代理服务；\n\n2. 黑客、木马、病毒、代理、网盘、私服、外挂、赌博、六合彩、弓弩枪支、丰胸减肥、诈骗、钓鱼网站;\n\n3. 仿冒品牌类网站、药品销售、保健品销售、医疗机械类网站;\n\n4. 成人色情文学、暴露人体胸或生殖器图片、成人色情电影;\n\n5. 暴力，煽动暴力，暴力威胁，包含骚扰内容和煽动仇恨的言论;\n\n6. 任何违反消费者权益保护法的内容，包括欺骗或不公平交易;\n\n7. 可能危害公众健康安全，危及国家（中、港、澳、美）安全，或干扰执法与调查;\n\n8. 除非用户已经获得作者或法律许可，否则您不能以其他任何方式复制受版权保护的音乐，软件，书籍，或其他；\n\n9. 发送未经接收方许可的电子邮件（垃圾邮件）；\n\n10. 违反中国和国际法律。\n\n11. 任何可能导致多多云IDC遭到网络报复或影响其他用户的内容;\n\n经多多云IDC核实确认，如果用户出现以上行为，我们将有权进行包括但不限于以下处理：要求删除、暂停服务、中止服务、提交给相关执法部门等。"
+        },
+        {
+          "id": "official-policy-service-2",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 20,
+          "title": "网络滥用",
+          "text": "多多云IDC不会允许，纵容或授权任何形式的网络滥用，包括但不限于拒绝服务攻击，网络钓鱼，端口扫描，SYN洪水等。\n\n多多云IDC完全有权决定什么构成滥用网络，对客户是否事先通知，采取适当的行动。\n\n您不能利用多多云IDC的服务执行任何非法的行为，包括但不限于：\n\n1. 任何企图探查，扫描或测试系统或网络的漏洞；\n\n2. 干扰任何用户或服务，或网络的正常，包括但不限于，邮件轰炸，水灾，故意超载系统和广播攻击；\n\n3. 密码爆破/劫持，安全漏洞扫描和端口扫描；\n\n4. 任何可能导致多多云IDC遭到网络报复的行为；\n\n5. 不合理的使用网络，对其他用户造成干扰。\n\n6. 长期占用宽带或者CPU、运行内存超过72小时的将会暂停服务器，首次联系客服解封，如出现第二次将不再解封。"
+        },
+        {
+          "id": "official-policy-service-3",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 30,
+          "title": "售后服务和服务范围",
+          "text": "多多云IDC的所有产品除特别说明都属于无管理型，义务的售后服务和服务范围仅限为：\n\n1. 虚拟主机 / VPS（宿主服务器）的系统、电源、硬件、网络故障处理。\n\n2. 独立服务器的电源、硬件、网络故障处理。\n\n3. 其他的服务，如网站程序修改、VPS或独立服务器系统维护，您需要额外付费购买，欢迎联系我们咨询更多！"
+        },
+        {
+          "id": "official-policy-service-4",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 40,
+          "title": "数据备份",
+          "text": "1. 多多云IDC的虚拟主机产品系列服务器每月会多次自动备份所有用户数据，备份的数据仅供内部使用，不对备份文件的可用性作任何保证。\n\n2. 多多云IDC的VPS云主机采用HDD RAID10或SSD RAID5、SSD RAID10确保性能及数据安全性，但也无法保证100%不出现任何故障。\n\n3. 由于硬件故障或客户自身原因导致的数据丢失，多多云IDC不承担其赔偿责任，您要自行负责自身的数据安全定期进行数据备份工作。"
+        },
+        {
+          "id": "official-policy-service-5",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 50,
+          "title": "退款问题",
+          "text": "1. 虚拟主机系列产品，VPS云主机为自订购之日起24小时内无理由退款，物理服务器或以上配置服务器经测试后购买不支持退款、域名以及其他服务项目不支持退款。\n\n2. 超过退款期及违反“产品使用政策”相关条约的，我们将不进行任何退款。\n\n3. 特价促销产品不支持退款，特价产品包含但不限于活动特价折扣促销，非官网常规折扣产品。\n\n4. 退款仅针对您在多多云IDC购买的同产品服务中的第一个，首次原路退回；第二次继续购买行为，如需退款，将退款至您的多多云IDC会员账户余额。\n\n5. 退款申请一律以服务工单的形式提交到售后部门。书写售后服务工单时，用户需要提供支付时的支付帐号和交易流水号以便工作人员进行核对。\n\n6. 交流过程中，不尊重客服人员，辱骂客服人员的, 将无法获得退款。\n\n7. 用户在遇到问题没有和工作人员进行协调的情况下，在论坛、贴吧等处发表损害多多云IDC名誉的言论，多多云IDC将立即删除主机和用户账户，并不获退款。\n\n8. 用户在已购买并已申请发票的服务器产品将不接受任何理由的退款服务。"
+        },
+        {
+          "id": "official-policy-service-6",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 60,
+          "title": "付款及欠费",
+          "text": "付款：在服务或产品到期前3天系统会自动生成付款账单和发送邮件、SMS短信通知，并在到期后的第1，3天分别发送2封邮件和2条SMS短信通知付款。\n\n欠费：账单最后一天若还未付款，产品或服务将被暂停；逾期3天未支付，产品或服务将被终止并停止任何售后服务。\n\n发票：本司站上所售产品均为税前价格，若需开具发票需要自行负责6%的税点，若采用EMS方式邮寄还需另外自行负责邮寄费用。"
+        },
+        {
+          "id": "official-policy-service-7",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 70,
+          "title": "用户账户",
+          "text": "购买多多云IDC产品或服务之前，用户需要先进行注册，用户注册时需同意并保证：\n\n1. 您所填写的用户资料均是真实准确的，可以保证多多云IDC可以通过您所填写的联系方式与您取得联系，多多云IDC有权利拒绝使用虚假信息注册的用户。\n\n2. 用户对使用其账户及密码进行的一切操作及言论完全的负责，对于因密码泄露所致的损失，由用户自行承担。"
+        },
+        {
+          "id": "official-policy-service-8",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 80,
+          "title": "推介计划",
+          "text": "推介计划为一个自然人对另外一个自然人的推荐，如果发现自己推荐自己的行为，您的推介所得费用将被清空。\n\n支持的产品：除了域名、技术服务外的所有产品均支持推介计划，详情以合作共赢中的推介计划为准。\n\n提现额度：累计金额达到10元后，可随时申请提现到Alipay支付宝、PayPal或者您的银行卡中，但您可能需要支付最低额度的支付平台交易费。"
+        },
+        {
+          "id": "official-policy-service-9",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 90,
+          "title": "处理办法和免责声明",
+          "text": "1. 如用户违反本服务条款，相关服务将被暂停，我们将终止与您的合作。\n\n2. 若用户违反本服务条款，在采取行动前，我们将尽一切努力联络该账户的拥有者。如果账户拥有者，24小时内不处理或无法联系，产品将有可能被终止。\n\n3. 多多云IDC对产品的在线率不做保证，网页上的资料仅供参考，我们不保证所提供的产品完全安全，不间断，不出现故障。\n\n4. 如遭遇不可抗因素导致的产品服务中断，如自然灾难，硬件故障等，多多云IDC不承担责任，但我们会尽一切的可能保障数据的安全和服务的稳定。\n\n5. 如因用户自身原因导致网站程序、虚拟主机、VPS系统、独立服务器系统、客户中心账户遭到入侵导致的损失，多多云IDC不负责任。\n\n6. 如用户违反本服务条款所造成的任何结果，多多云IDC不承担任何责任。"
+        }
+      ],
+      "updatedAt": ""
+    },
+    {
+      "id": "official-policy-privacy",
+      "path": "/terms/privacy",
+      "title": "隐私政策",
+      "kind": "page",
+      "layout": "document",
+      "enabled": true,
+      "seo": {
+        "title": "隐私政策",
+        "description": "多多云隐私政策",
+        "keywords": "",
+        "image": "",
+        "noIndex": false
+      },
+      "modules": [
+        {
+          "id": "official-policy-privacy-0",
+          "type": "feature_sections",
+          "enabled": true,
+          "sort": 0,
+          "title": "隐私政策",
+          "text": "致力于保护您的隐私。\n\n我们的隐私政策最后更新日期为2022年11月1日。它管辖我们网站的隐私条款。我们的隐私政策中未定义的任何大写术语具有我们的服务条款中规定的含义。\n\n您的隐私对我们非常重要。因此，我们制定了本政策，以便您了解我们如何收集，使用，交流，披露和利用个人信息。我们仅将您的个人信息用于提供和改进本网站。使用本网站即表示您同意按照本政策收集和使用信息。除非本隐私政策另有规定，否则本隐私政策中使用的术语与我们的条款和条件具有相同的含义。下面简单介绍一下我们的隐私政策。\n\n在收集个人信息之前或收集个人信息时，我们将确定收集信息的目的。\n\n我们将仅为了达到我们指定的目的和其他兼容目的而收集和使用个人信息，除非我们获得相关个人的同意或法律要求。\n\n只要有必要，我们将保留个人信息以实现这些目的。\n\n我们将通过合法和公平的方式收集个人信息，并在适当情况下，在相关个人的知情或同意下收集。\n\n个人数据应与其使用目的相关，并且在必要的范围内，应该是准确，完整和最新的。\n\n我们将通过合理的安全保护来保护个人信息，防止丢失或被盗，以及未经授权的访问，披露，复制，使用或修改。\n\n我们将随时向客户提供有关我们有关个人信息管理的政策和做法的信息。\n\n你的隐私\n\n《多多云IDC》 遵循保护您隐私的所有法律要求。我们的隐私政策是一份法律声明，解释了我们如何收集您的信息，我们如何分享您的信息，以及如何限制我们的信息共享。我们以符合本个人隐私政策的方式使用您提供的个人数据。如果您出于特定原因提供个人数据，我们可以将个人数据与其提供的原因相关联。例如，在开发帐户时发送的注册信息可能会用于根据过去的收购向您推荐产品。我们可能会使用您的个人数据来访问本网站上的服务，并监控您对此类服务的使用。多多云IDC 还可以利用您的个人数据和通过网站收集的各种其他个人不可识别信息来帮助我们改进网站的材料和功能，更好地理解我们的用户，并改善我们的服务。您将看到我们的条款资本化的隐私政策。这些术语具有下面定义部分中描述的含义。\n\n定义\n\n“非个人信息”是指您无法识别的个人信息，当您使用网络浏览器访问我们的网站时，我们会自动收集这些信息。它还可能包括您和他人之间共享的公开信息。\n\n“个人身份信息”是非公开信息，可由您个人识别并获取，以便我们在我们的网站内为您提供。个人身份信息可能包括您的姓名，电子邮件地址以及您提供给我们或我们获得的有关您的其他相关信息。\n\n我们收集的信息\n\n通常，您可以控制在使用我们的网站时向我们提供的信息的数量和类型。\n\n作为访客，您可以浏览我们的网站以了解有关我们网站的更多信息。您无需向我们提供任何作为访客的个人身份信息。\n\n收集的计算机信息\n\n当您使用我们的网站时，我们会通过您的手机或网络浏览器与我们网站的互动自动收集某些计算机信息。此类信息通常被视为非个人信息。我们还收集以下内容\n\nCookies\n\n我们的网站使用“Cookies”来识别您访问过的我们网站的区域。Cookie是您的网络浏览器存储在您的计算机或移动设备上的一小段数据。我们使用Cookie来个性化您在我们网站上看到的内容。大多数Web浏览器都可以设置为禁用Cookie。但是，如果您禁用Cookie，则可能无法正确访问我们网站上的功能或根本无法访问。我们从未在Cookies中放置个人身份信息。\n\n自动信息\n\n我们会自动从您的网络浏览器或移动设备接收信息。此信息包括您进入我们网站的网站名称（如果有），以及您离开我们网站时所访问的网站名称。此信息还包括用于访问Internet的计算机/代理服务器的IP地址，Internet网站提供商名称，Web浏览器类型，移动设备类型和计算机操作系统。我们使用所有这些信息来分析用户之间的趋势，以帮助改进我们的网站。\n\n日志数据\n\n与许多网站运营商一样，我们会在您访问我们的网站时收集浏览器发送的信息（“日志数据”）。此日志数据可能包括您的计算机的Internet协议（“IP”）地址，浏览器类型，浏览器版本，您访问的我们网站的页面，您访问的时间和日期，在这些页面上花费的时间等信息。统计。\n\n我们如何使用您的信息\n\n我们使用您收到的信息如下：\n\n定制我们的网站\n\n我们可能会使用您提供给我们的个人身份信息以及我们收到的任何计算机信息来定制我们的网站。\n\n与关联公司和其他第三方共享信息\n\n我们不会出于营销目的向第三方出售，出租或以其他方式提供您的个人身份信息。我们可能会向向我们提供有关我们网站服务的关联公司（即支付处理商，网站托管公司等）提供您的个人身份信息; 此类关联公司仅接收提供相关服务所必需的信息，并受限制此类信息使用的保密协议的约束。\n\n数据聚合\n\n我们保留收集和使用从您使用我们网站收集的任何非个人信息的权利，并汇总这些数据以进行内部分析，从而改善我们的网站和服务以及使用或转售给他人。您的个人身份信息绝不会包含在此类数据汇总中。\n\n法律要求的信息发布\n\n如果此类披露是（a）传票，法律或其他法律程序要求，我们可能在法律上要求披露您的个人身份信息; （b）有必要协助执法人员或政府执法机构; （c）有必要调查违反或以其他方式执行我们的法律条款; （d）有必要保护我们免受包括您和/或其他会员在内的第三方的法律诉讼或索赔; 和/或（e）保护多多云IDC，我们的用户，员工和关联公司的合法权利，个人/不动产或人身安全所必需的。\n\n选择退出\n\n当我们向您询问此详细信息时，我们为您提供“选择退出”将您的个人身份信息用于特定功能的机会。当您注册本网站时，如果您不希望收到我们的任何其他材料或通知，您可以在我们的注册表上显示您的偏好。\n\n与其他网站的链接\n\n我们的网站可能包含不受我们直接控制的其他网站的链接。这些网站可能有自己的隐私政策。我们无法控制或负责链接网站，仅为访客的方便和信息提供这些链接。您访问此类链接的网站需要您自担风险。这些网站不受本隐私政策的约束。您应查看这些个人网站的隐私政策（如果有），以了解这些第三方网站的运营商将如何利用您的个人信息。此外，这些网站可能包含指向我们附属公司网站的链接。我们的关联公司的网站不受本隐私政策的约束，您应查看其个人隐私政策，以了解此类网站的运营商将如何利用您的个人信息。\n\n安全\n\n您的个人信息的安全性对我们很重要，但请记住，没有任何通过互联网传输的方法或电子存储方法是100％安全的。虽然我们努力使用商业上可接受的方式来保护您的个人信息，但我们无法保证其绝对的安全性。我们利用实际保护措施来防止我们控制下的个人数据的丢失，滥用和修改。个人数据保存在安全的数据库中，并且在Web浏览器支持时始终通过加密的SSL方法发送。没有任何网络或电子邮件传输受到完全保护或成本错误。例如，发送到本网站或从本网站发出的电子邮件可能不受保护。您必须特别注意决定通过电子邮件发送给我们的信息。\n\n隐私政策更新\n\n我们保留随时修改本隐私政策的权利。您应经常查看本隐私政策。如果我们对本政策进行重大更改，我们可能会通过我们的网站，博客文章，电子邮件或我们确定的任何方式通知您。我们选择的方法由我们自行决定。我们还将在本隐私政策开始时更改“上次更新”日期。我们对隐私政策所做的任何更改自上次更新日期起生效，并替换任何先前的隐私政策。\n\n关于我们的隐私惯例或本隐私政策的问题\n\n我们致力于按照这些原则开展业务，以确保个人信息的机密性得到保护和维护。如果您对我们的隐私惯例或本政策有任何疑问，请与我们联系。"
+        }
+      ],
+      "updatedAt": ""
+    }
+  ],
+  "categories": [
+    {
+      "id": "official-guides",
+      "name": "使用指南",
+      "kind": "help"
+    }
+  ],
+  "navigation": [
+    {
+      "label": "产品与服务",
+      "href": "/products",
+      "children": [
+        {
+          "label": "云服务器",
+          "href": "/cloud",
+          "children": []
+        },
+        {
+          "label": "内容分发",
+          "href": "/cdn",
+          "children": []
+        },
+        {
+          "label": "域名服务",
+          "href": "/domain",
+          "children": []
+        },
+        {
+          "label": "统一控制台",
+          "href": "/panel",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "解决方案",
+      "href": "/solutions",
+      "children": []
+    },
+    {
+      "label": "服务与支持",
+      "href": "/help",
+      "children": [
+        {
+          "label": "帮助中心",
+          "href": "/help",
+          "children": []
+        },
+        {
+          "label": "新闻公告",
+          "href": "/news",
+          "children": []
+        },
+        {
+          "label": "联系我们",
+          "href": "/contact",
+          "children": []
+        },
+        {
+          "label": "服务支持",
+          "href": "/service-guarantees",
+          "children": []
+        },
+        {
+          "label": "账户安全",
+          "href": "/security",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "合作与生态",
+      "href": "/referral",
+      "children": [
+        {
+          "label": "推广合作",
+          "href": "/referral",
+          "children": []
+        },
+        {
+          "label": "合作咨询",
+          "href": "/agency",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "关于多多云",
+      "href": "/about",
+      "children": [
+        {
+          "label": "平台介绍",
+          "href": "/about",
+          "children": []
+        },
+        {
+          "label": "企业信息",
+          "href": "/company",
+          "children": []
+        },
+        {
+          "label": "联系我们",
+          "href": "/contact",
+          "children": []
+        }
+      ]
+    }
+  ],
+  "footer": [
+    {
+      "label": "开始使用",
+      "href": "/products",
+      "children": [
+        {
+          "label": "产品选购",
+          "href": "/products",
+          "children": []
+        },
+        {
+          "label": "拼团活动",
+          "href": "/groupbuy",
+          "children": []
+        },
+        {
+          "label": "注册账户",
+          "href": "/register",
+          "children": []
+        },
+        {
+          "label": "登录账户",
+          "href": "/login",
+          "children": []
+        },
+        {
+          "label": "用户中心",
+          "href": "/console",
+          "children": []
+        },
+        {
+          "label": "我的订单",
+          "href": "/console/orders",
+          "children": []
+        },
+        {
+          "label": "账户充值",
+          "href": "/wallet/recharge",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "平台服务",
+      "href": "/cloud",
+      "children": [
+        {
+          "label": "云服务器",
+          "href": "/cloud",
+          "children": []
+        },
+        {
+          "label": "域名服务",
+          "href": "/domain",
+          "children": []
+        },
+        {
+          "label": "流量分发",
+          "href": "/cdn",
+          "children": []
+        },
+        {
+          "label": "交易市场",
+          "href": "/marketplace",
+          "children": []
+        },
+        {
+          "label": "优惠活动",
+          "href": "/campaigns",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "资源与支持",
+      "href": "/help",
+      "children": [
+        {
+          "label": "帮助文档",
+          "href": "/help",
+          "children": []
+        },
+        {
+          "label": "工单支持",
+          "href": "/console/tickets",
+          "children": []
+        },
+        {
+          "label": "提交工单",
+          "href": "/console/tickets/create",
+          "children": []
+        },
+        {
+          "label": "产品目录",
+          "href": "/products",
+          "children": []
+        },
+        {
+          "label": "订单记录",
+          "href": "/console/orders",
+          "children": []
+        },
+        {
+          "label": "充值记录",
+          "href": "/wallet/recharge-records",
+          "children": []
+        },
+        {
+          "label": "消费记录",
+          "href": "/wallet/consume-records",
+          "children": []
+        }
+      ]
+    },
+    {
+      "label": "解决方案",
+      "href": "/groupbuy",
+      "children": [
+        {
+          "label": "云服务器拼团",
+          "href": "/groupbuy",
+          "children": []
+        },
+        {
+          "label": "云资源管理",
+          "href": "/console/instances",
+          "children": []
+        },
+        {
+          "label": "域名管理",
+          "href": "/console/domains",
+          "children": []
+        },
+        {
+          "label": "内容分发服务",
+          "href": "/console/cdnsell",
+          "children": []
+        },
+        {
+          "label": "云资源交易",
+          "href": "/marketplace",
+          "children": []
+        },
+        {
+          "label": "账户与安全",
+          "href": "/console/security",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

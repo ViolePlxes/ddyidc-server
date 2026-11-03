@@ -784,5 +784,13 @@
   "ddyidc/internal/marketing/service/TestCurrentUserDisplayMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_home_referral.sh; assert current 64-bit ID display/search across invites, verification, rewards and sales, while aliases/passwords, ownership and reward amounts remain unchanged. A skip is not a pass."
+  },
+  "ddyidc/internal/portal/TestCMSLabPublishDraftHideRollback": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run with explicit DDYIDC_CMS_LAB_SOCKET under /tmp/cms-batch1-mysql- and isolated DDYIDC_CMS_LAB_ROOT; verify draft/publish/conflict/hide/rollback. Tested in VM; normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/portal/TestCMSLabServer": {
+    "disposition": "manual_preview_only",
+    "verification": "Explicit local test harness only: DDYIDC_CMS_LAB_SERVE=1, guarded disposable UNIX socket, loopback 18092; must never start in CI or production. It is not a passing integration check."
   }
 }

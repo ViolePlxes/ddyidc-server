@@ -1,19 +1,25 @@
 package portal
 
 import (
- "context"
- "testing"
+	"context"
+	"encoding/json"
+	"testing"
 )
 
 func TestBootstrapNeverPublishesUnconfirmedContent(t *testing.T) {
- // No database/asset access is needed for startup or public-read bootstrap.
- // Any attempt to recreate the old automatic Save path would fail this test.
- service := New(nil,t.TempDir())
- if err:=service.Bootstrap(context.Background());err!=nil {t.Fatal(err)}
+	// No database/asset access is needed for startup or public-read bootstrap.
+	// Any attempt to recreate the old automatic Save path would fail this test.
+	service := New(nil, t.TempDir())
+	if err := service.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestContentCategoriesKeepLegacyDocumentsCompatible(t *testing.T) {
-	d := Seed()
+	var d Document
+	if err := json.Unmarshal(seedJSON, &d); err != nil {
+		t.Fatal(err)
+	}
 	if err := Validate(d); err != nil {
 		t.Fatal(err)
 	}

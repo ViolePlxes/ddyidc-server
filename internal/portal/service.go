@@ -137,12 +137,20 @@ func (s *Service) Draft(ctx context.Context) (Document, error) {
 	if e != nil {
 		return Document{}, e
 	}
-	d := Seed()
-	if r.Draft != "" {
-		e = json.Unmarshal([]byte(r.Draft), &d)
-	}
+	d, e := decodeStoredDocument(r.Draft)
 	d.Revision = r.Revision
 	return d, e
+}
+
+// Stored slices must decode into zero values: overlaying a reordered document
+// onto Seed reuses slice elements and retains omitted fields from other pages.
+func decodeStoredDocument(raw string) (Document, error) {
+	if raw == "" {
+		return Seed(), nil
+	}
+	var d Document
+	err := json.Unmarshal([]byte(raw), &d)
+	return d, err
 }
 func plain(raw string) string {
 	n, e := html.Parse(strings.NewReader(raw))
@@ -250,6 +258,10 @@ func pagesFor(snap Snapshot) []Page {
 			if override.Path == path {
 				allowed = override.Enabled
 				p.SEO = inherit(override.SEO, p.SEO)
+				p.Layout = override.Layout
+				if override.Title != "" {
+					p.Title = override.Title
+				}
 				p.Modules = override.Modules
 			}
 		}
@@ -272,6 +284,18 @@ func pagesFor(snap Snapshot) []Page {
 func templateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"richBody": renderRichBody,
+		"displayItems": func(m Module) []Item {
+			if !strings.HasPrefix(m.ID, "home-") {
+				return m.Items
+			}
+			out := []Item{}
+			for _, item := range m.Items {
+				if strings.HasPrefix(item.ID, "text-") {
+					out = append(out, Item{Text: item.Text})
+				}
+			}
+			return out
+		},
 		"absolute": func(base, path string) string {
 			if strings.HasPrefix(path, "/") {
 				return base + path
@@ -361,6 +385,7 @@ func (s *Service) generate(ctx context.Context, d Document) (Snapshot, string, e
 		}
 	}()
 	pages := pagesFor(snap)
+	publicSite := publicContent(snap).Site
 	articles := []Page{}
 	for _, p := range pages {
 		if p.Kind == "article" {
@@ -382,7 +407,7 @@ func (s *Service) generate(ctx context.Context, d Document) (Snapshot, string, e
 		if p.Kind == "article" {
 			structured, _ = json.Marshal(map[string]any{"@context": "https://schema.org", "@type": "Article", "headline": p.Title, "url": d.Site.Origin + p.Path, "dateModified": p.UpdatedAt, "publisher": map[string]any{"@type": "Organization", "name": d.Site.Brand}})
 		}
-		view := View{d.Site, p, d.Revision, inherit(p.SEO, d.Site.SEO), d.Site.Origin + p.Path, selected, articles, assets, snap.GeneratedAt, template.JS(structured)}
+		view := View{publicSite, p, d.Revision, inherit(p.SEO, d.Site.SEO), d.Site.Origin + p.Path, selected, articles, assets, snap.GeneratedAt, template.JS(structured)}
 		var b bytes.Buffer
 		if e = t.Execute(&b, view); e != nil {
 			return snap, "", e
@@ -493,9 +518,9 @@ func (s *Service) Save(ctx context.Context, d Document, publish bool, actor int6
 		}
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	old := Seed()
-	if row.Draft != "" {
-		_ = json.Unmarshal([]byte(row.Draft), &old)
+	old, decodeErr := decodeStoredDocument(row.Draft)
+	if decodeErr != nil {
+		return d, errors.New("已有门户草稿格式无效，请先核对历史版本")
 	}
 	for i := range d.Pages {
 		changed := true

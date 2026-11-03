@@ -31,6 +31,10 @@ if 'portal/document?path=$uri' not in block:
 '''
     block=block.replace('    location /assets/',reads+'    location /assets/')
     source=source[:start]+block+source[end:]
+if 'location = /api/v1/portal/content ' not in source:
+    pos=source.index(marker)
+    slot=source.find('\n',pos)+1
+    source=source[:slot]+'    location = /api/v1/portal/content { limit_except GET { deny all; } proxy_pass http://ddyidc_backend; }\n'+source[slot:]
 media='''    location ~ ^/portal-media/([a-f0-9-]+)$ {
         limit_except GET { deny all; }
         proxy_pass http://ddyidc_backend/api/v1/portal/media/$1;

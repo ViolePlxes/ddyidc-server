@@ -20,9 +20,11 @@ type SEO struct {
 	NoIndex     bool   `json:"noIndex"`
 }
 type Link struct {
-	Label    string `json:"label"`
-	Href     string `json:"href"`
-	Children []Link `json:"children"`
+	Enabled     *bool  `json:"enabled,omitempty"`
+	Description string `json:"description,omitempty"`
+	Label       string `json:"label"`
+	Href        string `json:"href"`
+	Children    []Link `json:"children"`
 }
 type Item struct {
 	ID       string `json:"id"`
@@ -54,6 +56,7 @@ type Module struct {
 	Items       []Item          `json:"items"`
 }
 type Page struct {
+	Layout      string   `json:"layout,omitempty"`
 	ContentType string   `json:"contentType,omitempty"`
 	CategoryID  string   `json:"categoryId,omitempty"`
 	ID          string   `json:"id"`
@@ -114,8 +117,9 @@ type Definition struct {
 	Label string `json:"label"`
 }
 
-var Definitions = []Definition{{"announcement_bar", "活动提示条"}, {"hero", "首屏主视觉"}, {"network_capabilities", "网络与能力"}, {"customer_logos", "客户标识"}, {"testimonial", "客户评价"}, {"advantage_comparison", "特色优势"}, {"product_solutions", "产品与方案"}, {"feature_sections", "图文能力"}, {"final_cta", "行动区"}, {"banner_carousel", "轮播 Banner"}, {"news_announcements", "新闻公告"}, {"partner_logos", "合作伙伴"}}
+var Definitions = []Definition{{"faq", "常见问题"}, {"steps", "办理流程"}, {"statistics", "信息指标"}, {"image_gallery", "图片与证书"}, {"contact_cards", "联系卡片"}, {"job_list", "招聘岗位"}, {"announcement_bar", "活动提示条"}, {"hero", "首屏主视觉"}, {"network_capabilities", "网络与能力"}, {"customer_logos", "客户标识"}, {"testimonial", "客户评价"}, {"advantage_comparison", "特色优势"}, {"product_solutions", "产品与方案"}, {"feature_sections", "图文能力"}, {"final_cta", "行动区"}, {"banner_carousel", "轮播 Banner"}, {"news_announcements", "新闻公告"}, {"partner_logos", "合作伙伴"}}
 var identifier = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+var productPagePath = regexp.MustCompile(`^/products/[0-9]{1,20}$`)
 var pagePath = regexp.MustCompile(`^/(?:[a-zA-Z0-9_-]+/)*[a-zA-Z0-9_-]*$`)
 
 func safeURL(raw string, image bool) bool {
@@ -180,7 +184,7 @@ func Validate(d Document) error {
 			return false
 		}
 		for _, l := range list {
-			if l.Label == "" || !safeURL(l.Href, false) || !links(l.Children, depth+1) {
+			if l.Label == "" || len(l.Description) > 600 || !safeURL(l.Href, false) || !links(l.Children, depth+1) {
 				return false
 			}
 		}
@@ -195,9 +199,12 @@ func Validate(d Document) error {
 		if !identifier.MatchString(p.ID) || ids[p.ID] || paths[p.Path] || !pagePath.MatchString(p.Path) || strings.HasSuffix(p.Path, "/") && p.Path != "/" {
 			return errors.New("页面 ID 或路径无效或重复")
 		}
+		if strings.HasPrefix(p.Path, "/dd-admin-") {
+			return errors.New("公开页面不能使用保留路径")
+		}
 		ids[p.ID] = true
 		paths[p.Path] = true
-		for _, prefix := range []string{"/api", "/admin", "/console", "/sales", "/login", "/register", "/auth", "/cart", "/order", "/assets"} {
+		for _, prefix := range []string{"/api", "/admin", "/console", "/sales", "/wallet", "/user", "/login", "/register", "/reset-password", "/bind-mobile", "/auth", "/cart", "/order", "/assets", "/groupbuy", "/marketplace"} {
 			if p.Path == prefix || strings.HasPrefix(p.Path, prefix+"/") {
 				return errors.New("公开页面不能使用保留路径")
 			}
@@ -207,6 +214,18 @@ func Validate(d Document) error {
 			if !p.Enabled {
 				return errors.New("首页不可停用，请使用站点总开关")
 			}
+		}
+		if p.Layout != "" {
+			allowed := map[string]bool{"overview": true, "contact": true, "certificates": true, "service": true, "partners": true, "careers": true, "catalog": true, "solutions": true, "campaign": true, "document": true}
+			if !allowed[p.Layout] {
+				return errors.New("页面布局无效")
+			}
+		}
+		if p.Path == "/products" && p.Kind != "products" {
+			return errors.New("产品目录路径需要使用受控产品目录类型")
+		}
+		if strings.HasPrefix(p.Path, "/products/") && (p.Kind != "product" || !productPagePath.MatchString(p.Path)) {
+			return errors.New("商品介绍路径或类型无效")
 		}
 		if p.Kind != "page" && p.Kind != "article" && p.Kind != "products" && p.Kind != "product" {
 			return errors.New("页面类型无效")
@@ -226,9 +245,6 @@ func Validate(d Document) error {
 		}
 		if (p.Kind == "product") != strings.HasPrefix(p.Path, "/products/") {
 			return errors.New("产品 SEO 页面必须使用产品详情路径")
-		}
-		if p.Kind == "product" && !p.Enabled {
-			return errors.New("产品是否公开由产品配置决定，SEO 页面不能单独停用")
 		}
 		if len(p.Modules) > 100 || !checkSEO(p.SEO) {
 			return errors.New("页面模块数量或 SEO 无效")
@@ -274,5 +290,9 @@ func Seed() Document {
 	if e := json.Unmarshal(seedJSON, &d); e != nil {
 		panic(e)
 	}
-	return d
+	formal, err := FormalDraft(d)
+	if err != nil {
+		panic(err)
+	}
+	return formal
 }
