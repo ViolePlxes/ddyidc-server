@@ -224,9 +224,10 @@ type rawSnapshot struct {
 		DisplayValue string `json:"displayValue"`
 		Position     int    `json:"position"`
 	} `json:"configOptions"`
-	Hostname           string `json:"hostname"`
-	BillingCycle       string `json:"billingCycle"`
-	PasswordCiphertext string `json:"passwordCiphertext"`
+	SyncedConfig       []syncedConfigItem `json:"syncedConfig"`
+	Hostname           string             `json:"hostname"`
+	BillingCycle       string             `json:"billingCycle"`
+	PasswordCiphertext string             `json:"passwordCiphertext"`
 }
 
 func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*ListResult, error) {
@@ -324,6 +325,10 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 
 	orderNo, _ := s.repo.FindOrderNo(ctx, host.OrderID)
 	config, snapshot := parseSnapshot(host.ConfigSnapshot)
+	// A manual supplier upgrade changes the live machine, not the original order
+	// snapshot. Prefer the values captured by the last pull so the page reflects
+	// the upgraded CPU/memory/disk instead of the purchase-time options.
+	config = mergeSyncedConfig(config, snapshot.SyncedConfig)
 	events, _ := s.repo.ListEvents(ctx, host.ID, 50)
 	legacyFinalized := false
 	if host.ModuleType == "legacy_snapshot" && s.db != nil {
@@ -343,7 +348,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		ProductID: strconv.FormatInt(host.ProductID, 10), ProductName: host.ProductName,
 		ModuleType: host.ModuleType, UpstreamInstanceID: host.UpstreamInstanceID,
 		OwnershipVersion: strconv.FormatInt(host.OwnershipVersion, 10),
-		Hostname: snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
+		Hostname:         snapshot.Hostname, PrimaryIP: host.PrimaryIP, SubnetMask: host.SubnetMask,
 		Gateway: host.Gateway, OperatingSystem: host.OperatingSystem,
 		Status: displayStatus(host), PowerStatus: host.PowerStatus, BillingCycle: snapshot.BillingCycle,
 		CreatedAt: formatTime(host.CreatedAt), Config: config, Events: eventViews(events),
@@ -447,8 +452,15 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.PasswordMasked = "************"
 	}
 	if len(detail.Config) > 0 {
-		raw, _ := json.Marshal(snapshotFromUpstream(detail))
-		result.Config, _ = parseSnapshot(string(raw))
+		live := make([]syncedConfigItem, 0, len(detail.Config))
+		for i, item := range detail.Config {
+			field := item.Field
+			if field == "" {
+				field = fmt.Sprintf("upstream_%s_%d", item.ID, i)
+			}
+			live = append(live, syncedConfigItem{Field: field, Name: item.Name, Value: item.Value})
+		}
+		result.Config = mergeSyncedConfig(result.Config, live)
 	}
 	if detail.ExpiresAt != nil {
 		result.ExpiresAt = formatTime(*detail.ExpiresAt)
@@ -493,6 +505,14 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.PowerStatus = detail.PowerStatus
 	}
 	status := statusCode(detail.PowerStatus, host.Status)
+	// Some suppliers only fill domainstatus (e.g. Pending) and leave the power
+	// field empty. Treat that lifecycle as the status source instead of falling
+	// back to the stale local value, which used to show an unprovisioned host
+	// as running.
+	if strings.TrimSpace(detail.PowerStatus) == "" && normalizePower(detail.Status) == "provisioning" {
+		result.PowerStatus = "provisioning"
+		status = 2
+	}
 	if lifecycle := unavailableLifecycle(detail, host.UpstreamInstanceID); lifecycle != "" {
 		result.PowerStatus = lifecycle
 		status = statusCode(lifecycle, host.Status)
@@ -928,6 +948,62 @@ func listItem(host *dom.Host) ListItem {
 		result.ExpiresAt = formatTime(*host.ExpiresAt)
 	}
 	return result
+}
+
+type syncedConfigItem struct {
+	Field string `json:"field"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+var syncedConfigLabels = map[string]string{
+	"cpu": "CPU", "memory": "内存", "system_disk": "系统盘", "data_disk": "数据盘",
+	"bandwidth": "带宽", "network": "网络类型", "region": "区域", "data_center": "数据中心",
+	"defense": "防御", "ip_num": "IP 数量",
+}
+
+// mergeSyncedConfig overlays the supplier-pulled values on the order snapshot.
+// Unknown entries are appended so a supplier-side upgrade is never hidden.
+func mergeSyncedConfig(base []ConfigItem, synced []syncedConfigItem) []ConfigItem {
+	if len(synced) == 0 {
+		return base
+	}
+	out := append([]ConfigItem(nil), base...)
+	index := make(map[string]int, len(out))
+	for i, item := range out {
+		index[item.Field] = i
+	}
+	next := 1000
+	for _, entry := range synced {
+		value := strings.TrimSpace(entry.Value)
+		if value == "" || entry.Field == "" {
+			continue
+		}
+		label := syncedConfigLabels[entry.Field]
+		if label == "" {
+			label = strings.TrimSpace(entry.Name)
+		}
+		if label == "" {
+			label = entry.Field
+		}
+		if i, ok := index[entry.Field]; ok {
+			out[i].DisplayValue = value
+			if out[i].DisplayName == "" {
+				out[i].DisplayName = label
+			}
+			continue
+		}
+		out = append(out, ConfigItem{ID: "synced-" + entry.Field, Field: entry.Field, DisplayName: label, DisplayValue: value, Position: next})
+		index[entry.Field] = len(out) - 1
+		next++
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Position == out[j].Position {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].Position < out[j].Position
+	})
+	return out
 }
 
 func parseSnapshot(raw string) ([]ConfigItem, rawSnapshot) {
