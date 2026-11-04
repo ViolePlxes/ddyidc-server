@@ -6,6 +6,7 @@ import (
 	"ddyidc/internal/domains"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/renewalquote"
+	"ddyidc/internal/shared/upgradequote"
 	"errors"
 	"fmt"
 	"time"
@@ -141,6 +142,9 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 			return err
 		}
 		if err := renewalquote.CheckTx(ctx, tx, customerID, orderID); err != nil {
+			return err
+		}
+		if err := upgradequote.CheckTx(ctx, tx, customerID, orderID, row.PayAmount, time.Now()); err != nil {
 			return err
 		}
 
