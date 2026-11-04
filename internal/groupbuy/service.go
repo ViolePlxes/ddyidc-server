@@ -3,6 +3,7 @@ package groupbuy
 import (
 	"context"
 	"crypto/rand"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
 	refundworkflow "ddyidc/internal/payment/repository/refundworkflow"
@@ -514,6 +515,12 @@ func (s *Service) memberPrice(tx *gorm.DB, activity *Activity, clientID int64, g
 }
 
 func (s *Service) changeBalance(tx *gorm.DB, clientID, delta int64, related string, relatedID int64, remark string) error {
+	if delta <= 0 {
+		if _, e := invoice.IssueSourceTx(tx, "groupbuy", relatedID, clientID); e != nil {
+			return e
+		}
+	}
+
 	if delta == 0 {
 		return nil
 	}
@@ -526,6 +533,9 @@ func (s *Service) changeBalance(tx *gorm.DB, clientID, delta int64, related stri
 		RefType: related, RefID: relatedID, Channel: "groupbuy",
 		RequestID: fmt.Sprintf("GB:%s:%d", typ, relatedID), Notes: remark,
 	})
+	if err == nil && delta < 0 {
+		return invoice.AcceptSourcePaymentTx(tx, "groupbuy", relatedID, clientID, balance.Money(-delta), fmt.Sprint("groupbuy:", relatedID), s.now())
+	}
 	return err
 }
 func orderInput(raw json.RawMessage, activity Activity, recordID int64) (*orderservice.CreateOrderInput, error) {

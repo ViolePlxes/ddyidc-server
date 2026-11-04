@@ -20,6 +20,10 @@ func TestPaidFulfillmentMySQL(t *testing.T) {
 		if err := db.Create(&row).Error; err != nil {
 			t.Fatal(err)
 		}
+		item := order.OrderItem{OrderID: id, ProductID: 1, ProductName: "isolated CDN invoice", ModuleType: "cdnsell", ConfigSnapshot: "{}", Qty: 1, UnitPrice: 100, Subtotal: 100}
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
 		if err := db.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status) VALUES(?,?,?,'traffic_pack',?,1,1024,1.00,?,'pending')", id, row.OrderNo, 7799, id, `{"validDays":30}`).Error; err != nil {
 			t.Fatal(err)
 		}

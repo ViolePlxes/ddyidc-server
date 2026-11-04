@@ -20,6 +20,10 @@ done
 mysqladmin --no-defaults --socket="$root/mysql.sock" -uroot ping >/dev/null
 export FOUNDATION_MYSQL_SOCKET="$root/mysql.sock"
 go test -race -v . -run '^TestOfflineMigrationMySQL$' -count=1
+
+# Independent billing records and legacy backfill, before module fixture writes.
+go test -race -v ./internal/billing/service ./internal/billing/handler -run '^TestInvoice' -count=1
+
 go test -race -v ./internal/groupbuy -run '^(TestDurableGroupMySQL|TestIntegrationLifecycle|TestCertificationGateRealDatabase)$' -count=1
 
 go test -race -v ./internal/points -run '^TestPointsIntegration$' -count=1

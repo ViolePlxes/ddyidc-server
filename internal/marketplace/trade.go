@@ -2,6 +2,7 @@ package marketplace
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	orderdom "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
@@ -82,6 +83,9 @@ func (s *Service) CreateOrder(ctx context.Context, buyerID int64, in CreateOrder
 		item := orderdom.OrderItem{OrderID: out.ID, ProductID: listing.SourceProductID, ProductName: listing.ProductName, ModuleType: "marketplace", ConfigSnapshot: "{}", Qty: 1, UnitPrice: buyerPay, Subtotal: buyerPay}
 		if err := tx.Create(&item).Error; err != nil {
 			return err
+		}
+		if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
+			return e
 		}
 		res := tx.Table(listingsTable).Where("id=? AND status='on_sale'", listing.ID).Updates(map[string]any{"status": "locked", "updated_at": s.now()})
 		if res.Error != nil {
@@ -226,6 +230,15 @@ func CompletePaidOrderTx(tx *gorm.DB, orderID, buyerID int64, paidAt time.Time, 
 	}
 	if err := tx.Table(ordersTable).Where("id=? AND status='pending_pay'", order.ID).Updates(map[string]any{"status": "paid", "payment_method": method, "paid_at": paidAt, "settle_at": settleAt, "refund_window_end": refundEnd, "updated_at": paidAt}).Error; err != nil {
 		return err
+	}
+	if order.SettlementMode != "balance" {
+		amount, e := balance.ParseMoney(order.PayAmount)
+		if e != nil {
+			return e
+		}
+		if e = invoice.AcceptSourcePaymentTx(tx, "marketplace", order.ID, order.BuyerID, amount, fmt.Sprint("marketplace:", order.ID), paidAt); e != nil {
+			return e
+		}
 	}
 	if err := tx.Table(listingsTable).Where("id=? AND status='locked'", listing.ID).Updates(map[string]any{"status": "sold", "updated_at": paidAt}).Error; err != nil {
 		return err

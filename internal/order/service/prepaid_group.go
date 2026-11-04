@@ -2,6 +2,7 @@ package order
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	"ddyidc/internal/certification"
 	dom "ddyidc/internal/order/domain"
 	"ddyidc/internal/order/inventory"
@@ -67,6 +68,9 @@ func (s *Service) CommitGroupOrderTx(ctx context.Context, tx *gorm.DB, p *Prepar
 	item.OrderID = order.ID
 	if err := s.repo.CreateItemTx(ctx, tx, &item); err != nil {
 		return 0, err
+	}
+	if e := invoice.LinkPrepaidGroupTx(tx, order.ID, recordID, order.CustomerID); e != nil {
+		return 0, e
 	}
 	err = tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-order:%d", recordID), tasks.PaymentPayload{CustomerID: order.CustomerID, BusinessID: order.ID, BusinessType: "order", Channel: "balance", AmountFen: order.PayAmount})
 	return order.ID, err

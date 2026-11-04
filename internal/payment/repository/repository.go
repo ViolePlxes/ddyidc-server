@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/domains"
 	orderstate "ddyidc/internal/order/repository"
@@ -84,6 +85,10 @@ func (r *GormRepository) PrepareMarketplace(ctx context.Context, customerID, ord
 		if err := r.insertOrReuse(tx, payment); err != nil {
 			return err
 		}
+		if err := invoice.BindPaymentTx(tx, string(payment.BizType), payment.BizID, payment.CustomerID, payment.ID, balance.Money(payment.AmountFen), payment.Currency); err != nil {
+			return err
+		}
+
 		subject := row.ProductName
 		if subject == "" {
 			subject = "DDYIDC 交易市场订单"
@@ -171,6 +176,9 @@ func (r *GormRepository) PrepareOrder(ctx context.Context, customerID, orderID i
 		if err := r.insertOrReuse(tx, payment); err != nil {
 			return err
 		}
+		if err := invoice.BindPaymentTx(tx, string(payment.BizType), payment.BizID, payment.CustomerID, payment.ID, balance.Money(payment.AmountFen), payment.Currency); err != nil {
+			return err
+		}
 
 		if err := renewalquote.BindPaymentTx(ctx, tx, customerID, orderID, payment.ID, payment.AmountFen); err != nil {
 			return err
@@ -224,6 +232,10 @@ func (r *GormRepository) PrepareRecharge(ctx context.Context, customerID, rechar
 		if err := r.insertOrReuse(tx, payment); err != nil {
 			return err
 		}
+		if err := invoice.BindPaymentTx(tx, string(payment.BizType), payment.BizID, payment.CustomerID, payment.ID, balance.Money(payment.AmountFen), payment.Currency); err != nil {
+			return err
+		}
+
 		prepared = &Prepared{Payment: payment, Subject: "DDYIDC 账户充值"}
 		return nil
 	})
@@ -340,6 +352,16 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 		if err := tx.SavePoint("before_receipt_business").Error; err != nil {
 			return err
 		}
+		if err := invoice.EnabledTx(tx); err != nil {
+			if errors.Is(err, invoice.ErrDisabled) {
+				return reviewReceipt(tx, &completed, notification, paidAt, "invoice_module_disabled")
+			}
+			return err
+		}
+		if _, err := invoice.ReceiptInvoiceTx(tx, completed.ID, completed.CustomerID, balance.Money(completed.AmountFen), completed.Currency); err != nil {
+			return reviewReceipt(tx, &completed, notification, paidAt, "invoice_binding_conflict")
+		}
+
 		switch completed.BizType {
 		case dom.BizOrder:
 			if err := renewalquote.ReceiptAllowedTx(ctx, tx, completed.CustomerID, completed.BizID, completed.ID, completed.AmountFen, paidAt); err != nil {
@@ -376,6 +398,9 @@ func (r *GormRepository) Complete(ctx context.Context, notification dom.Verified
 			}
 			if result.RowsAffected != 1 {
 				return reviewReceipt(tx, &completed, notification, paidAt, "recharge_not_payable")
+			}
+			if err := invoice.AcceptSourcePaymentTx(tx, "recharge", completed.BizID, completed.CustomerID, balance.Money(completed.AmountFen), fmt.Sprint(completed.ID), paidAt); err != nil {
+				return err
 			}
 
 		case dom.BizMarketplace:

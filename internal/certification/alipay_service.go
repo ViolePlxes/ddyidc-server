@@ -2,6 +2,7 @@ package certification
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	orderdom "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/snowflake"
@@ -145,6 +146,9 @@ func (s *Service) initializeAlipay(ctx context.Context, customer int64, in Input
 			item := orderdom.OrderItem{OrderID: order.ID, ModuleType: "certification", ProductName: "支付宝实名认证手续费", ConfigSnapshot: `{"channel":"alipay"}`, Qty: 1, UnitPrice: fee, Subtotal: fee, CreatedAt: now, UpdatedAt: now}
 			if err := tx.Create(&item).Error; err != nil {
 				return err
+			}
+			if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
+				return e
 			}
 			row.CertifyFeeOrder = order.ID
 			if err := tx.Save(&row).Error; err != nil {

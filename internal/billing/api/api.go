@@ -1,11 +1,4 @@
 package billing
 
-// TODO: 定义 billing 域对外暴露的接口（其他域只能 import 这个包）
-// 示例：
-// type Service interface {
-//     GetByID(ctx context.Context, id int64) (*DTO, error)
-// }
-// type DTO struct {
-//     ID   int64  `json:"id"`
-//     Name string `json:"name"`
-// }
+// Package billing exposes the invoice application and transaction APIs. Other
+// domains import only this boundary; payment implementations are injected.

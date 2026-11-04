@@ -1,4 +1,8 @@
 {
+  "ddyidc/internal/billing/service/TestInvoiceRuntimePrivilegesMySQL": {"disposition":"isolated_suite_required","verification":"Disposable socket-only MySQL: invoice-only runtime grants, deny DDL/deletion/audit mutation/configuration writes/balance writes/private configuration reads; temporary role removed."},
+  "ddyidc/internal/billing/handler/TestInvoiceCustomerHTTPMySQL": {"disposition":"isolated_suite_required","verification":"Disposable MySQL/Redis: real customer sessions, invoice ownership, input tamper rejection, immutable document dispatch and settled source rejection; no gateway calls."},
+  "ddyidc/internal/billing/service/TestInvoiceHistoricalBackfillMySQL": {"disposition":"isolated_suite_required","verification":"Disposable migrated socket only: pending/paid/refunded orders, recharge amounts, backfill replay and source/ledger invariance."},
+  "ddyidc/internal/billing/service/TestInvoiceIssueRevisionAndReceiptMySQL": {"disposition":"isolated_suite_required","verification":"Disposable migrated socket only: invoice issue, amendment, ownership, amount/currency validation and receipt replay. No real financial operations."},
   "ddyidc/internal/update/TestReclamationRuntimePrivilegesMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_resource_reclamation.sh with disposable officially migrated MySQL; enforce query/queue-only runtime grants and deny DDL, registry insertion, audit deletion and financial writes. A skip is not a pass."

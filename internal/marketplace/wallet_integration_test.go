@@ -2,6 +2,7 @@ package marketplace_test
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
 	market "ddyidc/internal/marketplace"
@@ -50,6 +51,8 @@ func TestBalanceEngineLifecycle(t *testing.T) {
 		must(tx.Create(&listing).Error)
 		order := market.Order{OrderNo: fmt.Sprintf("OT%d", hostID), ListingID: listing.ID, BuyerID: buyer, SellerID: seller, Amount: "100.00", PayAmount: "100.00", Fee: "5.00", FeeBearer: "seller", SellerIncome: "95.00", Status: "pending_pay", LockExpiresAt: time.Now().Add(time.Hour)}
 		must(tx.Create(&order).Error)
+		_, billErr := invoice.IssueSourceTx(tx, "marketplace", order.ID, buyer)
+		must(billErr)
 		return &order
 	}
 	first := makeOrder()

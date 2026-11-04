@@ -6,6 +6,7 @@ package order
 import (
 	"context"
 	"crypto/rand"
+	invoice "ddyidc/internal/billing/api"
 	billing "ddyidc/internal/billing/balance"
 	"ddyidc/internal/certification"
 
@@ -640,6 +641,9 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 		if orderRow.PayAmount < 0 {
 			return errors.New("订单应付金额无效")
 		}
+		if e := invoice.IssueOrderTx(tx, orderRow.ID); e != nil {
+			return e
+		}
 		if orderRow.PayAmount == 0 {
 			if total <= 0 || couponID <= 0 || orderRow.CouponAmount != total || orderRow.BalanceAmount != 0 {
 				return errors.New("零应付订单抵扣依据无效")
@@ -653,6 +657,9 @@ func (s *Service) CreateOrder(ctx context.Context, customerID int64, input *Crea
 				return errors.New("零应付订单状态已变化")
 			}
 			orderRow.Status, orderRow.PaidAt = dom.OrderStatusPaid, &now
+			if e := invoice.AcceptSourcePaymentTx(tx, "order", orderRow.ID, customerID, 0, fmt.Sprint("zero-order:", orderRow.ID), now); e != nil {
+				return e
+			}
 			if err := inventory.Consume(tx, orderRow.ID); err != nil {
 				return err
 			}

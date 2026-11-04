@@ -3,6 +3,7 @@ package refundworkflow
 import (
 	"context"
 	"crypto/sha256"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/order/inventory"
 	orderstate "ddyidc/internal/order/repository"
@@ -389,6 +390,9 @@ func finalize(tx *gorm.DB, r Request, calc Calculation, now time.Time, actor Act
 		if err := tx.Table("system.groupbuy_records").Where("id=? AND status=1", r.ObjectID).Updates(map[string]any{"status": 3, "updated_at": now}).Error; err != nil {
 			return err
 		}
+		if e := invoice.RecordReviewedRefundTx(tx, "groupbuy", r.ObjectID, r.CustomerID, r.ApplicationID, "groupbuy", now); e != nil {
+			return e
+		}
 		if err := tasks.EnqueuePayment(tx, fmt.Sprintf("groupbuy-refund:%d", r.ObjectID), tasks.PaymentPayload{CustomerID: r.CustomerID, BusinessID: r.ObjectID, BusinessType: "groupbuy_refund_notice", Channel: "balance"}); err != nil {
 			return err
 		}
@@ -400,7 +404,10 @@ func finalize(tx *gorm.DB, r Request, calc Calculation, now time.Time, actor Act
 		if err := tx.Table("payment.receipt_reviews").Where("payment_id=? AND status='pending'", r.ObjectID).Updates(map[string]any{"status": "refunded", "resolved_at": now}).Error; err != nil {
 			return err
 		}
-		return tx.Table("payment.payments").Where("id=? AND status='received_review'", r.ObjectID).Updates(map[string]any{"status": "refunded", "updated_at": now}).Error
+		if e := tx.Table("payment.payments").Where("id=? AND status='received_review'", r.ObjectID).Updates(map[string]any{"status": "refunded", "updated_at": now}).Error; e != nil {
+			return e
+		}
+		return invoice.ResolveRefundedReceiptTx(tx, r.ObjectID, r.CustomerID, now)
 	case "marketplace":
 		return finalizeMarketplace(tx, r, calc, now, actor, confirmLarge)
 	default:

@@ -1,4 +1,4 @@
 package billing
 
-// TODO: 实现 billing 域的业务逻辑（应用服务）
-// 依赖 Repository 接口，不依赖具体实现
+// Invoice application logic is implemented in invoice*.go and reader.go.
+// Financial acceptance remains inside the caller-owned business transaction.

@@ -5,7 +5,9 @@ import (
 	"ddyidc/internal/adminread"
 	"ddyidc/internal/admintodo"
 	"ddyidc/internal/backup"
+	invoiceapi "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
+	invoicehandler "ddyidc/internal/billing/handler"
 	"ddyidc/internal/billing/withdrawal"
 	"ddyidc/internal/captcha"
 	"ddyidc/internal/cdnsell"
@@ -679,6 +681,21 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	paymentSvc.SetRenewalRecovery(instanceSvc.ReconcileRenewal)
 	paymentSvc.SetRenewalPreflight(instanceSvc.VerifyRenewalPayment)
 	admintodo.RegisterProductWorkflows(server, db.G, jwt, paymentSvc)
+	invoicehandler.RegisterHandlers(server, invoiceapi.NewApplication(db.G, map[string]invoiceapi.PaymentAdapter{
+		"order": {Checkout: func(ctx context.Context, user, id int64, channel, mode string) (any, error) {
+			return invoiceAdapterResult(paymentSvc.CreateOrder(ctx, user, id, channel, mode))
+		}, Balance: func(ctx context.Context, user, id int64) (any, error) {
+			return invoiceAdapterResult(orderSvc.PayBalance(ctx, user, id))
+		}},
+		"recharge": {Checkout: func(ctx context.Context, user, id int64, channel, mode string) (any, error) {
+			return invoiceAdapterResult(paymentSvc.CreateRecharge(ctx, user, id, channel, mode))
+		}},
+		"marketplace": {Checkout: func(ctx context.Context, user, id int64, channel, mode string) (any, error) {
+			return invoiceAdapterResult(paymentSvc.CreateMarketplace(ctx, user, id, channel, mode))
+		}, Balance: func(ctx context.Context, user, id int64) (any, error) {
+			return invoiceAdapterResult(marketplaceSvc.PayBalance(ctx, user, id))
+		}},
+	}), jwt)
 	orderhandler.RegisterOrderHandlers(server, orderSvc, jwt, paymentSvc)
 	paymenthandler.RegisterHandlers(server, paymentSvc, jwt)
 	paymenthandler.RegisterSettings(server, db.G, jwt, paymentservice.NewSettingsManager(db.G, snapshotKey, paymentConfig, alipaySecretFile))
@@ -779,4 +796,14 @@ func versionHandler(w http.ResponseWriter, _ *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 0, "data": map[string]string{
 		"version": version, "commit": commit, "branch": branch, "buildTime": buildTime,
 	}})
+}
+
+// Invoice checkout preserves reviewed business messages without exposing raw
+// database/provider errors or letting the billing module import payment code.
+func invoiceAdapterResult(value any, err error) (any, error) {
+	var business *paymentservice.BusinessError
+	if errors.As(err, &business) {
+		return nil, &invoiceapi.UserError{Message: business.Message}
+	}
+	return value, err
 }
