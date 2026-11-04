@@ -36,7 +36,7 @@ func validateReleaseTree(root string, artifact bool) error {
 			if !allowed[strings.ToLower(filepath.Ext(name))] && !marketingVideo {
 				return fmt.Errorf("unexpected public release file: %s", relative)
 			}
-			portalManifest := filepath.ToSlash(relative) == "portal/themes.json" || filepath.ToSlash(relative) == "portal/cloudflare-reference.json"
+			portalManifest := filepath.ToSlash(relative) == "portal/themes.json" || filepath.ToSlash(relative) == "portal/cloudflare-reference.json" || filepath.ToSlash(relative) == "portal/routes.json"
 			if strings.HasSuffix(name, ".json") && name != "version.json" && name != "wallet-payment-channels.json" && !portalManifest {
 				return fmt.Errorf("unregistered public data file: %s", relative)
 			}
