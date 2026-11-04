@@ -66,7 +66,7 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 		raw = unavailableLifecycle(detail, h.UpstreamInstanceID)
 		// A host that is still provisioning (Pending) has no power state yet;
 		// use its lifecycle so the list stops showing it as running.
-		if raw == "" && detailErr == nil && detail != nil && detail.Status != "" && detail.ID == h.UpstreamInstanceID {
+		if raw == "" && detailErr == nil && detail != nil && normalizePower(detail.Status) == "provisioning" && detail.ID == h.UpstreamInstanceID {
 			raw = detail.Status
 		}
 		if detailErr != nil || raw == "" {
