@@ -10,6 +10,7 @@ import (
 	"ddyidc/internal/shared/pointsevents"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/tasks"
+	"ddyidc/internal/shared/upgradequote"
 	"ddyidc/internal/upstream/provider/contracts"
 	"ddyidc/pkg/outbound"
 	"encoding/json"
@@ -45,15 +46,21 @@ type UpgradeInput struct {
 	QuoteID   string `json:"quoteId"`
 }
 type UpgradeView struct {
-	ID        string `json:"id"`
-	ProductID string `json:"productId"`
-	Name      string `json:"name"`
-	Cycle     string `json:"cycle"`
-	Amount    string `json:"amount"`
-	State     string `json:"state"`
-	ExpiresAt string `json:"expiresAt"`
-	OrderID   string `json:"orderId,omitempty"`
-	OrderNo   string `json:"orderNo,omitempty"`
+	ID                  string `json:"id"`
+	ProductID           string `json:"productId"`
+	Name                string `json:"name"`
+	Cycle               string `json:"cycle"`
+	Amount              string `json:"amount"`
+	State               string `json:"state"`
+	ExpiresAt           string `json:"expiresAt"`
+	OrderID             string `json:"orderId,omitempty"`
+	OrderNo             string `json:"orderNo,omitempty"`
+	SourceName          string `json:"sourceName,omitempty"`
+	SourceUnitPrice     string `json:"sourceUnitPrice,omitempty"`
+	TargetUnitPrice     string `json:"targetUnitPrice,omitempty"`
+	FullCycleDifference string `json:"fullCycleDifference,omitempty"`
+	RemainingSeconds    int64  `json:"remainingSeconds,omitempty"`
+	CycleSeconds        int64  `json:"cycleSeconds,omitempty"`
 }
 
 func upgradeView(row Upgrade) UpgradeView {
@@ -86,6 +93,13 @@ func (s *Service) UpgradePlans(ctx context.Context, customer, id int64) ([]Upgra
 	if e != nil {
 		return nil, e
 	}
+	real, e := provider.GetInstanceDetail(parseHostID(host.UpstreamInstanceID))
+	if e != nil {
+		return nil, e
+	}
+	if real == nil || real.ID != host.UpstreamInstanceID || real.ProductID == "" || upgradequote.Months(real.BillingCycle) == 0 {
+		return nil, errors.New("当前套餐与计费周期未确认，请先刷新实例信息")
+	}
 	var products []struct {
 		ID       int64
 		Name     string
@@ -97,8 +111,16 @@ func (s *Service) UpgradePlans(ctx context.Context, customer, id int64) ([]Upgra
 	out := []UpgradePlanView{}
 	for _, plan := range plans {
 		for _, product := range products {
-			if product.ID != host.ProductID && product.RemoteID == plan.ProductID {
-				out = append(out, UpgradePlanView{ProductID: fmt.Sprint(product.ID), Name: product.Name, Cycles: plan.Cycles})
+			if product.RemoteID != real.ProductID && product.RemoteID == plan.ProductID {
+				cycles := []contracts.UpgradeCycle{}
+				for _, cycle := range plan.Cycles {
+					if cycle.ID == real.BillingCycle {
+						cycles = append(cycles, cycle)
+					}
+				}
+				if len(cycles) > 0 {
+					out = append(out, UpgradePlanView{ProductID: fmt.Sprint(product.ID), Name: product.Name, Cycles: cycles})
+				}
 			}
 		}
 	}
@@ -106,6 +128,7 @@ func (s *Service) UpgradePlans(ctx context.Context, customer, id int64) ([]Upgra
 }
 func (s *Service) QuoteUpgrade(ctx context.Context, customer, id int64, in UpgradeInput) (UpgradeView, error) {
 	var row Upgrade
+	var pricing upgradequote.Basis
 	if s.db == nil || outbound.DetailReadOnly() {
 		return UpgradeView{}, ErrUnsupported
 	}
@@ -169,6 +192,17 @@ func (s *Service) QuoteUpgrade(ctx context.Context, customer, id int64, in Upgra
 				continue
 			}
 			if previous.CustomerID == customer && previous.TargetProductID == target && previous.Cycle == in.Cycle && previous.OwnershipVersion == host.OwnershipVersion {
+				verified, err := s.verifyUpgradeRetailRow(ctx, tx, &host, previous)
+				if err != nil {
+					if previous.State == "quoted" {
+						if err := tx.Model(&previous).Update("state", "cancelled").Error; err != nil {
+							return err
+						}
+						continue
+					}
+					return upgradequote.ErrRequote
+				}
+				pricing = verified
 				row = previous
 				return nil
 			}
@@ -198,19 +232,24 @@ func (s *Service) QuoteUpgrade(ctx context.Context, customer, id int64, in Upgra
 		if e != nil || cost <= 0 {
 			return errors.New("升级成本未确认")
 		}
-		original, e := balance.ParseMoney(quote.OriginalAmount)
+		now := time.Now().UTC().Truncate(time.Second)
+		pricing, e = upgradeRetailBasis(ctx, tx, &host, real, target, in.Cycle, now)
 		if e != nil {
 			return e
 		}
-		amount, e := retailRenewal(original, product.Rate, "0", 0)
+		amount, e := pricing.Amount()
 		if e != nil || amount < cost {
-			return errors.New("升级售价不能低于已确认成本")
+			return errors.New("升降配售价低于已确认成本或无法核算，请人工核查")
 		}
-		now := time.Now().UTC()
-		row = Upgrade{ID: snowflake.GenID(), OrderID: snowflake.GenID(), InstanceID: id, CustomerID: customer, OwnershipVersion: host.OwnershipVersion, SupplierID: *host.UpstreamProviderID, HostID: host.UpstreamInstanceID, SourceProductID: host.ProductID, TargetProductID: target, RemoteProductID: product.RemoteID, TargetName: product.Name, Cycle: in.Cycle, Amount: amount, Cost: cost, RequestID: in.RequestID, State: "quoted", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now, UpdatedAt: now}
+
+		row = Upgrade{ID: snowflake.GenID(), OrderID: snowflake.GenID(), InstanceID: id, CustomerID: customer, OwnershipVersion: host.OwnershipVersion, SupplierID: *host.UpstreamProviderID, HostID: host.UpstreamInstanceID, SourceProductID: pricing.SourceProductID, TargetProductID: target, RemoteProductID: product.RemoteID, TargetName: product.Name, Cycle: in.Cycle, Amount: amount, Cost: cost, RequestID: in.RequestID, State: "quoted", ExpiresAt: now.Add(10 * time.Minute), CreatedAt: now, UpdatedAt: now}
 		return tx.Create(&row).Error
 	})
-	return upgradeView(row), e
+	view := upgradeView(row)
+	if e == nil {
+		fillUpgradePricing(&view, pricing)
+	}
+	return view, e
 }
 func (s *Service) CreateUpgradeOrder(ctx context.Context, customer, id int64, in UpgradeInput) (UpgradeView, error) {
 	var row Upgrade
@@ -227,7 +266,7 @@ func (s *Service) CreateUpgradeOrder(ctx context.Context, customer, id int64, in
 			return ErrForbidden
 		}
 		if row.State == "unpaid" {
-			return nil
+			return upgradequote.CheckTx(ctx, tx, customer, row.OrderID, int64(row.Amount), time.Now())
 		}
 		if row.State != "quoted" || time.Now().After(row.ExpiresAt) || host.Status == 6 || host.OwnershipVersion != row.OwnershipVersion || host.UpstreamProviderID == nil || *host.UpstreamProviderID != row.SupplierID || host.UpstreamInstanceID != row.HostID {
 			return errors.New("升级报价已过期或机器状态已变化")
@@ -238,12 +277,16 @@ func (s *Service) CreateUpgradeOrder(ctx context.Context, customer, id int64, in
 		if e := s.refundHostUnlocked(tx, id); e != nil {
 			return e
 		}
+		pricing, err := s.verifyUpgradeRetailRow(ctx, tx, &host, row)
+		if err != nil {
+			return err
+		}
 		now := time.Now().UTC()
 		o := order.Order{ID: row.OrderID, OrderNo: fmt.Sprintf("UPG%d", row.ID), CustomerID: customer, TenantID: host.TenantID, TotalAmount: int64(row.Amount), PayAmount: int64(row.Amount), Status: 1, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&o).Error; e != nil {
 			return e
 		}
-		snapshot, _ := json.Marshal(map[string]any{"type": "instance_upgrade", "instanceId": fmt.Sprint(id), "targetProductId": fmt.Sprint(row.TargetProductID), "billingCycle": row.Cycle})
+		snapshot, _ := json.Marshal(map[string]any{"type": "instance_upgrade", "instanceId": fmt.Sprint(id), "targetProductId": fmt.Sprint(row.TargetProductID), "billingCycle": row.Cycle, "pricing": pricing})
 		item := order.OrderItem{OrderID: o.ID, ProductID: row.TargetProductID, ProductName: row.TargetName + "（升降配）", ModuleType: "instance_upgrade", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(row.Amount), Subtotal: int64(row.Amount), InstanceID: &id, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
 			return e
@@ -288,6 +331,9 @@ func (s *Service) PayUpgradeBalance(ctx context.Context, customer, id, orderID i
 			return e
 		}
 		if e := s.refundHostUnlocked(tx, id); e != nil {
+			return e
+		}
+		if e := upgradequote.CheckTx(ctx, tx, customer, orderID, int64(row.Amount), time.Now()); e != nil {
 			return e
 		}
 		var pending int64
@@ -390,6 +436,13 @@ func (s *Service) ProvisionUpgrade(ctx context.Context, customer, orderID int64,
 	}
 	if row.State != "unpaid" {
 		return true, errors.New("升级结果待核对，禁止重复创建账单或付款")
+	}
+	real, readErr := provider.GetInstanceDetail(parseHostID(row.HostID))
+	if readErr != nil {
+		return true, readErr
+	}
+	if err := s.upgradeSourceUnchanged(ctx, row, real); err != nil {
+		return true, err
 	}
 	claim := s.db.WithContext(ctx).Model(&Upgrade{}).Where("id=? AND state='unpaid'", row.ID).Updates(map[string]any{"state": "creating", "updated_at": time.Now()})
 	if claim.Error != nil {
