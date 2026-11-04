@@ -64,6 +64,11 @@ func (s *Service) Status(ctx context.Context, customerID, instanceID int64) (*St
 		// Only a matching, explicit lifecycle result may replace the old snapshot.
 		detail, detailErr := p.GetInstanceDetail(parseHostID(h.UpstreamInstanceID))
 		raw = unavailableLifecycle(detail, h.UpstreamInstanceID)
+		// A host that is still provisioning (Pending) has no power state yet;
+		// use its lifecycle so the list stops showing it as running.
+		if raw == "" && detailErr == nil && detail != nil && detail.Status != "" && detail.ID == h.UpstreamInstanceID {
+			raw = detail.Status
+		}
 		if detailErr != nil || raw == "" {
 			view.Warning = "实时状态同步失败或超时，显示上次状态；请稍后刷新"
 			return view, nil

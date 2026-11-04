@@ -493,6 +493,13 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.PowerStatus = detail.PowerStatus
 	}
 	status := statusCode(detail.PowerStatus, host.Status)
+	// Some suppliers only fill domainstatus (e.g. Pending) and leave the power
+	// field empty. Treat that lifecycle as the status source instead of falling
+	// back to the stale local value, which used to show an unprovisioned host
+	// as running.
+	if detail.PowerStatus == "" && detail.Status != "" {
+		status = statusCode(detail.Status, host.Status)
+	}
 	if lifecycle := unavailableLifecycle(detail, host.UpstreamInstanceID); lifecycle != "" {
 		result.PowerStatus = lifecycle
 		status = statusCode(lifecycle, host.Status)
