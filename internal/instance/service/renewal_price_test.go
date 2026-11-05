@@ -21,7 +21,7 @@ func TestApplyRenewalOverride(t *testing.T) {
 	}{
 		{"fixed price", "fixed", 180, list, cost, 18000, 4000, true},
 		{"percent price", "percent", 90, list, cost, 19800, 2200, true},
-		{"fixed below cost", "fixed", 100, list, cost, list, 0, false},
+		{"fixed below cost allowed", "fixed", 100, list, cost, 10000, 12000, true},
 		{"percent above 100", "percent", 120, list, cost, list, 0, false},
 		{"fixed above list", "fixed", 300, list, cost, list, 0, true},
 		{"unknown mode", "bogus", 90, list, cost, list, 0, false},
