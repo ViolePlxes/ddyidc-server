@@ -305,7 +305,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func publicSpec(v domain.ProductSpec) map[string]any {
-	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
+	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "osFamily": v.OSFamily, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
 }
 func publicSpecs(values []*domain.ProductSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(values))
