@@ -71,12 +71,11 @@ func moneyFromFloat(value float64) balance.Money {
 	return balance.Money(int64(value*100 + 0.5))
 }
 
-// applyRenewalOverride returns the final renewal price and its discount against
-// the catalogue amount. A price below procurement cost is ignored rather than
-// silently selling at a loss.
-func applyRenewalOverride(mode string, value float64, list, cost balance.Money) (balance.Money, balance.Money, bool) {
+// overridePrice computes the effective price for a fixed or percentage rule.
+// It never exceeds the catalogue amount and never drops to zero.
+func overridePrice(mode string, value float64, list balance.Money) (balance.Money, bool) {
 	if list <= 0 || value <= 0 {
-		return list, 0, false
+		return list, false
 	}
 	var final balance.Money
 	switch mode {
@@ -84,17 +83,31 @@ func applyRenewalOverride(mode string, value float64, list, cost balance.Money) 
 		final = moneyFromFloat(value)
 	case "percent":
 		if value > 100 {
-			return list, 0, false
+			return list, false
 		}
 		final = balance.Money(int64(float64(list)*value/100 + 0.5))
 	default:
-		return list, 0, false
+		return list, false
 	}
 	if final <= 0 {
-		return list, 0, false
+		return list, false
 	}
 	if final > list {
 		final = list
+	}
+	return final, true
+}
+
+// applyRenewalOverride returns the final renewal price and its discount against
+// the catalogue amount. A price below the upstream procurement cost is rejected
+// so a configured contract price can never silently sell at a loss.
+func applyRenewalOverride(mode string, value float64, list, cost balance.Money) (balance.Money, balance.Money, bool) {
+	final, ok := overridePrice(mode, value, list)
+	if !ok {
+		return list, 0, false
+	}
+	if cost > 0 && final < cost {
+		return list, 0, false
 	}
 	return final, list - final, true
 }
@@ -217,6 +230,17 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 			continue
 		}
 		matched++
+		list := option.ListAmountMoney()
+		if list <= 0 {
+			list = option.AmountMoney()
+		}
+		final, ok := overridePrice(mode, value, list)
+		if !ok {
+			return nil, errors.New("调价数值无效")
+		}
+		if option.Cost > 0 && final < option.Cost {
+			return nil, fmt.Errorf("「%s」不得低于上游成本价", option.Label)
+		}
 	}
 	if matched == 0 {
 		return nil, errors.New("该实例没有可用的续费周期")
