@@ -335,3 +335,65 @@ func (q RenewalOption) ListAmountMoney() balance.Money {
 	}
 	return q.AmountMoney()
 }
+
+// applyRenewalPriceDisplay overlays active contract prices on a page of list
+// rows without calling the supplier. The stored listDisplay amount is the
+// catalogue retail price; a fixed/percent override replaces it for display.
+func (s *Service) applyRenewalPriceDisplay(ctx context.Context, items []ListItem) {
+	if s.db == nil || len(items) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(items))
+	candidates := 0
+	for _, item := range items {
+		if item.RenewalAmount == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(item.ID, 10, 64)
+		if err != nil || id <= 0 {
+			continue
+		}
+		ids = append(ids, id)
+		candidates++
+	}
+	if candidates == 0 {
+		return
+	}
+	now := time.Now()
+	var rows []RenewalPriceOverride
+	if err := s.db.WithContext(ctx).
+		Where("instance_id IN ? AND status='active' AND effective_from<=? AND (effective_to IS NULL OR effective_to>?)", ids, now, now).
+		Order("created_at DESC").Find(&rows).Error; err != nil {
+		return
+	}
+	byInstance := make(map[int64]RenewalPriceOverride, len(rows))
+	for _, row := range rows {
+		if _, exists := byInstance[row.InstanceID]; !exists {
+			byInstance[row.InstanceID] = row
+		}
+	}
+	for i := range items {
+		id, err := strconv.ParseInt(items[i].ID, 10, 64)
+		if err != nil {
+			continue
+		}
+		override, ok := byInstance[id]
+		if !ok {
+			continue
+		}
+		if override.Cycle != "" && !strings.EqualFold(override.Cycle, items[i].BillingCycle) {
+			continue
+		}
+		list, err := balance.ParseMoney(items[i].RenewalAmount)
+		if err != nil || list <= 0 {
+			continue
+		}
+		value, err := strconv.ParseFloat(override.Value, 64)
+		if err != nil {
+			continue
+		}
+		if final, ok := overridePrice(override.Mode, value, list); ok {
+			items[i].RenewalAmount = final.String()
+		}
+	}
+}

@@ -249,6 +249,7 @@ func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*Li
 	for _, row := range rows {
 		items = append(items, listItem(row))
 	}
+	s.applyRenewalPriceDisplay(ctx, items)
 	// Resolve migration editability in one local query, without fetching row details.
 	if s.db != nil {
 		ids := make([]int64, 0, len(rows))
@@ -439,7 +440,8 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 						continue
 					}
 					if amount, e := retailRenewal(original, pricing.Rate, "0", 0); e == nil {
-						result.RenewalAmount = amount.String()
+						final, _, _ := s.resolveRenewalPrice(ctx, host.ID, quote.Cycle, amount, cost)
+						result.RenewalAmount = final.String()
 						result.Warning = ""
 					}
 					break
