@@ -1,6 +1,8 @@
 package order
 
 import (
+	invoice "ddyidc/internal/billing/api"
+	balance "ddyidc/internal/billing/balance"
 	"errors"
 	"fmt"
 	"strings"
@@ -28,11 +30,21 @@ func acceptPaymentTx(tx *gorm.DB, id, customerID, amountCents int64, payType *ui
 		return false, errors.New("invalid order payment transition")
 	}
 	values := map[string]any{"status": dom.OrderStatusPaid, "paid_at": at, "updated_at": at}
+	eligible, e := invoice.CheckOrderPaymentTx(tx, id, customerID, balance.Money(amountCents))
+	if e != nil || !eligible {
+		return false, e
+	}
 	if payType != nil {
 		values["pay_type"] = *payType
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=? AND pay_amount=?", id, customerID, dom.OrderStatusPending, amountCents).Updates(values)
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e = invoice.AcceptSourcePaymentTx(tx, "order", id, customerID, balance.Money(amountCents), fmt.Sprint("order:", id), at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 func CompletePaidTx(tx *gorm.DB, id, customerID int64, at time.Time) (bool, error) {
@@ -44,9 +56,19 @@ func AcceptBalancePaymentTx(tx *gorm.DB, id, customerID, amountCents int64, at t
 	if tx == nil || id <= 0 || customerID <= 0 || amountCents <= 0 || at.IsZero() {
 		return false, errors.New("invalid balance payment transition")
 	}
+	eligible, e := invoice.CheckOrderPaymentTx(tx, id, customerID, balance.Money(amountCents))
+	if e != nil || !eligible {
+		return false, e
+	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=? AND pay_amount=?", id, customerID, dom.OrderStatusPending, amountCents).
 		Updates(map[string]any{"status": dom.OrderStatusPaid, "balance_amount": amountCents, "pay_type": 3, "paid_at": at, "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e = invoice.AcceptSourcePaymentTx(tx, "order", id, customerID, balance.Money(amountCents), fmt.Sprint("balance-order:", id), at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 // Captured funds may arrive after cancellation. Only the original owner and
@@ -57,7 +79,13 @@ func RecordCapturedModulePaymentForRefundTx(tx *gorm.DB, id, customerID, amountC
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status IN ? AND pay_amount=?", id, customerID, []int{int(dom.OrderStatusPending), int(dom.OrderStatusCancelled)}, amountCents).
 		Updates(map[string]any{"status": dom.OrderStatusPaid, "paid_at": at, "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e := invoice.CaptureForRefundTx(tx, "order", id, customerID, balance.Money(amountCents), at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 func RefundPaidTx(tx *gorm.DB, id, customerID int64, at time.Time) (bool, error) {
@@ -91,7 +119,13 @@ func completeReviewedRefundTx(tx *gorm.DB, id, customerID, applicationID int64, 
 		next = dom.OrderStatusCompleted
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status IN (2,5,6)", id, customerID).Updates(map[string]any{"status": next, "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e := invoice.RecordReviewedRefundTx(tx, "order", id, customerID, applicationID, source, at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 func CancelPendingTx(tx *gorm.DB, id, customerID int64, reason string, at time.Time) (bool, error) {
@@ -100,7 +134,13 @@ func CancelPendingTx(tx *gorm.DB, id, customerID int64, reason string, at time.T
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=?", id, customerID, dom.OrderStatusPending).
 		Updates(map[string]any{"status": dom.OrderStatusCancelled, "cancel_reason": reason, "cancelled_at": at, "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e := invoice.SyncSourceStateTx(tx, "order", id, customerID, at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 func transitionPaidTx(tx *gorm.DB, id, customerID int64, next uint8, at time.Time) (bool, error) {
@@ -109,7 +149,13 @@ func transitionPaidTx(tx *gorm.DB, id, customerID int64, next uint8, at time.Tim
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=?", id, customerID, dom.OrderStatusPaid).
 		Updates(map[string]any{"status": next, "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e := invoice.SyncSourceStateTx(tx, "order", id, customerID, at); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 // ApplyFundedCouponTx owns the payable-amount update after the module atomically
@@ -126,7 +172,13 @@ func ApplyFundedCouponTx(tx *gorm.DB, id, user, coupon, discount int64, at time.
 		return false, errors.New("funded coupon proof missing")
 	}
 	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status=1 AND coupon_id IS NULL AND discount_amount=0 AND pay_amount>?", id, user, discount).Updates(map[string]any{"coupon_id": coupon, "coupon_amount": discount, "discount_amount": discount, "pay_amount": gorm.Expr("pay_amount-?", discount), "updated_at": at})
-	return r.RowsAffected == 1, r.Error
+	if r.Error != nil || r.RowsAffected != 1 {
+		return false, r.Error
+	}
+	if e := invoice.IssueOrderTx(tx, id); e != nil {
+		return false, e
+	}
+	return true, nil
 }
 
 // UpdateUnpaidRenewalAmountTx follows the matching order coupon transition in

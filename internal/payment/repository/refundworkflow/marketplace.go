@@ -1,6 +1,7 @@
 package refundworkflow
 
 import (
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/pushtransfer"
@@ -135,6 +136,11 @@ func finalizeMarketplace(tx *gorm.DB, r Request, calc Calculation, now time.Time
 	}
 	if err := tx.Table("system.marketplace_orders").Where("id=? AND buyer_id=?", m.ID, m.BuyerID).Updates(map[string]any{"status": "refunded", "updated_at": now}).Error; err != nil {
 		return err
+	}
+	if m.SettlementMode != "balance" {
+		if e := invoice.RecordReviewedRefundTx(tx, "marketplace", m.ID, m.BuyerID, r.ApplicationID, "marketplace", now); e != nil {
+			return e
+		}
 	}
 	if err := tx.Table("system.marketplace_listings").Where("id=?", m.ListingID).Updates(map[string]any{"status": "refunded", "updated_at": now}).Error; err != nil {
 		return err

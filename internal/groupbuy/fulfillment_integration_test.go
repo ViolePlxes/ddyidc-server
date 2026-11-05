@@ -122,6 +122,17 @@ func TestDurableGroupMySQL(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	// Joining paid once; delivery planning must reuse, not issue another bill.
+	var invoiceCount int64
+	must(db.Table("billing.payable_invoices").Where("customer_id IN (93011,93012)").Count(&invoiceCount).Error)
+	if invoiceCount != 2 {
+		t.Fatal("group delivery duplicated/lost paid invoices", invoiceCount)
+	}
+	var paidInvoiceCount int64
+	must(db.Table("billing.payable_invoices").Where("customer_id IN (93011,93012) AND source_type='groupbuy' AND status='paid' AND amount_due=1.00 AND amount_paid=1.00").Count(&paidInvoiceCount).Error)
+	if paidInvoiceCount != 2 {
+		t.Fatal("group payment was not recorded in billing", paidInvoiceCount)
+	}
 	var members []Record
 	must(db.Where("leader_id=?", leader.ID).Order("id ASC").Find(&members).Error)
 	if len(members) != 2 {

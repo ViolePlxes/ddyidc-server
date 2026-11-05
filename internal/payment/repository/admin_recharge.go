@@ -1,6 +1,7 @@
 package payment
 
 import (
+	invoice "ddyidc/internal/billing/api"
 	"fmt"
 	"strings"
 	"time"
@@ -27,6 +28,9 @@ func RecordAdminRechargeTx(tx *gorm.DB, customerID, adminID int64, notes string,
 	}
 	p := dom.Payment{ID: paymentID, PaymentNo: fmt.Sprintf("AP%d", paymentID), BizType: dom.BizRecharge, BizID: orderID, CustomerID: customerID, Channel: channel, OutTradeNo: fmt.Sprintf("AP%d", paymentID), TransactionID: transactionID, Amount: amount.String(), AmountFen: int64(amount), Currency: "CNY", Status: dom.StatusPaid, PaidAt: &now, ExpireAt: now, CreatedAt: now, UpdatedAt: now}
 	if err := tx.Create(&p).Error; err != nil {
+		return 0, err
+	}
+	if err := invoice.AttachPaidPaymentTx(tx, "recharge", orderID, customerID, paymentID, amount, "CNY"); err != nil {
 		return 0, err
 	}
 	return paymentID, nil

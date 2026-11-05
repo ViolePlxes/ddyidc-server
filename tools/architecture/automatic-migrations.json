@@ -22,5 +22,13 @@
   "060_manual_product_revision_scope.sql": {
     "sha256": "9b6cbae7bb90d93ebe0d481de85ac9b76166cbad190d8a7b863b6c24f6fb8a9e",
     "rollbackCompatible": true
+  },
+  "061_billing_invoices.sql": {
+    "sha256": "4328cd134bff1ed296b737d1d06739382317765e94dbfea8ed2e7bc7ef81e247",
+    "rollbackCompatible": true
+  },
+  "062_billing_invoice_backfill.sql": {
+    "sha256": "8e31b3194aa8af9658d2036b524e45f61fa2fbbd1a9f34dea247ad3559e71e69",
+    "rollbackCompatible": true
   }
 }

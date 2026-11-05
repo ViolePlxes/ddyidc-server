@@ -2,6 +2,7 @@ package cdnsell
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/distsync"
 	schemamode "ddyidc/internal/shared/schema"
@@ -334,6 +335,9 @@ func (s *Service) Purchase(ctx context.Context, userID, productID int64, qty int
 		}
 		item := orderdom.OrderItem{OrderID: mainID, ProductID: p.ID, ProductName: p.Name, ModuleType: "cdnsell", ConfigSnapshot: string(snap), Qty: uint(qty), UnitPrice: unit, Subtotal: amount, DeliveryStatus: 0, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
 			return e
 		}
 		return tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,product_id,traffic_bytes,amount,snapshot,status,created_at) VALUES(?,?,?,'traffic_pack',?,?,?,?,?,'pending',?)", bizID, no, userID, mainID, p.ID, p.CapacityBytes*int64(qty), Yuan(amount), string(snap), now).Error

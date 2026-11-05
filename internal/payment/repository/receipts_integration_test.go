@@ -49,6 +49,9 @@ func TestReceiptRacesMySQL(t *testing.T) {
 			if e := tx.Exec("INSERT INTO `order`.orders (id,order_no,customer_id,pay_amount,status) VALUES (980001,'F08OWNER',77,100,1)").Error; e != nil {
 				return e
 			}
+			if e := seedInvoiceOrderItem(tx, 980001); e != nil {
+				return e
+			}
 			at := time.Now()
 			if ok, e := orderstate.AcceptPaymentTx(tx, 980001, 78, 100, 2, at); e != nil || ok {
 				t.Fatalf("wrong owner accepted: %v %v", ok, e)
@@ -78,6 +81,9 @@ func TestReceiptRacesMySQL(t *testing.T) {
 				t.Fatalf("capture regressed completed order: %v %v", ok, e)
 			}
 			if e := tx.Exec("INSERT INTO `order`.orders (id,order_no,customer_id,pay_amount,status) VALUES (980002,'F08LATE',77,100,3)").Error; e != nil {
+				return e
+			}
+			if e := seedInvoiceOrderItem(tx, 980002); e != nil {
 				return e
 			}
 			if ok, e := orderstate.RecordCapturedModulePaymentForRefundTx(tx, 980002, 78, 100, at); e != nil || ok {
@@ -113,6 +119,7 @@ func TestReceiptRacesMySQL(t *testing.T) {
 		if err := database.Create(&p).Error; err != nil {
 			t.Fatal(err)
 		}
+		seedInvoicePayment(t, database, p)
 		return dom.VerifiedNotification{Channel: "alipay", OutTradeNo: p.OutTradeNo, TransactionID: fmt.Sprintf("isolated-channel-%d", paymentID), AmountFen: 100, Currency: "CNY", PaidAt: time.Now()}
 	}
 	first := create(71001, 72001, 1, dom.StatusClosed)

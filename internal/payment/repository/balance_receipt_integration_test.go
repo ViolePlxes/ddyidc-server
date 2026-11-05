@@ -32,6 +32,7 @@ func TestVerifiedRechargeIntegrityReviewMySQL(t *testing.T) {
 	must(tx.Table("payment.recharge_orders").Create(map[string]any{"id": recharge, "recharge_no": fmt.Sprintf("RL%d", recharge), "customer_id": customer, "amount": 1000, "status": 1, "channel": "alipay"}).Error)
 	p := dom.Payment{ID: payment, PaymentNo: fmt.Sprintf("RL%d", payment), BizType: dom.BizRecharge, BizID: recharge, CustomerID: customer, Channel: "alipay", OutTradeNo: fmt.Sprintf("RL%d", payment), Amount: "10.00", AmountFen: 1000, Currency: "CNY", Status: dom.StatusPending, ExpireAt: time.Now().Add(time.Hour)}
 	must(tx.Create(&p).Error)
+	seedInvoicePayment(t, tx, p)
 	n := dom.VerifiedNotification{Channel: "alipay", OutTradeNo: p.OutTradeNo, TransactionID: fmt.Sprintf("VERIFIED-%d", payment), AmountFen: 1000, Currency: "CNY", PaidAt: time.Now(), SafeRaw: `{"verified":true}`}
 	repo := &GormRepository{db: tx}
 	completed, changed, e := repo.Complete(ctx, n)

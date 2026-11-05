@@ -1,9 +1,4 @@
 package billing
 
-// TODO: 定义 billing 域的数据访问接口（Repository 接口）
-// 其他域只能通过接口调用，不能直接访问实现
-// 示例：
-// type Repository interface {
-//     FindByID(ctx context.Context, id int64) (*domain.Customer, error)
-//     Save(ctx context.Context, c *domain.Customer) error
-// }
+// Invoice persistence and locked source adapters live in invoice.go.
+// Runtime schema creation and direct balance writes are prohibited.

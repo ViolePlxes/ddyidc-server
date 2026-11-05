@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	"ddyidc/internal/marketplace"
 	"ddyidc/internal/order/inventory"
@@ -90,7 +91,7 @@ func reviewReceipt(tx *gorm.DB, p *dom.Payment, n dom.VerifiedNotification, paid
 		return err
 	}
 	p.Status, p.TransactionID, p.PaidAt = dom.StatusReview, n.TransactionID, &paidAt
-	return nil
+	return invoice.ReviewReceiptTx(tx, p.ID, p.CustomerID, paidAt)
 }
 
 // ReconcileRechargeReceipt resumes a verified ledger-blocked recharge or order.
@@ -156,6 +157,9 @@ func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, admin
 		if conflicting > 0 {
 			return ErrInvalidState
 		}
+		if e := invoice.AuthorizeReceiptResumeTx(tx, p.ID, p.CustomerID, money, p.Currency); e != nil {
+			return e
+		}
 		now := time.Now()
 		if external {
 			if p.BizType == dom.BizMarketplace {
@@ -187,6 +191,12 @@ func (r *GormRepository) ReconcileRechargeReceipt(ctx context.Context, id, admin
 			return e
 		}
 		p.Status = dom.StatusPaid
+		if p.BizType == dom.BizRecharge {
+			if e := invoice.AcceptSourcePaymentTx(tx, "recharge", p.BizID, p.CustomerID, money, fmt.Sprint(p.ID), *p.PaidAt); e != nil {
+				return e
+			}
+		}
+
 		action := "resume_verified_recharge"
 		if external {
 			action = "resume_verified_order_payment"

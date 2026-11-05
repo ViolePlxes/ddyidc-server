@@ -35,6 +35,7 @@ func TestExternalPaymentLedgerMySQL(t *testing.T) {
 		must(tx.Table("order.orders").Create(map[string]any{"id": orderID, "order_no": fmt.Sprintf("EL%d", orderID), "customer_id": customer, "total_amount": 10900, "pay_amount": 10900, "status": 1}).Error)
 		p := dom.Payment{ID: paymentID, PaymentNo: fmt.Sprintf("EL%d", paymentID), BizType: dom.BizOrder, BizID: orderID, OrderID: &orderID, CustomerID: customer, Channel: channel, OutTradeNo: fmt.Sprintf("EL%d", paymentID), Amount: "109.00", AmountFen: 10900, Currency: "CNY", Status: dom.StatusPending, ExpireAt: time.Now().Add(time.Hour)}
 		must(tx.Create(&p).Error)
+		seedInvoicePayment(t, tx, p)
 		n := dom.VerifiedNotification{Channel: channel, OutTradeNo: p.OutTradeNo, TransactionID: fmt.Sprintf("EL-TX-%d", paymentID), AmountFen: 10900, Currency: "CNY", PaidAt: time.Now()}
 		bad := n
 		bad.AmountFen--
@@ -140,6 +141,7 @@ func TestExternalPaymentLedgerMySQL(t *testing.T) {
 	must(tx.Table("order.orders").Create(map[string]any{"id": brokenOrder, "order_no": fmt.Sprintf("EB%d", brokenOrder), "customer_id": customer, "pay_amount": 100, "status": 1}).Error)
 	bp := dom.Payment{ID: brokenPayment, PaymentNo: fmt.Sprintf("EB%d", brokenPayment), BizType: dom.BizOrder, BizID: brokenOrder, CustomerID: customer, Channel: "wechat", OutTradeNo: fmt.Sprintf("EB%d", brokenPayment), Amount: "1.00", AmountFen: 100, Currency: "CNY", Status: dom.StatusPending, ExpireAt: time.Now().Add(time.Hour)}
 	must(tx.Create(&bp).Error)
+	seedInvoicePayment(t, tx, bp)
 	must(tx.Exec("UPDATE billing.accounts SET balance=100.01 WHERE customer_id=?", customer).Error) // isolated corrupt fixture
 	bn := dom.VerifiedNotification{Channel: "wechat", OutTradeNo: bp.OutTradeNo, TransactionID: fmt.Sprintf("EB-TX-%d", brokenPayment), AmountFen: 100, Currency: "CNY", PaidAt: time.Now()}
 	for attempt := 0; attempt < 2; attempt++ {

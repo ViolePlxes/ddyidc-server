@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	md "ddyidc/internal/marketing/domain"
 	mr "ddyidc/internal/marketing/repository"
@@ -279,6 +280,9 @@ func (s *Service) Create(ctx context.Context, a Actor, in Input) (*Batch, error)
 			return e
 		}
 		if e = tx.Create(&item).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
 			return e
 		}
 		return s.event(tx, result.ID, 0, a, "created", fmt.Sprintf("create:%d", result.ID), b, p)

@@ -2,6 +2,8 @@ package order
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
+	balance "ddyidc/internal/billing/balance"
 	rep "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/testenv"
 	upstream "ddyidc/internal/upstream/service"
@@ -14,6 +16,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSupplierAdmissionMySQL(t *testing.T) {
@@ -60,6 +63,7 @@ func TestSupplierAdmissionMySQL(t *testing.T) {
 	upstream.Default = upstream.NewStore(db, key)
 	defer func() { upstream.Default = previous }()
 	service := NewService(rep.NewRepository(db), nil, key)
+	exec("INSERT INTO customer.customers(id,username,password_hash,status) VALUES(951301,'admission-customer','disabled-test-login',1)")
 	input := func(id, key string) *CreateOrderInput {
 		return &CreateOrderInput{RequestID: key, ProductID: id, DurationMonth: 1, Quantity: 1, BillingCycle: "monthly"}
 	}
@@ -97,6 +101,24 @@ func TestSupplierAdmissionMySQL(t *testing.T) {
 		t.Fatal("stopped supplier accepted")
 	}
 	exec("UPDATE common.suppliers SET status=1 WHERE id=951101")
+	// Delivery requires a real prepaid group fixture, not only a made-up record ID.
+	if e := db.Transaction(func(tx *gorm.DB) error {
+		if _, e := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: 951301, Type: "manual_credit", Amount: "10.00", RefType: "customer", RefID: 951301, Channel: "admin_manual", RequestID: "admission-group-seed", AdminID: 1, AdminName: "isolated", OperatorIP: "127.0.0.1", ClientNotes: "测试资金", Notes: "isolated group fixture"}); e != nil {
+			return e
+		}
+		if e := tx.Exec("INSERT INTO system.groupbuy_records(id,activity_id,client_id,group_type,leader_id,need_num,pay_amount,group_price,invite_code,timeout_time) VALUES(951401,1,951301,'two',951401,2,1000,1000,'admission-group',DATE_ADD(NOW(),INTERVAL 1 DAY))").Error; e != nil {
+			return e
+		}
+		if _, e := invoice.IssueSourceTx(tx, "groupbuy", 951401, 951301); e != nil {
+			return e
+		}
+		if _, e := balance.New(tx).Change(ctx, balance.ChangeRequest{CustomerID: 951301, Type: "order_pay", Amount: "-10.00", RefType: "groupbuy", RefID: 951401, Channel: "groupbuy", RequestID: "admission-group-pay", Notes: "isolated group payment"}); e != nil {
+			return e
+		}
+		return invoice.AcceptSourcePaymentTx(tx, "groupbuy", 951401, 951301, 1000, "admission-group-payment", time.Now())
+	}); e != nil {
+		t.Fatal(e)
+	}
 	exec("UPDATE system.system_configs SET value='{\"status\":\"sales_stopped\",\"revision\":1}' WHERE `key`='upstream.module.zjmf'")
 	if e = db.Transaction(func(tx *gorm.DB) error { _, e := service.CommitGroupOrderTx(ctx, tx, p, 951401, 1000, 0); return e }); e == nil {
 		t.Fatal("group bypassed stopped sales")
@@ -109,6 +131,13 @@ func TestSupplierAdmissionMySQL(t *testing.T) {
 	exec("UPDATE system.system_configs SET value='{\"status\":\"enabled\",\"revision\":2}' WHERE `key`='upstream.module.zjmf'")
 	if e = db.Transaction(func(tx *gorm.DB) error { _, e := service.CommitGroupOrderTx(ctx, tx, p, 951401, 1000, 0); return e }); e != nil {
 		t.Fatal("group did not recover", e)
+	}
+	var bills, debits int64
+	if e := db.Table("billing.invoice_bindings b").Joins("JOIN `order`.orders o ON o.id=b.source_id AND b.source_type='order'").Where("o.admin_remark='groupbuy:951401' AND b.invoice_id=(SELECT invoice_id FROM billing.invoice_bindings WHERE source_type='groupbuy' AND source_id=951401)").Count(&bills).Error; e != nil || bills != 1 {
+		t.Fatal("delivery did not reuse prepaid invoice", e)
+	}
+	if e := db.Table("billing.transactions").Where("customer_id=951301 AND related_type='groupbuy' AND related_id=951401 AND type='order_pay'").Count(&debits).Error; e != nil || debits != 1 {
+		t.Fatal("delivery duplicated group debit", e)
 	}
 	t.Log("real Store: self-managed/mapped fixed order, replay, changed/ambiguous mapping, stopped supplier, stopped-sales group rollback and recovery passed; no remote purchase or payment")
 }

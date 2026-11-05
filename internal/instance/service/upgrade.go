@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
@@ -289,6 +290,9 @@ func (s *Service) CreateUpgradeOrder(ctx context.Context, customer, id int64, in
 		snapshot, _ := json.Marshal(map[string]any{"type": "instance_upgrade", "instanceId": fmt.Sprint(id), "targetProductId": fmt.Sprint(row.TargetProductID), "billingCycle": row.Cycle, "pricing": pricing})
 		item := order.OrderItem{OrderID: o.ID, ProductID: row.TargetProductID, ProductName: row.TargetName + "（升降配）", ModuleType: "instance_upgrade", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(row.Amount), Subtotal: int64(row.Amount), InstanceID: &id, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
 			return e
 		}
 		row.State = "unpaid"

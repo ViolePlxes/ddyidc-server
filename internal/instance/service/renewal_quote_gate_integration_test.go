@@ -2,6 +2,8 @@ package instance
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
+	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	repo "ddyidc/internal/instance/repository"
 	order "ddyidc/internal/order/domain"
@@ -221,6 +223,14 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	if e := tx.Create(&o).Error; e != nil {
 		t.Fatal(e)
 	}
+	// Model an issued renewal order, including its immutable receivable lines.
+	if e := tx.Create(&order.OrderItem{OrderID: o.ID, ProductID: h.ProductID, ProductName: "renewal replacement fixture", ModuleType: "instance_renewal", ConfigSnapshot: `{}`, Qty: 1, UnitPrice: 3177, Subtotal: 3177, InstanceID: &h.ID}).Error; e != nil {
+		t.Fatal(e)
+	}
+	oldBill, e := invoice.IssueSourceTx(tx, "order", o.ID, h.CustomerID)
+	if e != nil {
+		t.Fatal(e)
+	}
 	rr := Renewal{ID: 987006, OrderID: o.ID, InstanceID: h.ID, CustomerID: h.CustomerID, OwnershipVersion: 1, SupplierID: sid, HostID: h.UpstreamInstanceID, Cycle: "monthly", Duration: 2678400, Amount: 3177, Cost: 2700, State: "unpaid", BaseExpiry: expiry}
 	if e := tx.Create(&rr).Error; e != nil {
 		t.Fatal(e)
@@ -261,6 +271,10 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	tx.Where("id=?", o.ID).Take(&current)
 	if current.Status != 3 || current.TotalAmount != 3177 || hooks.releases != 1 || replaced.Amount != "30.00" {
 		t.Fatalf("replacement audit changed original amount: %+v %+v releases=%d", current, replaced, hooks.releases)
+	}
+	var oldBillStatus string
+	if e := tx.Table("billing.payable_invoices").Where("id=?", oldBill.ID).Pluck("status", &oldBillStatus).Error; e != nil || oldBillStatus != "void" {
+		t.Fatal("replaced renewal invoice remained payable", e)
 	}
 	var count int64
 	tx.Model(&Renewal{}).Where("instance_id=? AND state='unpaid'", h.ID).Count(&count)
@@ -407,6 +421,9 @@ func TestRenewalQuoteCorrectionMySQL(t *testing.T) {
 	hooks := &correctionCouponHooks{}
 	orders := ordersvc.NewService(orderrepo.NewRepository(tx), hooks)
 	svc.SetRenewalPriceCorrector(orders.CorrectUnpaidRenewalPriceTx)
+	oldBill, billErr := invoice.IssueSourceTx(tx, "order", o.ID, host.CustomerID)
+	must(billErr)
+
 	proof, err := svc.VerifyRenewalPayment(ctx, host.CustomerID, o.ID)
 	must(err)
 	must(renewalquote.CheckTx(proof, tx, host.CustomerID, o.ID))
@@ -414,6 +431,20 @@ func TestRenewalQuoteCorrectionMySQL(t *testing.T) {
 	must(tx.Where("id=?", o.ID).Take(&got).Error)
 	if got.TotalAmount != 3000 || got.PayAmount != 3000 || got.Status != 1 || got.ID != o.ID {
 		t.Fatalf("unpaid original not corrected in place: %+v", got)
+	}
+	var amended struct {
+		ID, Status string
+		Revision   uint
+		AmountDue  balance.Money
+	}
+	must(tx.Table("billing.payable_invoices i").Joins("JOIN billing.invoice_bindings b ON b.invoice_id=i.id AND b.source_type='order'").Where("b.source_id=?", o.ID).Select("i.id,i.status,i.revision,i.amount_due").Take(&amended).Error)
+	if amended.ID == oldBill.ID || amended.Revision != 2 || amended.AmountDue.String() != "30.00" || amended.Status != "open" {
+		t.Fatal("renewal correction did not atomically revise invoice", amended)
+	}
+	var oldStatus string
+	must(tx.Table("billing.payable_invoices").Where("id=?", oldBill.ID).Select("status").Scan(&oldStatus).Error)
+	if oldStatus != "void" {
+		t.Fatal("old renewal invoice stayed payable")
 	}
 	var audits int64
 	must(tx.Table("system.audit_logs").Where("action='renewal_price_corrected' AND target_id=?", o.ID).Count(&audits).Error)

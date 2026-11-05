@@ -2,6 +2,7 @@ package domains
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -348,6 +349,9 @@ func (s *Service) CreateOrder(ctx context.Context, user, quoteID int64, confirme
 			return e
 		}
 		if e := tx.Model(&q).Update("order_id", id).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, id); e != nil {
 			return e
 		}
 		result = PurchaseResult{fmt.Sprint(id), no, q.Amount}

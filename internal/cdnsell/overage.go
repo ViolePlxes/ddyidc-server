@@ -2,6 +2,7 @@ package cdnsell
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	orderdom "ddyidc/internal/order/domain"
 	orderstate "ddyidc/internal/order/repository"
 	"ddyidc/internal/shared/snowflake"
@@ -232,6 +233,9 @@ func (s *Service) PurchaseOverage(ctx context.Context, user, billID int64) (*Pur
 			return e
 		}
 		if e = tx.Exec("INSERT INTO system.cdnsell_orders(id,order_no,user_id,order_type,ref_order_id,bill_id,traffic_bytes,amount,snapshot,status,created_at) VALUES(?,?,?,'overage',?,?,?,?,?,'pending',?)", bizID, no, user, mainID, billID, bill.TrafficBytes, bill.Amount, string(snapshot), now).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, mainID); e != nil {
 			return e
 		}
 		result = &PurchaseResult{OrderID: mainID, OrderNo: no, Amount: bill.Amount}

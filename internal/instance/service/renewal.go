@@ -2,6 +2,7 @@ package instance
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	balance "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/instance/domain"
 	order "ddyidc/internal/order/domain"
@@ -329,6 +330,9 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 		snapshot, _ := json.Marshal(map[string]any{"billingCycle": cycle, "instanceId": strconv.FormatInt(id, 10), "type": "instance_renewal", "replacesOrderId": intent.ReplaceOrderID})
 		item := order.OrderItem{OrderID: oid, ProductID: h.ProductID, ProductName: h.ProductName + "（续费）", ModuleType: "instance_renewal", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(amount), Subtotal: int64(amount), InstanceID: &id, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
+			return e
+		}
+		if e := invoice.IssueOrderTx(tx, item.OrderID); e != nil {
 			return e
 		}
 		row := Renewal{ID: rid, OrderID: oid, InstanceID: id, CustomerID: customer, OwnershipVersion: h.OwnershipVersion, SupplierID: *h.UpstreamProviderID, HostID: h.UpstreamInstanceID, Cycle: cycle, Duration: selected.Duration, Amount: amount, Cost: selected.Cost, BaseExpiry: expiry, State: "unpaid", CreatedAt: now, UpdatedAt: now}

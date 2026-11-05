@@ -4,6 +4,7 @@ package order
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	"errors"
 	"time"
 
@@ -197,7 +198,7 @@ func (r *GormRepository) CancelPendingOrderTx(ctx context.Context, tx *gorm.DB, 
 	if result.RowsAffected != 1 {
 		return errors.New("订单不存在或已不处于待支付状态")
 	}
-	return nil
+	return invoice.SyncSourceStateTx(tx.WithContext(ctx), "order", orderID, customerID, now)
 }
 
 func (r *GormRepository) CreateItemTx(ctx context.Context, tx *gorm.DB, v *dom.OrderItem) error {
@@ -228,7 +229,12 @@ func (r *GormRepository) ListPricingSpecs(c context.Context, productID int64) ([
 }
 
 func (r *GormRepository) CreateRecharge(c context.Context, v *Recharge) error {
-	return r.db.WithContext(c).Table(rechargeTable).Create(v).Error
+	return r.db.WithContext(c).Transaction(func(tx *gorm.DB) error {
+		if e := tx.Table(rechargeTable).Create(v).Error; e != nil {
+			return e
+		}
+		return invoice.IssueRechargeTx(tx, v.ID)
+	})
 }
 
 func (r *GormRepository) FindRecharge(c context.Context, id int64) (*Recharge, error) {

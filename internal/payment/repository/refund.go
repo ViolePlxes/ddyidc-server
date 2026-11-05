@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	"ddyidc/internal/order/inventory"
 	orderstate "ddyidc/internal/order/repository"
 	dom "ddyidc/internal/payment/domain"
@@ -188,6 +189,7 @@ func (r *GormRepository) CompleteRefund(ctx context.Context, paymentID int64) (*
 		if (p.Status != dom.StatusPaid && p.Status != dom.StatusReview) || refund.Status != "pending" {
 			return ErrInvalidState
 		}
+		wasReview := p.Status == dom.StatusReview
 		if p.Status == dom.StatusReview {
 			// Refund only the extra receipt. Do not cancel an order paid by another attempt.
 			result := tx.Table("payment.receipt_reviews").Where("payment_id=? AND status='pending'", paymentID).Updates(map[string]any{"status": "refunded", "resolved_at": time.Now()})
@@ -221,7 +223,13 @@ func (r *GormRepository) CompleteRefund(ctx context.Context, paymentID int64) (*
 		}
 		refund.Status = "refunded"
 		refund.CompletedAt = &now
-		return tx.Save(&refund).Error
+		if e := tx.Save(&refund).Error; e != nil {
+			return e
+		}
+		if wasReview {
+			return invoice.ResolveRefundedReceiptTx(tx, p.ID, p.CustomerID, now)
+		}
+		return nil
 	})
 	return &refund, err
 }

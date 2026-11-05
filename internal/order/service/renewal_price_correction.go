@@ -2,6 +2,7 @@ package order
 
 import (
 	"context"
+	invoice "ddyidc/internal/billing/api"
 	money "ddyidc/internal/billing/balance"
 	dom "ddyidc/internal/order/domain"
 	"ddyidc/internal/shared/snowflake"
@@ -51,6 +52,9 @@ func (s *Service) CorrectUnpaidRenewalPriceTx(ctx context.Context, tx *gorm.DB, 
 		return 0, e
 	}
 	if e := tx.Model(&items[0]).Updates(map[string]any{"unit_price": gross, "subtotal": gross, "setup_fee": 0, "updated_at": time.Now()}).Error; e != nil {
+		return 0, e
+	}
+	if e := invoice.IssueOrderTx(tx, orderID); e != nil {
 		return 0, e
 	}
 	detail, _ := json.Marshal(map[string]any{"before": map[string]any{"gross": money.Money(oldGross).String(), "payable": money.Money(oldPayable).String()}, "after": map[string]any{"gross": money.Money(gross).String(), "payable": money.Money(net).String()}, "reason": "explicit_upstream_original_correction", "unit": "CNY_yuan"})
