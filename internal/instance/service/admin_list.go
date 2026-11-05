@@ -21,7 +21,7 @@ var ErrAdminListInput = errors.New("产品列表参数无效")
 type AdminAccess struct {
 	AdminID               int64
 	CustomerIDs           []int64
-	Contact, Export, Sync bool
+	Contact, Export, Sync, Edit bool
 }
 
 func (s *Service) AdminAccess(ctx context.Context, adminID int64) (AdminAccess, error) {
@@ -38,7 +38,7 @@ func (s *Service) AdminAccess(ctx context.Context, adminID int64) (AdminAccess, 
 	}
 	allowed := map[string]bool{}
 	if admin.IsSuper {
-		for _, p := range []string{"list", "export", "sync", "contact"} {
+		for _, p := range []string{"list", "export", "sync", "contact", "edit"} {
 			allowed[p] = true
 		}
 	} else {
@@ -53,7 +53,7 @@ func (s *Service) AdminAccess(ctx context.Context, adminID int64) (AdminAccess, 
 	if !allowed["list"] {
 		return a, ErrForbidden
 	}
-	a.Export, a.Sync, a.Contact = allowed["export"], allowed["sync"], allowed["contact"]
+	a.Export, a.Sync, a.Contact, a.Edit = allowed["export"], allowed["sync"], allowed["contact"], allowed["edit"]
 	var scope struct{ Value string }
 	e := s.db.WithContext(ctx).Table("system.system_configs").Select("value").Where("`key`=?", fmt.Sprintf("instance.scope.admin.%d", adminID)).Take(&scope).Error
 	if e == nil {
@@ -167,6 +167,7 @@ type AdminAccessView struct {
 	Export  bool `json:"export"`
 	Sync    bool `json:"sync"`
 	Contact bool `json:"contact"`
+	Edit    bool `json:"edit"`
 }
 
 // Display the same ownership-bound retail quote as the expiring queue. Never
@@ -354,7 +355,7 @@ func (s *Service) AdminList(ctx context.Context, a AdminAccess, in AdminListInpu
 		return nil, ErrForbidden
 	}
 	now := time.Now().UTC()
-	result := &AdminListResult{Items: []AdminInstanceRow{}, Page: in.Page, PageSize: in.PageSize, Counts: map[string]int64{}, SampledAt: now, PageRenewalSum: "0.00", TotalRenewalSum: "0.00", Access: AdminAccessView{a.Export, a.Sync, a.Contact}}
+	result := &AdminListResult{Items: []AdminInstanceRow{}, Page: in.Page, PageSize: in.PageSize, Counts: map[string]int64{}, SampledAt: now, PageRenewalSum: "0.00", TotalRenewalSum: "0.00", Access: AdminAccessView{a.Export, a.Sync, a.Contact, a.Edit}}
 	e = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, v := range []string{"all", "running", "suspended", "due", "expired", "abnormal", "terminated"} {
 			var n int64

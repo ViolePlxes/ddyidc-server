@@ -15,6 +15,7 @@ var invoiceRuntimePrivileges = []struct{ table, rights string }{
 	{"invoice_payment_links", "SELECT,INSERT"},
 	{"invoice_events", "SELECT,INSERT"},
 	{"invoice_unmatched_receipts", "SELECT,INSERT"},
+	{"renewal_price_overrides", "SELECT,INSERT,UPDATE"},
 }
 
 // ApplyRuntimePrivileges is used only by the existing offline socket migrator.

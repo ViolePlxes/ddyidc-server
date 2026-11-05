@@ -85,6 +85,9 @@ type RenewalOption struct {
 	Cycle    string        `json:"cycle"`
 	Label    string        `json:"label"`
 	Amount   string        `json:"amount"`
+	ListAmount string      `json:"listAmount,omitempty"`
+	Discount   string      `json:"discount,omitempty"`
+	OverrideID string      `json:"overrideId,omitempty"`
 	Duration int64         `json:"duration"`
 	Cost     balance.Money `json:"-"`
 }
@@ -171,7 +174,14 @@ func (s *Service) renewalOptions(ctx context.Context, customer, id int64) ([]Ren
 		if e != nil {
 			return nil, e
 		}
-		option := RenewalOption{ExchangeRate: price.Rate, Cycle: q.Cycle, Label: q.Label, Amount: amount.String(), Cost: cost, Duration: q.Duration}
+		final, discount, overrideID := s.resolveRenewalPrice(ctx, h.ID, q.Cycle, amount, cost)
+		option := RenewalOption{ExchangeRate: price.Rate, Cycle: q.Cycle, Label: q.Label, Amount: final.String(), ListAmount: amount.String(), Duration: q.Duration, Cost: cost}
+		if discount > 0 {
+			option.Discount = discount.String()
+		}
+		if overrideID > 0 {
+			option.OverrideID = strconv.FormatInt(overrideID, 10)
+		}
 		option.QuoteRevision = renewalIntentRevision(*h, option)
 		out = append(out, option)
 	}
@@ -327,7 +337,7 @@ func (s *Service) CreateRenewalIntent(ctx context.Context, customer, id int64, c
 		if e := tx.Create(&o).Error; e != nil {
 			return e
 		}
-		snapshot, _ := json.Marshal(map[string]any{"billingCycle": cycle, "instanceId": strconv.FormatInt(id, 10), "type": "instance_renewal", "replacesOrderId": intent.ReplaceOrderID})
+		snapshot, _ := json.Marshal(map[string]any{"billingCycle": cycle, "instanceId": strconv.FormatInt(id, 10), "type": "instance_renewal", "replacesOrderId": intent.ReplaceOrderID, "pricing": map[string]any{"listAmount": selected.ListAmount, "discount": selected.Discount, "overrideId": selected.OverrideID}})
 		item := order.OrderItem{OrderID: oid, ProductID: h.ProductID, ProductName: h.ProductName + "（续费）", ModuleType: "instance_renewal", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(amount), Subtotal: int64(amount), InstanceID: &id, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&item).Error; e != nil {
 			return e
