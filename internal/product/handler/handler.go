@@ -192,6 +192,11 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 	for index, spec := range input.Items {
 		spec.Name = strings.TrimSpace(spec.Name)
 		spec.Memory = strings.TrimSpace(spec.Memory)
+		spec.OSFamily = strings.ToLower(strings.TrimSpace(spec.OSFamily))
+		if spec.OSFamily != "" && spec.OSFamily != "linux" && spec.OSFamily != "windows" {
+			writeError(w, http.StatusBadRequest, "系统类型无效")
+			return
+		}
 		spec.ProcessorModel = strings.TrimSpace(spec.ProcessorModel)
 		spec.ProcessorFrequency = strings.TrimSpace(spec.ProcessorFrequency)
 		spec.Defense = strings.TrimSpace(spec.Defense)
