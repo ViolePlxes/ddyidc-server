@@ -22,7 +22,7 @@ func invoiceID() (string, error) {
 	return "I" + hex.EncodeToString(raw[:]), nil
 }
 func appendEvent(tx *gorm.DB, doc dom.Invoice, kind, key, refType, refID string, amount *balance.Money) error {
-	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&dom.InvoiceEvent{InvoiceID: doc.ID, EventKey: key, EventType: kind, Amount: amount, ReferenceType: refType, ReferenceID: refID, CreatedAt: time.Now().UTC()}).Error
+	return tx.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&dom.InvoiceEvent{InvoiceID: doc.ID, EventKey: key, EventType: kind, Amount: amount, ReferenceType: refType, ReferenceID: refID, CreatedAt: time.Now().UTC()}).Error
 }
 
 // IssueSourceTx is the shared application boundary for business modules. The
@@ -167,7 +167,7 @@ func BindPaymentTx(tx *gorm.DB, kind string, id, user, paymentID int64, amount b
 		return e
 	}
 	link := dom.InvoicePaymentLink{PaymentID: paymentID, InvoiceID: doc.ID, Amount: amount, Currency: currency, CreatedAt: time.Now().UTC()}
-	if e = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; e != nil {
+	if e = tx.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&link).Error; e != nil {
 		return e
 	}
 	var stored dom.InvoicePaymentLink
@@ -283,7 +283,7 @@ func AttachPaidPaymentTx(tx *gorm.DB, kind string, id, user, paymentID int64, am
 		return typ.ErrConflict
 	}
 	link := dom.InvoicePaymentLink{PaymentID: paymentID, InvoiceID: doc.ID, Amount: amount, Currency: currency, CreatedAt: time.Now().UTC()}
-	if e = tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; e != nil {
+	if e = tx.Clauses(clause.Insert{Modifier: "IGNORE"}).Create(&link).Error; e != nil {
 		return e
 	}
 	var stored dom.InvoicePaymentLink
