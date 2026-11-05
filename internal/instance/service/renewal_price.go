@@ -90,7 +90,7 @@ func applyRenewalOverride(mode string, value float64, list, cost balance.Money) 
 	default:
 		return list, 0, false
 	}
-	if final <= 0 || (cost > 0 && final < cost) {
+	if final <= 0 {
 		return list, 0, false
 	}
 	if final > list {
@@ -217,13 +217,6 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 			continue
 		}
 		matched++
-		list := option.ListAmountMoney()
-		if list <= 0 {
-			list = option.AmountMoney()
-		}
-		if _, _, ok := applyRenewalOverride(mode, value, list, option.Cost); !ok {
-			return nil, fmt.Errorf("按 %s 调价后低于上游成本，请核对价格", option.Label)
-		}
 	}
 	if matched == 0 {
 		return nil, errors.New("该实例没有可用的续费周期")
