@@ -306,6 +306,16 @@ func periodBasePrice(product *rep.SellableProduct, spec *rep.PricingSpec, page *
 		for _, item := range page.Cycles {
 			if strings.EqualFold(item.Billingcycle, cycle) {
 				setupFee = item.SetupFee
+				if spec != nil && spec.PriceMode == "original" {
+					originalMonthly := page.Product.Price
+					if originalMonthly <= 0 {
+						originalMonthly = monthlyBase
+					}
+					if originalMonthly <= 0 || months <= 0 {
+						return 0, 0, errors.New("上游原价未确认，暂不能下单")
+					}
+					return int64(originalMonthly*float64(months)*100 + 0.5), int64(setupFee*100 + 0.5), nil
+				}
 				if product.SupplierID != "" && product.SupplierID != "0" || spec == nil || spec.PriceMode == "upstream" {
 					return int64(item.Price*100 + 0.5), int64(setupFee*100 + 0.5), nil
 				}

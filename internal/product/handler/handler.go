@@ -215,7 +215,7 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行规格名称、vCPU 或内存无效", index+1))
 			return
 		}
-		if spec.PriceMode != "fixed" && spec.PriceMode != "upstream" {
+		if spec.PriceMode != "fixed" && spec.PriceMode != "upstream" && spec.PriceMode != "original" {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行价格模式无效", index+1))
 			return
 		}
