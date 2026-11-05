@@ -64,3 +64,9 @@ gateway receipt races, balance conservation and product payment boundaries.
 `deploy/linux/tests/test_foundation_modules.sh` includes the invoice suites.
 The local browser fixture is outside the release repositories; no mock bills or
 payment simulation switch is included in the customer application.
+
+The existing offline socket migrator applies the invoice-only runtime grants to
+the pinned runtime identity and verifies read access before service switching.
+Migrations 061/062 are registered as additive/rollback-compatible; no source order
+or financial ledger is modified. The SQL grant file is a review checklist for
+the same policy, not a replacement for unrelated grants.

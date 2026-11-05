@@ -345,6 +345,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Inbox runtime preflight failed:", err)
 			os.Exit(2)
 		}
+		if err := invoiceapi.VerifyRuntimeAccess(ctx, db.DB); err != nil {
+			fmt.Fprintln(os.Stderr, "Invoice runtime preflight failed:", err)
+			os.Exit(2)
+		}
 		if err := upstreamservice.NewDefaultStore(nil).ValidateRetainedModules(ctx); err != nil {
 			fmt.Fprintln(os.Stderr, "Adapter compatibility preflight failed:", err)
 			os.Exit(2)
@@ -381,6 +385,9 @@ func main() {
 			panic(err)
 		}
 		if *migrationSocket != "" {
+			if err := invoiceapi.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
 			if err := notification.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}

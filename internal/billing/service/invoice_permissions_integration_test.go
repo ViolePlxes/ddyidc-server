@@ -1,6 +1,7 @@
 package billing
 
 import (
+	"context"
 	"crypto/rand"
 	dom "ddyidc/internal/billing/domain"
 	"ddyidc/internal/shared/snowflake"
@@ -24,6 +25,16 @@ func TestInvoiceRuntimePrivilegesMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	password := hex.EncodeToString(raw[:])
+	ctx := context.Background()
+	rootPool, e := root.DB()
+	if e != nil {
+		t.Fatal(e)
+	}
+	for _, principal := range [][2]string{{"root", "127.0.0.1"}, {name, "localhost"}, {"ddyidc_runtime", "%"}} {
+		if ApplyRuntimePrivileges(ctx, rootPool, principal[0], principal[1]) == nil {
+			t.Fatal("unexpected runtime identity accepted")
+		}
+	}
 	// The socket has already been checked by testenv; this role lives solely in
 	// the disposable, networking-disabled server and is removed after the test.
 	if e := root.Exec("CREATE USER '" + name + "'@'localhost' IDENTIFIED BY '" + password + "'").Error; e != nil {
@@ -46,6 +57,10 @@ func TestInvoiceRuntimePrivilegesMySQL(t *testing.T) {
 			}
 		}
 	}
+	// Repeat the exact updater implementation: grants are additive/idempotent.
+	if e := applyInvoiceRuntimePrivileges(ctx, rootPool, name, "localhost"); e != nil {
+		t.Fatal(e)
+	}
 	restricted, e := gorm.Open(mysql.Open(name+":"+password+"@unix("+os.Getenv("FOUNDATION_MYSQL_SOCKET")+")/?parseTime=true"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if e != nil {
 		t.Fatal("isolated runtime connection failed")
@@ -55,6 +70,9 @@ func TestInvoiceRuntimePrivilegesMySQL(t *testing.T) {
 		t.Fatal(e)
 	}
 	t.Cleanup(func() { pool.Close() })
+	if e := VerifyRuntimeAccess(ctx, pool); e != nil {
+		t.Fatal(e)
+	}
 	for _, table := range []string{"invoice_settings", "payable_invoices", "invoice_items", "invoice_bindings", "invoice_payment_links", "invoice_events", "invoice_unmatched_receipts"} {
 		var count int64
 		if e := restricted.Table("billing." + table).Count(&count).Error; e != nil {
@@ -94,5 +112,17 @@ func TestInvoiceRuntimePrivilegesMySQL(t *testing.T) {
 		if e := restricted.Exec(sql).Error; e == nil {
 			t.Fatal("runtime exceeded invoice-only grants")
 		}
+	}
+	if e := root.Exec("REVOKE SELECT ON billing.invoice_settings FROM '" + name + "'@'localhost'").Error; e != nil {
+		t.Fatal(e)
+	}
+	if VerifyRuntimeAccess(ctx, pool) == nil {
+		t.Fatal("preflight accepted missing invoice runtime access")
+	}
+	if e := applyInvoiceRuntimePrivileges(ctx, rootPool, name, "localhost"); e != nil {
+		t.Fatal(e)
+	}
+	if e := VerifyRuntimeAccess(ctx, pool); e != nil {
+		t.Fatal(e)
 	}
 }

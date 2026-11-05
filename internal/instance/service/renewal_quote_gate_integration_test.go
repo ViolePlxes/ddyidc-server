@@ -223,6 +223,14 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	if e := tx.Create(&o).Error; e != nil {
 		t.Fatal(e)
 	}
+	// Model an issued renewal order, including its immutable receivable lines.
+	if e := tx.Create(&order.OrderItem{OrderID: o.ID, ProductID: h.ProductID, ProductName: "renewal replacement fixture", ModuleType: "instance_renewal", ConfigSnapshot: `{}`, Qty: 1, UnitPrice: 3177, Subtotal: 3177, InstanceID: &h.ID}).Error; e != nil {
+		t.Fatal(e)
+	}
+	oldBill, e := invoice.IssueSourceTx(tx, "order", o.ID, h.CustomerID)
+	if e != nil {
+		t.Fatal(e)
+	}
 	rr := Renewal{ID: 987006, OrderID: o.ID, InstanceID: h.ID, CustomerID: h.CustomerID, OwnershipVersion: 1, SupplierID: sid, HostID: h.UpstreamInstanceID, Cycle: "monthly", Duration: 2678400, Amount: 3177, Cost: 2700, State: "unpaid", BaseExpiry: expiry}
 	if e := tx.Create(&rr).Error; e != nil {
 		t.Fatal(e)
@@ -263,6 +271,10 @@ func TestRenewalQuoteReplacementMySQL(t *testing.T) {
 	tx.Where("id=?", o.ID).Take(&current)
 	if current.Status != 3 || current.TotalAmount != 3177 || hooks.releases != 1 || replaced.Amount != "30.00" {
 		t.Fatalf("replacement audit changed original amount: %+v %+v releases=%d", current, replaced, hooks.releases)
+	}
+	var oldBillStatus string
+	if e := tx.Table("billing.payable_invoices").Where("id=?", oldBill.ID).Pluck("status", &oldBillStatus).Error; e != nil || oldBillStatus != "void" {
+		t.Fatal("replaced renewal invoice remained payable", e)
 	}
 	var count int64
 	tx.Model(&Renewal{}).Where("instance_id=? AND state='unpaid'", h.ID).Count(&count)
