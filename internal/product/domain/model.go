@@ -86,6 +86,7 @@ type ProductSpec struct {
 	Name               string    `gorm:"column:name" json:"name"`
 	VCPU               int       `gorm:"column:vcpu" json:"vcpu"`
 	Memory             string    `gorm:"column:memory" json:"memory"`
+	OSFamily           string    `gorm:"column:os_family" json:"osFamily"`
 	ProcessorModel     string    `gorm:"column:processor_model" json:"processorModel"`
 	ProcessorFrequency string    `gorm:"column:processor_frequency" json:"processorFrequency"`
 	Defense            string    `gorm:"column:defense" json:"defense"`

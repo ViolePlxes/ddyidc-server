@@ -34,5 +34,9 @@
   "063_renewal_price_overrides.sql": {
     "sha256": "e09e784a4a4102a23a86f4f960b5a1cc3b48ad2ba585826066b994d0e17039c5",
     "rollbackCompatible": true
+  },
+  "064_product_spec_os.sql": {
+    "sha256": "08f05d47b37e80200b93e68f4dc0e81d63fef33817fed0b57d98943b0fdff351",
+    "rollbackCompatible": true
   }
 }
