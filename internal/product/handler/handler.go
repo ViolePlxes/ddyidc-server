@@ -193,7 +193,10 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 		spec.Name = strings.TrimSpace(spec.Name)
 		spec.Memory = strings.TrimSpace(spec.Memory)
 		spec.OSFamily = strings.ToLower(strings.TrimSpace(spec.OSFamily))
-		if spec.OSFamily != "" && spec.OSFamily != "linux" && spec.OSFamily != "windows" {
+		if spec.OSFamily == "both" {
+			spec.OSFamily = "all"
+		}
+		if spec.OSFamily != "" && spec.OSFamily != "linux" && spec.OSFamily != "windows" && spec.OSFamily != "all" {
 			writeError(w, http.StatusBadRequest, "系统类型无效")
 			return
 		}
@@ -212,7 +215,7 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行规格名称、vCPU 或内存无效", index+1))
 			return
 		}
-		if spec.PriceMode != "fixed" && spec.PriceMode != "upstream" {
+		if spec.PriceMode != "fixed" && spec.PriceMode != "upstream" && spec.PriceMode != "original" {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("第 %d 行价格模式无效", index+1))
 			return
 		}
@@ -305,7 +308,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func publicSpec(v domain.ProductSpec) map[string]any {
-	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
+	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "osFamily": v.OSFamily, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
 }
 func publicSpecs(values []*domain.ProductSpec) []map[string]any {
 	out := make([]map[string]any, 0, len(values))
