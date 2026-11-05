@@ -60,5 +60,6 @@
   "059_promo_code_governance.sql": "f6d579124c5066c7d38c6e2fe71843f5a29d505273e934bd474c5471605ec543",
   "060_manual_product_revision_scope.sql": "9b6cbae7bb90d93ebe0d481de85ac9b76166cbad190d8a7b863b6c24f6fb8a9e",
   "061_billing_invoices.sql": "4328cd134bff1ed296b737d1d06739382317765e94dbfea8ed2e7bc7ef81e247",
-  "062_billing_invoice_backfill.sql": "8e31b3194aa8af9658d2036b524e45f61fa2fbbd1a9f34dea247ad3559e71e69"
+  "062_billing_invoice_backfill.sql": "8e31b3194aa8af9658d2036b524e45f61fa2fbbd1a9f34dea247ad3559e71e69",
+  "063_renewal_price_overrides.sql": "e09e784a4a4102a23a86f4f960b5a1cc3b48ad2ba585826066b994d0e17039c5"
 }
