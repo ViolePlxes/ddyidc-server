@@ -217,8 +217,20 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 	if to != nil && !to.After(from) {
 		return nil, errors.New("失效日期必须晚于生效日期")
 	}
-	if _, err = s.owned(ctx, customer, instanceID); err != nil {
+	h, err := s.owned(ctx, customer, instanceID)
+	if err != nil {
 		return nil, err
+	}
+	// Finance's host.amount is the price of the instance's current billing
+	// cycle. A fixed contract price therefore defaults to that cycle instead of
+	// applying the same amount to every cycle (which would fail the cost floor
+	// on quarterly or annual renewals). Percent rules may cover all cycles.
+	if cycle == "" && mode == "fixed" {
+		_, snapshot := parseSnapshot(h.ConfigSnapshot)
+		cycle = normalizeCycle(snapshot.BillingCycle)
+		if cycle == "" {
+			return nil, errors.New("实例计费周期未确认，请指定续费周期")
+		}
 	}
 	options, err := s.renewalOptions(ctx, customer, instanceID)
 	if err != nil {
