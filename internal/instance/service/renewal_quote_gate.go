@@ -188,6 +188,6 @@ func (s *Service) SetRenewalReplacementCanceller(fn func(context.Context, *gorm.
 }
 func renewalIntentRevision(h dom.Host, q RenewalOption) string {
 	b := renewalBinding(h)
-	raw, _ := json.Marshal([]any{h.ID, h.CustomerID, h.OwnershipVersion, h.ProductID, h.UpstreamProviderID, h.UpstreamInstanceID, b.ConfigHash(), q.Cycle, q.Duration, q.Amount, q.ListAmount, q.Discount, q.OverrideID, q.Cost.String(), q.ExchangeRate, renewalquote.RuleVersion})
+	raw, _ := json.Marshal([]any{h.ID, h.CustomerID, h.OwnershipVersion, h.ProductID, h.UpstreamProviderID, h.UpstreamInstanceID, b.ConfigHash(), q.Cycle, q.Duration, q.Amount, q.Cost.String(), q.ExchangeRate, renewalquote.RuleVersion})
 	return fmt.Sprintf("%x", sha256.Sum256(raw))
 }
