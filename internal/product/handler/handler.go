@@ -193,7 +193,10 @@ func (h *publicHandler) replaceSpecs(w http.ResponseWriter, r *http.Request) {
 		spec.Name = strings.TrimSpace(spec.Name)
 		spec.Memory = strings.TrimSpace(spec.Memory)
 		spec.OSFamily = strings.ToLower(strings.TrimSpace(spec.OSFamily))
-		if spec.OSFamily != "" && spec.OSFamily != "linux" && spec.OSFamily != "windows" {
+		if spec.OSFamily == "both" {
+			spec.OSFamily = "all"
+		}
+		if spec.OSFamily != "" && spec.OSFamily != "linux" && spec.OSFamily != "windows" && spec.OSFamily != "all" {
 			writeError(w, http.StatusBadRequest, "系统类型无效")
 			return
 		}
