@@ -14,6 +14,7 @@ import (
 	"gorm.io/gorm/clause"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -57,6 +58,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 	if e != nil {
 		return e
 	}
+	originalProvider := h.UpstreamProviderID
 	if locked, e := s.repo.IsMarketplaceLocked(ctx, id); e != nil {
 		return e
 	} else if locked {
@@ -84,7 +86,18 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		}
 		// An administrator can repair an empty/stale old binding. Resolve by
 		// the fixed supplier, never by the old instance or product identity.
-		if h.UpstreamProviderID == nil || s.providers == nil {
+		if h.UpstreamProviderID == nil {
+			var mapping struct{ SupplierID string }
+			if e := s.db.WithContext(ctx).Table("product.upstream_products").Select("supplier_id").Where("product_id=? AND hidden=0", h.ProductID).Order("id").Take(&mapping).Error; e != nil || strings.TrimSpace(mapping.SupplierID) == "" {
+				return errors.New("供应商不可用")
+			}
+			supplier, e := strconv.ParseInt(mapping.SupplierID, 10, 64)
+			if e != nil || supplier <= 0 {
+				return errors.New("供应商不可用")
+			}
+			h.UpstreamProviderID = &supplier
+		}
+		if s.providers == nil {
 			return errors.New("供应商不可用")
 		}
 		provider, err := s.providers.ProviderFor(strconv.FormatInt(*h.UpstreamProviderID, 10))
@@ -133,6 +146,9 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 			updates["power_status"] = detail.PowerStatus
 			updates["expires_at"] = detail.ExpiresAt
 			updates["last_synced_at"] = time.Now()
+			if originalProvider == nil {
+				updates["upstream_provider_id"] = *h.UpstreamProviderID
+			}
 			if in.ActivatedAt == nil && detail.ActivatedAt != nil {
 				updates["activated_at"] = detail.ActivatedAt
 			}
@@ -158,7 +174,7 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customerID).Take(&current).Error; e != nil {
 			return ErrNotFound
 		}
-		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(current.UpstreamProviderID, h.UpstreamProviderID) {
+		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(current.UpstreamProviderID, originalProvider) {
 			return errors.New("实例已变更，请刷新后重试")
 		}
 		if err := productionlock.Check(tx, id); err != nil {
