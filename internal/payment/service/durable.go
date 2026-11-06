@@ -57,6 +57,19 @@ func (d *DurableDispatcher) Start(ctx context.Context) {
 			}
 			return refresh.RefreshWebhook(ctx, p)
 		}
+		if task.Kind == "domain_template_sync" {
+			var p tasks.TemplateSyncPayload
+			if err := json.Unmarshal([]byte(task.Payload), &p); err != nil {
+				return err
+			}
+			sync, ok := coordinator.(interface {
+				SyncTemplateStatuses(context.Context, int64) error
+			})
+			if !ok {
+				return errors.New("template sync unavailable")
+			}
+			return sync.SyncTemplateStatuses(ctx, p.CustomerID)
+		}
 		if task.Kind != "post_payment" {
 			return errors.New("unsupported task")
 		}
