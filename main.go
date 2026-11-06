@@ -124,6 +124,14 @@ type paymentCoordinator struct {
 	domains       *domains.Service
 }
 
+func (c paymentCoordinator) SyncTemplateStatuses(ctx context.Context, customerID int64) error {
+	if customerID > 0 {
+		_, err := c.domains.SyncTemplates(ctx, customerID)
+		return err
+	}
+	return c.domains.SyncAllTemplates(ctx)
+}
+
 type authEventHooks struct {
 	marketing *marketingapi.AuthHooks
 	points    *points.Service
@@ -627,7 +635,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	orderSvc.SetNotifier(notifyManager)
 	domainSvc := domains.New(db.G, snapshotKey)
 	domains.RegisterHandlers(server, domainSvc, jwt)
-	*cronStarts = append(*cronStarts, domainSvc.Start)
+	*cronStarts = append(*cronStarts, domainSvc.Start, domainSvc.StartTemplateSync)
 	orderSvc.RegisterModuleBalancePayer("domains", domainSvc.PayBalance)
 	cdnsellSvc := cdnsell.NewService(db.G, snapshotKey, notifyManager)
 	if err := cdnsellSvc.EnsureSchema(context.Background()); err != nil {
