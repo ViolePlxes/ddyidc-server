@@ -1626,6 +1626,16 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	if natPort == "" {
 		natPort = primaryPort
 	}
+	if primaryIP == "" {
+		if host, port, ok := findHostEndpoint(hostData); ok {
+			primaryIP = host
+			if natPort == "" {
+				natPort = port
+			}
+			found, _ := parseInstanceIPs(primaryIP)
+			ips = found
+		}
+	}
 	result := &contracts.InstanceDetail{
 		Hostname:        firstMapString(hostData, "domain", "hostname", "name"),
 		PrimaryIP:       primaryIP,
@@ -1950,6 +1960,56 @@ func splitEndpoint(value string) (string, string, bool) {
 		return "", "", false
 	}
 	return strings.Trim(host, "[]"), strconv.Itoa(number), true
+}
+
+
+func privateAddress(value string) bool {
+	ip := net.ParseIP(value)
+	return ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+}
+
+// findHostEndpoint scans supplier host data for a public IP or IP:port value.
+// Cloud PC products expose their NAT address under provider-specific keys.
+func findHostEndpoint(hostData map[string]any) (string, string, bool) {
+	bestHost, bestPort, bestScore := "", "", -1
+	var walk func(key string, value any)
+	walk = func(key string, value any) {
+		switch current := value.(type) {
+		case string:
+			lower := strings.ToLower(key)
+			if strings.Contains(lower, "gateway") || strings.Contains(lower, "netmask") || strings.Contains(lower, "subnet") {
+				return
+			}
+			score := 1
+			if strings.Contains(lower, "ip") || strings.Contains(lower, "address") {
+				score = 2
+			}
+			for _, token := range strings.FieldsFunc(current, func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\r' }) {
+				host, port, endpoint := splitEndpoint(token)
+				if !endpoint {
+					host, port = token, ""
+				}
+				if privateAddress(host) {
+					continue
+				}
+				if score > bestScore {
+					bestHost, bestPort, bestScore = host, port, score
+				}
+			}
+		case []any:
+			for _, item := range current {
+				walk(key, item)
+			}
+		case map[string]any:
+			for childKey, item := range current {
+				walk(childKey, item)
+			}
+		}
+	}
+	for key, value := range hostData {
+		walk(key, value)
+	}
+	return bestHost, bestPort, bestScore >= 0
 }
 
 func parseInstanceIPs(primary string, values ...any) ([]contracts.InstanceIP, string) {
