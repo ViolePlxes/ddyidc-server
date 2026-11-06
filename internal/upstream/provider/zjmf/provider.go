@@ -1617,6 +1617,10 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	if len(hostData) == 0 {
 		hostData = data
 	}
+	financeHost, financePort, financeIPs := "", "", []string{}
+	if p.Supplier.Type == "finance" {
+		financeHost, financePort, financeIPs = p.financeInstanceAddresses(hostID)
+	}
 	primaryIP := firstMapString(hostData, "dedicatedip", "dedicated_ip", "mainip", "main_ip", "ip")
 	primaryHost, primaryPort, primaryEndpoint := splitEndpoint(primaryIP)
 	if primaryEndpoint {
@@ -1626,6 +1630,12 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	if natPort == "" {
 		natPort = primaryPort
 	}
+	if primaryIP == "" && financeHost != "" {
+		primaryIP = financeHost
+		if natPort == "" {
+			natPort = financePort
+		}
+	}
 	if primaryIP == "" {
 		if host, port, ok := findHostEndpoint(hostData); ok {
 			primaryIP = host
@@ -1634,6 +1644,13 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 			}
 			found, _ := parseInstanceIPs(primaryIP)
 			ips = found
+		}
+	}
+	for _, address := range financeIPs {
+		if net.ParseIP(address) != nil {
+			if len(ips) == 0 || ips[0].Address != address {
+				ips = append(ips, contracts.InstanceIP{Address: address})
+			}
 		}
 	}
 	result := &contracts.InstanceDetail{
@@ -1962,6 +1979,64 @@ func splitEndpoint(value string) (string, string, bool) {
 	return strings.Trim(host, "[]"), strconv.Itoa(number), true
 }
 
+
+
+// financeInstanceAddresses reads the finance host address endpoint. Cloud PC
+// products expose their NAT address as ip:port in this list instead of
+// dedicatedip/assignedips on /host/header.
+func (p *Provider) financeInstanceAddresses(hostID int64) (string, string, []string) {
+	body, err := p.authorizedGet("/console/v1/mf_cloud/" + strconv.FormatInt(hostID, 10) + "/ip")
+	if err != nil {
+		return "", "", nil
+	}
+	data, err := businessData(body, "instance addresses")
+	if err != nil {
+		return "", "", nil
+	}
+	candidates := make([]string, 0, 4)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			candidates = append(candidates, value)
+		}
+	}
+	add(firstMapString(data, "dedicate_ip", "dedicatedip"))
+	add(firstMapString(data, "assign_ip", "assignedips"))
+	if rows, ok := data["list"].([]any); ok {
+		for _, row := range rows {
+			switch current := row.(type) {
+			case map[string]any:
+				add(firstMapString(current, "ip", "address"))
+			case string:
+				add(current)
+			}
+		}
+	}
+	ips := make([]string, 0, len(candidates))
+	host, port := "", ""
+	for _, candidate := range candidates {
+		if value, endpointPort, ok := splitEndpoint(candidate); ok {
+			if privateAddress(value) {
+				continue
+			}
+			if host == "" {
+				host, port = value, endpointPort
+			}
+			ips = append(ips, value)
+			continue
+		}
+		for _, token := range strings.FieldsFunc(candidate, func(r rune) bool { return r == ',' || r == ';' || r == ' ' }) {
+			if privateAddress(token) {
+				continue
+			}
+			if host == "" {
+				host = token
+			}
+			ips = append(ips, token)
+		}
+	}
+	return host, port, ips
+}
 
 func privateAddress(value string) bool {
 	ip := net.ParseIP(value)
