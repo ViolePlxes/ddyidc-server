@@ -174,8 +174,12 @@ func (s *Service) Edit(ctx context.Context, customerID, id int64, in EditInput) 
 		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id=? AND customer_id=?", id, customerID).Take(&current).Error; e != nil {
 			return ErrNotFound
 		}
-		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(current.UpstreamProviderID, originalProvider) {
+		currentProvider := current.UpstreamProviderID
+		if current.OwnershipVersion != h.OwnershipVersion || current.UpstreamInstanceID != h.UpstreamInstanceID || current.ProductID != h.ProductID || current.ModuleType != h.ModuleType || !sameSupplier(currentProvider, originalProvider) {
 			return errors.New("实例已变更，请刷新后重试")
+		}
+		if originalProvider == nil && h.UpstreamProviderID != nil {
+			current.UpstreamProviderID = h.UpstreamProviderID
 		}
 		if err := productionlock.Check(tx, id); err != nil {
 			return err
