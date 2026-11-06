@@ -1617,6 +1617,16 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	if len(hostData) == 0 {
 		hostData = data
 	}
+	dcimHost, dcimPort := "", ""
+	if dcim := nestedMap(data, "dcimcloud"); dcim != nil {
+		if value := strings.TrimSpace(firstMapString(dcim, "nat_acl", "nat_web")); value != "" {
+			if host, port, ok := splitEndpoint(value); ok {
+				dcimHost, dcimPort = host, port
+			} else if net.ParseIP(value) != nil {
+				dcimHost = value
+			}
+		}
+	}
 	financeHost, financePort, financeIPs := "", "", []string{}
 	if p.Supplier.Type == "finance" {
 		financeHost, financePort, financeIPs = p.financeInstanceAddresses(hostID)
@@ -1629,6 +1639,12 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 	ips, natPort := parseInstanceIPs(primaryIP, hostData["assignedips"], hostData["assigned_ips"])
 	if natPort == "" {
 		natPort = primaryPort
+	}
+	if primaryIP == "" && dcimHost != "" {
+		primaryIP = dcimHost
+		if natPort == "" {
+			natPort = dcimPort
+		}
 	}
 	if primaryIP == "" && financeHost != "" {
 		primaryIP = financeHost
