@@ -91,5 +91,9 @@ func snapshotFromUpstream(detail *contracts.InstanceDetail) map[string]any {
 	for i, item := range detail.Config {
 		config[fmt.Sprintf("upstream_%s_%d", item.ID, i)] = map[string]any{"value": item.Value, "field": item.Field, "displayName": item.Name, "displayValue": item.Value, "position": i}
 	}
-	return map[string]any{"configOptions": config, "hostname": detail.Hostname, "billingCycle": detail.BillingCycle, "source": "upstream_import"}
+	display := map[string]any{"hostname": detail.Hostname, "operatingSystem": detail.OperatingSystem, "billingCycle": detail.BillingCycle}
+	if detail.Port != "" {
+		display["port"] = detail.Port
+	}
+	return map[string]any{"configOptions": config, "hostname": detail.Hostname, "billingCycle": detail.BillingCycle, "listDisplay": display, "source": "upstream_import"}
 }
