@@ -922,7 +922,7 @@
         "label": "注册人类型",
         "required": true,
         "secret": false,
-        "numeric": true
+        "numeric": false
       },
       {
         "key": "c_org_m",
@@ -1358,7 +1358,7 @@
         "label": "注册人类型",
         "required": false,
         "secret": false,
-        "numeric": true
+        "numeric": false
       },
       {
         "key": "c_org_m",
