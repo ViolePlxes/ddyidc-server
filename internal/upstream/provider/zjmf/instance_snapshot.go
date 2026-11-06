@@ -15,7 +15,9 @@ func parseInstanceSnapshot(data, host map[string]any, requested int64, result *c
 	}
 	result.Username = firstMapString(host, "username", "login_user")
 	result.Password = firstMapString(host, "password")
-	result.Port = instanceLoginPort(data, host)
+	if result.Port == "" {
+		result.Port = instanceLoginPort(data, host)
+	}
 	result.Remark = firstMapString(host, "remark", "notes")
 	result.UpstreamOrderID = firstMapString(host, "orderid", "order_id")
 	result.UpstreamOrderNo = firstMapString(host, "ordernum", "order_no")

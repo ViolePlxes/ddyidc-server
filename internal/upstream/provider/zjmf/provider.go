@@ -1618,10 +1618,18 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 		hostData = data
 	}
 	primaryIP := firstMapString(hostData, "dedicatedip", "dedicated_ip", "mainip", "main_ip", "ip")
-	ips := parseInstanceIPs(primaryIP, hostData["assignedips"], hostData["assigned_ips"])
+	primaryHost, primaryPort, primaryEndpoint := splitEndpoint(primaryIP)
+	if primaryEndpoint {
+		primaryIP = primaryHost
+	}
+	ips, natPort := parseInstanceIPs(primaryIP, hostData["assignedips"], hostData["assigned_ips"])
+	if natPort == "" {
+		natPort = primaryPort
+	}
 	result := &contracts.InstanceDetail{
 		Hostname:        firstMapString(hostData, "domain", "hostname", "name"),
 		PrimaryIP:       primaryIP,
+		Port:            natPort,
 		SubnetMask:      firstMapString(hostData, "subnet_mask", "netmask"),
 		Gateway:         firstMapString(hostData, "gateway"),
 		OperatingSystem: firstMapString(hostData, "os", "os_name", "operating_system", "system"),
@@ -1928,11 +1936,34 @@ func firstMapString(data map[string]any, keys ...string) string {
 	return ""
 }
 
-func parseInstanceIPs(primary string, values ...any) []contracts.InstanceIP {
+func splitEndpoint(value string) (string, string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" || net.ParseIP(value) != nil || !strings.Contains(value, ":") {
+		return "", "", false
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil || net.ParseIP(host) == nil {
+		return "", "", false
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return "", "", false
+	}
+	return strings.Trim(host, "[]"), strconv.Itoa(number), true
+}
+
+func parseInstanceIPs(primary string, values ...any) ([]contracts.InstanceIP, string) {
 	seen := map[string]struct{}{}
 	out := make([]contracts.InstanceIP, 0)
+	natPort := ""
 	add := func(value string) {
 		value = strings.TrimSpace(value)
+		if host, port, ok := splitEndpoint(value); ok {
+			value = host
+			if natPort == "" {
+				natPort = port
+			}
+		}
 		if net.ParseIP(value) == nil {
 			return
 		}
@@ -1955,7 +1986,7 @@ func parseInstanceIPs(primary string, values ...any) []contracts.InstanceIP {
 			}
 		}
 	}
-	return out
+	return out, natPort
 }
 
 func normalizePowerStatus(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
