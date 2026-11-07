@@ -158,6 +158,7 @@ type DetailView struct {
 	Config             []ConfigItem                   `json:"config"`
 	IPs                []contracts.InstanceIP         `json:"ips"`
 	Capabilities       contracts.InstanceCapabilities `json:"capabilities"`
+	ClientAreas        []contracts.InstanceClientArea `json:"clientAreas,omitempty"`
 	Events             []EventView                    `json:"events"`
 	Warning            string                         `json:"warning,omitempty"`
 }
@@ -479,6 +480,7 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		result.AutoRenewWarning = s.AutoRenewalWarning(ctx, customerID, host.ID)
 	}
 	result.Capabilities = detail.Capabilities
+	result.ClientAreas = detail.ClientAreas
 	if result.ProductionLocked {
 		result.Capabilities = contracts.InstanceCapabilities{}
 	}
