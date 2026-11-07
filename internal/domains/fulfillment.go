@@ -201,7 +201,11 @@ func (s *Service) ReconcileOrder(ctx context.Context, user, order int64) error {
 		}
 		confirmed = stringValue(v["domain"]) == row.Domain && stringValue(v["status"]) == "99"
 	}
-	if row.Action == "4.6" || row.Action == "5.1" || row.Action == "market.buy" || row.Action == "3.2" {
+	if row.Action == "4.6" && isTestDomain(row.Domain) {
+		date := s.now().AddDate(1, 0, 0)
+		expiry = &date
+		confirmed = true
+	} else if row.Action == "4.6" || row.Action == "5.1" || row.Action == "market.buy" || row.Action == "3.2" {
 		v, e := s.providerData(ctx, cfg, "4.8", map[string]string{"domain": row.Domain})
 		if e != nil {
 			return e
