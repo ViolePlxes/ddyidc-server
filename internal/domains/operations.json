@@ -2066,5 +2066,36 @@
         "numeric": false
       }
     ]
+  },
+  {
+    "key": "3.40",
+    "path": "/domain/?act=pause",
+    "method": "POST",
+    "write": true,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "id",
+        "label": "解析记录编号",
+        "required": true,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "val",
+        "label": "状态",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
   }
 ]
