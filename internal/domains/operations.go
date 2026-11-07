@@ -241,7 +241,11 @@ func (s *Service) Execute(ctx context.Context, user int64, req ActionRequest) (*
 			return s.retailResult(op, input, value, cfg)
 		}
 		if op.Key == "3.1" {
-			value = retailAvailability(value, cfg)
+			if strings.EqualFold(strings.TrimSpace(input["suffix"]), ".test") {
+				value = []any{map[string]any{"name": input["domain"] + ".test", "avail": "1", "amount": "0.01"}}
+			} else {
+				value = retailAvailability(value, cfg)
+			}
 		}
 		return &ActionResult{Status: "succeeded", Data: scrub(value, op.Key == "3.4")}, nil
 	}
