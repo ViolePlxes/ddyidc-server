@@ -25,6 +25,7 @@ func RegisterHandlers(server *rest.Server, s *Service, jwt *auth.Manager) {
 		Handler      http.HandlerFunc
 	}{
 		{"GET", "/api/v1/domains/contracts", h.contracts}, {"GET", "/api/v1/domains/assets", h.assets}, {"GET", "/api/v1/domains/templates", h.templates}, {"POST", "/api/v1/domains/templates/sync", h.syncTemplates}, {"GET", "/api/v1/domains/operations", h.records}, {"GET", "/api/v1/domains/orders", h.orders},
+		{"GET", "/api/v1/domains/dns-notes", h.dnsNotes}, {"POST", "/api/v1/domains/dns-notes", h.setDNSNote},
 		{"POST", "/api/v1/domains/actions", h.action}, {"POST", "/api/v1/domains/quotes", h.quote}, {"POST", "/api/v1/domains/orders", h.createOrder}, {"POST", "/api/v1/domains/reconcile", h.reconcile},
 		{"GET", "/admin/v1/domains/assets", h.adminAssets}, {"GET", "/admin/v1/domains/asset", h.adminAsset}, {"POST", "/admin/v1/domains/asset/refresh", h.adminAsset}, {"POST", "/admin/v1/domains/feeds", h.feed}, {"GET", "/admin/v1/domains/settings", h.settings}, {"PUT", "/admin/v1/domains/settings", h.settings}, {"GET", "/admin/v1/domains/operations", h.adminRecords}, {"POST", "/admin/v1/domains/import", h.importAsset},
 	} {
@@ -112,6 +113,26 @@ func (h *Handler) assets(w http.ResponseWriter, r *http.Request) {
 	if user, ok := h.actor(w, r, false); ok {
 		v, e := h.s.Assets(r.Context(), user)
 		finish(w, v, e)
+	}
+}
+func (h *Handler) dnsNotes(w http.ResponseWriter, r *http.Request) {
+	if user, ok := h.actor(w, r, false); ok {
+		v, e := h.s.DNSNotes(r.Context(), user, r.URL.Query().Get("domain"))
+		finish(w, v, e)
+	}
+}
+func (h *Handler) setDNSNote(w http.ResponseWriter, r *http.Request) {
+	if user, ok := h.actor(w, r, false); ok {
+		var body struct {
+			Domain   string `json:"domain"`
+			RecordID string `json:"recordId"`
+			Remark   string `json:"remark"`
+		}
+		if e := json.NewDecoder(io.LimitReader(r.Body, 8192)).Decode(&body); e != nil {
+			finish(w, nil, e)
+			return
+		}
+		finish(w, map[string]bool{"saved": true}, h.s.SetDNSNote(r.Context(), user, body.Domain, body.RecordID, body.Remark))
 	}
 }
 func (h *Handler) templates(w http.ResponseWriter, r *http.Request) {
