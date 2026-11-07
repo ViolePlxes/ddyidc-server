@@ -25,6 +25,7 @@ var ErrCredentials = errors.New("域名服务尚未连接，请联系客服")
 
 type ProviderResult struct {
 	Result   json.Number     `json:"result"`
+	Code     json.Number     `json:"code"`
 	ClientID string          `json:"clientid"`
 	Msg      string          `json:"msg"`
 	ErrCode  json.Number     `json:"errcode"`
@@ -159,6 +160,8 @@ func (c *WestClient) do(req *http.Request, upload bool) (*ProviderResult, error)
 		switch k {
 		case "result":
 			r.Result = json.Number(strings.Trim(string(v), `"`))
+		case "code":
+			r.Code = json.Number(strings.Trim(string(v), `"`))
 		case "errcode":
 			r.ErrCode = json.Number(strings.Trim(string(v), `"`))
 		case "msg":
@@ -168,6 +171,9 @@ func (c *WestClient) do(req *http.Request, upload bool) (*ProviderResult, error)
 		case "data":
 			r.Data = v
 		}
+	}
+	if r.Result == "" && r.Code != "" {
+		r.Result = r.Code
 	}
 	if number, e := strconv.Atoi(string(r.Result)); e != nil || number < 100 || number > 599 {
 		return nil, ErrConnection

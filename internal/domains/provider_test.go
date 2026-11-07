@@ -100,7 +100,7 @@ func TestContractCoverageAndReservedFields(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 59 {
+	if len(seen) != 65 {
 		t.Fatal("incomplete action contracts")
 	}
 	if _, e := signedForm("agent", "secret", time.Now(), map[string]string{"token": "override"}); e == nil {
