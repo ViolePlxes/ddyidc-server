@@ -40,3 +40,9 @@ INSERT IGNORE INTO system.notification_templates(id,scene,channel,title,content,
  (950001002,'domain_order_failed','both','域名订单需要核对','您的域名 {{domain}} 订单 {{order_no}} 尚未完成，请查看订单记录或联系客服。',1);
 
 CREATE TABLE IF NOT EXISTS system.domain_rate_limits (bucket VARCHAR(80) PRIMARY KEY,window_start BIGINT NOT NULL,used INT NOT NULL);
+
+CREATE TABLE IF NOT EXISTS system.domain_dns_notes (
+ id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL, domain VARCHAR(253) NOT NULL, record_id VARCHAR(64) NOT NULL,
+ remark VARCHAR(255) NOT NULL DEFAULT '', created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+ UNIQUE KEY domain_dns_note_record(domain,record_id), INDEX domain_dns_note_owner(customer_id,domain)
+);
