@@ -223,6 +223,7 @@ type InstanceCapabilities struct {
 	ResetPassword bool `json:"resetPassword"`
 	Traffic       bool `json:"traffic"`
 	Remote        bool `json:"remote"`
+	NAT           bool `json:"nat"`
 	Destroy       bool `json:"destroy"`
 }
 
@@ -309,6 +310,25 @@ type InstanceProvider interface {
 	GetInstanceStatus(hostID int64) (string, error)
 	ExecuteInstanceAction(hostID int64, input InstanceActionInput) (*InstanceActionResult, error)
 	GetInstanceMonitor(hostID int64, start, end time.Time) (*InstanceMonitor, error)
+}
+
+type NATRule struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	External string `json:"external"`
+	Internal string `json:"internal"`
+	Protocol string `json:"protocol"`
+}
+type NATRuleInput struct {
+	Name     string `json:"name"`
+	External string `json:"external"`
+	Internal string `json:"internal"`
+	Protocol string `json:"protocol"`
+}
+type NATProvider interface {
+	ListNATRules(hostID int64) ([]NATRule, error)
+	CreateNATRule(hostID int64, input NATRuleInput) (*NATRule, error)
+	DeleteNATRule(hostID int64, ruleID string) error
 }
 
 // RenewalProvider separates quote, invoice creation and payment so uncertain writes are never repeated.
