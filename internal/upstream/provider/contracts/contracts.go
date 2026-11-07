@@ -259,6 +259,7 @@ type InstanceDetail struct {
 	PowerStatus     string               `json:"powerStatus,omitempty"`
 	IPs             []InstanceIP         `json:"ips"`
 	Capabilities    InstanceCapabilities `json:"capabilities"`
+	ClientAreas     []InstanceClientArea `json:"clientAreas,omitempty"`
 }
 
 // InstanceConfig contains actual provisioned values, never catalogue defaults.
@@ -310,6 +311,25 @@ type InstanceProvider interface {
 	GetInstanceStatus(hostID int64) (string, error)
 	ExecuteInstanceAction(hostID int64, input InstanceActionInput) (*InstanceActionResult, error)
 	GetInstanceMonitor(hostID int64, start, end time.Time) (*InstanceMonitor, error)
+}
+
+type InstanceClientArea struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+}
+type Snapshot struct {
+	ID         string `json:"id"`
+	Type       string `json:"type"`
+	DiskName   string `json:"diskName"`
+	Remarks    string `json:"remarks"`
+	CreateTime string `json:"createTime"`
+	Status     int    `json:"status"`
+}
+type SnapshotProvider interface {
+	ListSnapshots(hostID int64) ([]Snapshot, error)
+	CreateSnapshot(hostID int64, name string) error
+	RestoreSnapshot(hostID int64, snapshotID string) error
+	DeleteSnapshot(hostID int64, snapshotID string) error
 }
 
 type NATRule struct {

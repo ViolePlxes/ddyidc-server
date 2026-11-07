@@ -1684,6 +1684,7 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 			ResetPassword: true, Traffic: true, Remote: true, Destroy: false,
 		},
 	}
+	result.ClientAreas = parseClientAreas(data["module_client_area"])
 	result.Capabilities.NAT = hasClientArea(data["module_client_area"], "nat_acl")
 	result.Capabilities.HardStop = hasModuleAction(data["module_button"], "hard_off")
 	result.Capabilities.HardReboot = hasModuleAction(data["module_button"], "hard_reboot")
