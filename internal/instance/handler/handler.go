@@ -52,6 +52,9 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId", Handler: h.detail},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/images", Handler: h.images},
 		{Method: http.MethodPost, Path: "/api/v1/instance/:instanceId/action", Handler: h.action},
+		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/nat", Handler: h.natRules},
+		{Method: http.MethodPost, Path: "/api/v1/instance/:instanceId/nat", Handler: h.createNATRule},
+		{Method: http.MethodDelete, Path: "/api/v1/instance/:instanceId/nat/:ruleId", Handler: h.deleteNATRule},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/monitor", Handler: h.monitor},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/vnc/ws", Handler: h.vncWebSocket},
 	})
