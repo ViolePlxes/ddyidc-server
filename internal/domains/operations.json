@@ -2097,5 +2097,142 @@
         "numeric": false
       }
     ]
+  },
+  {
+    "key": "3.41",
+    "path": "/new/dnsquery/daily",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.42",
+    "path": "/new/dnsquery/hour-trend",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.43",
+    "path": "/new/dnsquery/ip",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "pageno",
+        "label": "页码",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      },
+      {
+        "key": "pageSize",
+        "label": "每页条数",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.44",
+    "path": "/new/dnsquery/qname",
+    "method": "GET",
+    "write": false,
+    "paid": false,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      }
+    ]
+  },
+  {
+    "key": "3.45",
+    "path": "/domain/smartdns/?act=getprice",
+    "method": "POST",
+    "write": false,
+    "paid": false,
+    "scope": "public",
+    "fields": [
+      {
+        "key": "proid",
+        "label": "套餐型号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "years",
+        "label": "年限",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
+  },
+  {
+    "key": "3.46",
+    "path": "/domain/smartdns/?act=buysmartdns",
+    "method": "POST",
+    "write": true,
+    "paid": true,
+    "scope": "owned",
+    "fields": [
+      {
+        "key": "domain",
+        "label": "域名",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "proid",
+        "label": "套餐型号",
+        "required": true,
+        "secret": false,
+        "numeric": false
+      },
+      {
+        "key": "years",
+        "label": "年限",
+        "required": false,
+        "secret": false,
+        "numeric": true
+      }
+    ]
   }
 ]
