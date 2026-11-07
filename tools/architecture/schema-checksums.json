@@ -63,5 +63,5 @@
   "062_billing_invoice_backfill.sql": "8e31b3194aa8af9658d2036b524e45f61fa2fbbd1a9f34dea247ad3559e71e69",
   "063_renewal_price_overrides.sql": "e09e784a4a4102a23a86f4f960b5a1cc3b48ad2ba585826066b994d0e17039c5",
   "064_product_spec_os.sql": "08f05d47b37e80200b93e68f4dc0e81d63fef33817fed0b57d98943b0fdff351",
-  "018_domain_dns_notes.sql": "99848090356a0ad1df975bf40aa8af40190a6bc31a87eb0efd8a1b59316d0a58"
+  "065_domain_dns_notes.sql": "99848090356a0ad1df975bf40aa8af40190a6bc31a87eb0efd8a1b59316d0a58"
 }

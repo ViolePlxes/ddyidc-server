@@ -38,5 +38,9 @@
   "064_product_spec_os.sql": {
     "sha256": "08f05d47b37e80200b93e68f4dc0e81d63fef33817fed0b57d98943b0fdff351",
     "rollbackCompatible": true
+  },
+  "065_domain_dns_notes.sql": {
+    "sha256": "99848090356a0ad1df975bf40aa8af40190a6bc31a87eb0efd8a1b59316d0a58",
+    "rollbackCompatible": true
   }
 }
