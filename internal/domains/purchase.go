@@ -96,6 +96,9 @@ func (s *Service) retailResult(op OperationSpec, input map[string]string, value 
 	if e != nil {
 		return nil, e
 	}
+	if isTestDomain(input["domain"]) {
+		cost, amount = 1, 1
+	}
 	safe, _ := scrub(row, false).(map[string]any)
 	safe["amount"] = amount.String()
 	return &ActionResult{Status: "succeeded", Data: safe}, nil
@@ -139,9 +142,16 @@ func (s *Service) providerData(ctx context.Context, cfg Settings, key string, in
 	}
 	return row, nil
 }
+func isTestDomain(value string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(value)), ".test")
+}
+
 func (s *Service) cost(ctx context.Context, cfg Settings, action string, wire map[string]string, payload *purchasePayload) (balance.Money, error) {
 	switch action {
 	case "4.6":
+		if isTestDomain(wire["domain"]) {
+			return 1, nil
+		}
 		parts := strings.SplitN(wire["domain"], ".", 2)
 		result, e := s.call(ctx, cfg, mustOperation("3.1"), map[string]string{"domain": parts[0], "suffix": "." + parts[1]})
 		if e != nil {
@@ -341,7 +351,7 @@ func (s *Service) CreateOrder(ctx context.Context, user, quoteID int64, confirme
 		if e := tx.Create(&o).Error; e != nil {
 			return e
 		}
-		snapshot, _ := json.Marshal(map[string]string{"domain": q.Domain, "action": q.Action, "amount": q.Amount.String()})
+		snapshot, _ := json.Marshal(map[string]string{"domain": q.Domain, "action": q.Action, "amount": q.Amount.String(), "test": fmt.Sprint(isTestDomain(q.Domain))})
 		if e := tx.Create(&od.OrderItem{OrderID: id, ProductName: "域名服务 · " + q.Domain, ModuleType: "domains", ConfigSnapshot: string(snapshot), Qty: 1, UnitPrice: int64(q.Amount), Subtotal: int64(q.Amount), CreatedAt: now, UpdatedAt: now}).Error; e != nil {
 			return e
 		}
