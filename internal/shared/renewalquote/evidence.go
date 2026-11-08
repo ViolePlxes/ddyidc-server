@@ -160,7 +160,7 @@ func checkTxAt(ctx context.Context, tx *gorm.DB, user, orderID int64, at time.Ti
 	if !e.Valid(at) {
 		return &Error{Code: "RENEWAL_QUOTE_EXPIRED"}
 	}
-	if !e.Matches(b) || r.State != "unpaid" || e.RenewalID != r.ID || e.Cycle != r.Cycle || e.Duration != r.Duration || e.OwnershipVersion != r.OwnershipVersion || e.RemoteHostID != r.HostID || e.SupplierID != r.SupplierID || !e.BaseExpiry.Equal(r.BaseExpiry) {
+	if !e.Matches(b) || (r.State != "unpaid" && r.State != "invoiced_verified") || e.RenewalID != r.ID || e.Cycle != r.Cycle || e.Duration != r.Duration || e.OwnershipVersion != r.OwnershipVersion || e.RemoteHostID != r.HostID || e.SupplierID != r.SupplierID || !e.BaseExpiry.Equal(r.BaseExpiry) {
 		return Unverified()
 	}
 	var o struct{ TotalAmount, PayAmount, DiscountAmount, SetupFee int64 }

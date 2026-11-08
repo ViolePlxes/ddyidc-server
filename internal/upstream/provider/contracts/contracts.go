@@ -360,6 +360,13 @@ type RenewalQuote struct {
 	Amount         string `json:"amount"`
 	Duration       int64  `json:"duration"`
 }
+// RenewalInvoicePreparer creates the upstream renewal invoice before the
+// customer is charged, so an upstream rejection never leaves a paid order
+// without a renewal invoice.
+type RenewalInvoicePreparer interface {
+	PrepareRenewalInvoice(hostID int64, cycle string, duration int64) (invoiceID string, cost string, err error)
+}
+
 type RenewalProvider interface {
 	RenewalQuotes(int64) ([]RenewalQuote, error)
 	CreateRenewalInvoice(int64, string, int64) (string, string, error)

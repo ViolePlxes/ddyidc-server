@@ -8,6 +8,7 @@ import (
 	order "ddyidc/internal/order/domain"
 	"ddyidc/internal/shared/renewalquote"
 	"ddyidc/internal/shared/snowflake"
+	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,8 +55,15 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 	if o.Status == 2 || o.Status == 6 {
 		return ctx, nil
 	}
-	if o.Status != 1 || r.State != "unpaid" {
+	if o.Status != 1 || (r.State != "unpaid" && r.State != "invoiced_verified") {
 		return ctx, &renewalquote.Error{Code: "RENEWAL_PAYMENT_RECONCILING"}
+	}
+	if r.State == "invoiced_verified" && r.InvoiceID != "" {
+		var proof renewalquote.Evidence
+		if e := s.db.WithContext(ctx).Where("order_id=? AND customer_id=?", orderID, customer).Order("revision DESC").Take(&proof).Error; e != nil {
+			return ctx, renewalquote.Unverified()
+		}
+		return renewalquote.WithProof(ctx, proof.ID), nil
 	}
 	h, err := s.owned(ctx, customer, r.InstanceID)
 	if err != nil {
@@ -170,6 +178,19 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 	}
 	if alreadyPaid {
 		return ctx, nil
+	}
+	if prep, ok := provider.(contracts.RenewalInvoicePreparer); ok && r.InvoiceID == "" {
+		invoice, costText, e := prep.PrepareRenewalInvoice(parseHostID(h.UpstreamInstanceID), r.Cycle, r.Duration)
+		if e != nil {
+			return ctx, errors.New("上游续费账单创建失败，请稍后重试或联系客服")
+		}
+		cost, e := billing.ParseMoney(costText)
+		if e != nil || cost <= 0 || cost > r.Cost {
+			return ctx, errors.New("上游续费金额与报价不一致，已停止付款")
+		}
+		if e := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='unpaid'", r.ID).Updates(map[string]any{"invoice_id": invoice, "cost": cost, "state": "invoiced_verified", "last_error": "", "updated_at": time.Now()}).Error; e != nil {
+			return ctx, e
+		}
 	}
 	return renewalquote.WithProof(ctx, evidence.ID), nil
 }
