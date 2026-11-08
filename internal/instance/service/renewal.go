@@ -388,7 +388,7 @@ func (s *Service) PayRenewalBalance(ctx context.Context, customer, id, orderID i
 		if o.Status == 2 || o.Status == 6 {
 			return nil
 		}
-		if o.Status != 1 || r.State != "unpaid" {
+		if o.Status != 1 || (r.State != "unpaid" && r.State != "invoiced_verified") {
 			return errors.New("续费订单当前不可支付")
 		}
 		if e := renewalquote.CheckTx(ctx, tx, customer, orderID); e != nil {

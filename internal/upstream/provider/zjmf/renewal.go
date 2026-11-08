@@ -85,6 +85,10 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 	return out, nil
 }
 
+func (p *Provider) PrepareRenewalInvoice(id int64, cycle string, duration int64) (string, string, error) {
+	return p.CreateRenewalInvoice(id, cycle, duration)
+}
+
 func (p *Provider) CreateRenewalInvoice(id int64, cycle string, duration int64) (string, string, error) {
 	quotes, err := p.RenewalQuotes(id)
 	if err != nil {
