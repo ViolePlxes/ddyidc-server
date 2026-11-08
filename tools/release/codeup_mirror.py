@@ -111,6 +111,14 @@ def remote_refs(url):
                 (line.split("\t", 1) for line in git("ls-remote", url, authenticated=True).splitlines()))
 
 
+def same_tag(remote, ref):
+    local = git("rev-parse", ref)
+    if remote == local:
+        return True
+    # Some Git servers store an annotated tag peeled to its commit.
+    return remote == git("rev-parse", ref + "^{commit}")
+
+
 def mirror(repository, url):
     target_url(url)
     sha = git("rev-parse", "HEAD")
@@ -123,7 +131,7 @@ def mirror(repository, url):
     before = remote_refs(url)
     for tag in tags:
         ref = "refs/tags/" + tag
-        if ref in before and before[ref] != git("rev-parse", ref):
+        if ref in before and not same_tag(before[ref], ref):
             raise RuntimeError("An existing release tag differs; refusing overwrite")
     # Tags first, main last: an interrupted transfer never advertises a new main
     # before its version metadata. Existing tags and main are never forced.
@@ -134,7 +142,7 @@ def mirror(repository, url):
         raise RuntimeError("GitHub main changed; refusing obsolete mirror publication")
     git("push", url, "HEAD:refs/heads/main", authenticated=True)
     after = remote_refs(url)
-    if after.get("refs/heads/main") != sha or any(after.get("refs/tags/" + t) != git("rev-parse", "refs/tags/" + t) for t in tags):
+    if after.get("refs/heads/main") != sha or any(not same_tag(after.get("refs/tags/" + t, ""), "refs/tags/" + t) for t in tags):
         raise RuntimeError("Mirror verification failed")
     print(json.dumps({"status": "verified", "commit": sha, "releaseTags": len(tags)}))
 
