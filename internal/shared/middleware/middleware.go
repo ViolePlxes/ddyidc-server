@@ -63,6 +63,9 @@ func CookieSession(manager *auth.Manager) func(http.HandlerFunc) http.HandlerFun
 					if claims, parseErr := manager.ParseAccessTokenFor(r.Context(), kind, cookie.Value); parseErr == nil {
 						sessionClaims = claims
 						r.Header.Set("Authorization", "Bearer "+cookie.Value)
+						// Observers such as the visit collector reuse the validated
+						// session instead of validating the same token again.
+						r = r.WithContext(auth.WithSession(r.Context(), kind, claims))
 					} else if kind != auth.SessionUser {
 						manager.ClearSessionCookie(w, kind)
 					}

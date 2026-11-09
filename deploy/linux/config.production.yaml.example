@@ -62,6 +62,29 @@ Notify:
 RemoteConsole:
   Engine: novnc
 
+# Visit analytics: privacy-bounded page and API statistics for the admin home.
+# Disabled is the only kill switch; omitted keys keep the documented defaults.
+VisitAnalytics:
+  Disabled: false
+  PageSamplePercent: 100
+  APISamplePercent: 10
+  MaxEventsPerSecond: 5000
+  BatchSize: 200
+  FlushMillis: 2000
+  QueueSize: 8192
+  RetentionDays: 90
+  # The IPv4 database is embedded in the binary, so regions work without any
+  # extra file. Set an absolute path inside Runtime.DataDir only to override it;
+  # the file is reloaded when its modification time changes. No online lookup is
+  # ever performed.
+  GeoIPFile: ""
+  GeoIPReloadMinutes: 60
+  # The nginx JSON page log covers crawlers, which never run the browser beacon.
+  # The file is read-only for the service (SupplementaryGroups=adm); leave the
+  # value empty when the nginx template that writes it is not installed yet.
+  NginxLogFile: /var/log/nginx/ddyidc-visit.log
+  NginxPollMillis: 250
+
 Payment:
   AlipaySecretFile: /etc/ddyidc/secrets/alipay.json
 

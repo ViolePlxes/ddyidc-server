@@ -61,6 +61,7 @@ import (
 	upstreamservice "ddyidc/internal/upstream/service"
 	"ddyidc/internal/upstream/testpolicy"
 	"ddyidc/internal/videobind"
+	"ddyidc/internal/visitanalytics"
 	"ddyidc/pkg/auth"
 	"ddyidc/pkg/cache"
 	"ddyidc/pkg/clientip"
@@ -271,6 +272,7 @@ func main() {
 		Outbound              outbound.Config     `json:",optional"`
 		Cron                  *distsync.Config    `json:",optional"`
 		Network               clientip.Config     `json:",optional"`
+		VisitAnalytics        visitanalytics.Config `json:",optional"`
 		MySQL                 db.Config
 		Redis                 cache.Config
 		Notify                notify.Config
@@ -392,6 +394,13 @@ func main() {
 		if err := migrations.Apply(ctx, db.DB, migrationSteps, *retryDirty, func(ctx context.Context) error { return seedModules(ctx, []byte(c.Crypto.AESKey), paths.Root) }); err != nil {
 			panic(err)
 		}
+		// Visit event partitions are DDL: they are extended and pruned here, in
+		// the privileged offline run, never by the API process.
+		partitionReport, err := visitanalytics.EnsurePartitions(ctx, db.DB, time.Now(), c.VisitAnalytics.RetentionDays)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("Visit analytics partitions: horizon=%s added=%v dropped=%v\n", partitionReport.Highest, partitionReport.Added, partitionReport.Dropped)
 		if *migrationSocket != "" {
 			if err := invoiceapi.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
@@ -421,6 +430,9 @@ func main() {
 				panic(err)
 			}
 			if err := security.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
+				panic(err)
+			}
+			if err := visitanalytics.ApplyRuntimePrivileges(ctx, db.DB, c.MySQL.User, c.MySQL.Host); err != nil {
 				panic(err)
 			}
 		}
@@ -495,6 +507,11 @@ func main() {
 	server.Use(accessSecurity.Middleware)
 	server.Use(middleware.CookieSession(authManager))
 	server.Use(workgate.Middleware)
+	// Visit analytics must observe the resolved identity and the final response
+	// status, so it is mounted after the session and maintenance middleware.
+	visitService := visitanalytics.New(c.VisitAnalytics, db.DB, authManager, []byte(c.Crypto.AESKey))
+	server.Use(visitService.Middleware())
+	proc.AddShutdownListener(visitService.Close)
 
 	// 注册路由（各域 handler 在此注册）
 	if *cronOnly != "" && (*cronOnly != "promo_coupon" || *noCron) {
@@ -502,7 +519,8 @@ func main() {
 	}
 	var cronStarts []func(context.Context)
 	proc.AddShutdownListener(func() { draining.Store(true) })
-	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths)
+	registerRoutes(server, notifyManager, updateManager, authManager, []byte(c.Crypto.AESKey), c.RemoteConsole, c.Payment.AlipaySecretFile, &cronStarts, paths, visitService)
+	cronStarts = append(cronStarts, visitService.StartMaintenance)
 	cronStarts = append(cronStarts, notifyManager.StartExpiryScanner, notifyManager.StartDigestWorker, balance.New(db.G).StartReconciliation,
 		func(ctx context.Context) { balance.New(db.G).StartNotifications(ctx, notifyManager) },
 		func(ctx context.Context) {
@@ -535,7 +553,7 @@ func initRepositories() {
 	repositories.Payment = paymentrepo.NewRepository(db.G)
 }
 
-func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context), paths runtimepaths.Paths) {
+func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateManager *update.Manager, jwt *auth.Manager, snapshotKey []byte, remoteConfig remoteconsole.Config, alipaySecretFile string, cronStarts *[]func(context.Context), paths runtimepaths.Paths, visitService *visitanalytics.Service) {
 	if err := notification.VerifyRuntimeAccess(context.Background(), db.DB); err != nil {
 		panic(err)
 	}
@@ -572,6 +590,7 @@ func registerRoutes(server *rest.Server, notifyManager *notify.Manager, updateMa
 	upstreamapi.RegisterModuleHandlers(server, upstreamservice.Default, jwt)
 	upstreamapi.RegisterSupplierSnapshotHandlers(server, upstreamservice.Default, jwt)
 	adminread.RegisterHandlers(server, db.G, jwt, paths.Root)
+	visitService.Register(server, jwt)
 	admintodo.Register(server, db.G, jwt, snapshotKey)
 	admintodo.RegisterExpiryWorkflows(server, db.G, jwt, notifyManager)
 	navigationSvc := navigation.New(db.G)

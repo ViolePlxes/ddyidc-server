@@ -8,6 +8,9 @@ RequiresMountsFor=/opt/ddyidc /var/lib/ddyidc/logs
 Type=simple
 User=ddyidc
 Group=ddyidc
+# The visit analytics reader needs read access to the nginx JSON access log
+# (0640 www-data adm); no other permission on /var/log/nginx is granted.
+SupplementaryGroups=adm
 WorkingDirectory=/var/lib/ddyidc
 StateDirectory=ddyidc
 StateDirectoryMode=0751
