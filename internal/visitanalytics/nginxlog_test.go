@@ -58,8 +58,10 @@ func TestNginxIngestRecordsCrawlersOnly(t *testing.T) {
 	if record.IPHash == "" || strings.Contains(record.IPHash, "114.114") {
 		t.Fatalf("address digest = %q", record.IPHash)
 	}
-	if !record.OccurredAt.Equal(time.Date(2026, 11, 9, 9, 30, 0, 0, time.Local)) {
-		t.Fatalf("occurred at = %s", record.OccurredAt)
+	// The log carries an explicit +08:00 offset; the stored instant must be the
+	// same moment regardless of the runner's time zone.
+	if expected := time.Date(2026, 11, 9, 9, 30, 0, 0, time.FixedZone("CST", 8*3600)); !record.OccurredAt.Equal(expected) {
+		t.Fatalf("occurred at = %s, want the 09:30 +08:00 instant", record.OccurredAt)
 	}
 	// Browsers are counted once, by their own beacon.
 	if service.ingestNginxLine(browserLine) {
