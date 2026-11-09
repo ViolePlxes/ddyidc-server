@@ -3,6 +3,8 @@ package visitanalytics
 import (
 	"encoding/binary"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -111,9 +113,10 @@ func TestParseGeoDataRejectsInvalidFiles(t *testing.T) {
 
 func TestParseRegionPlaceholders(t *testing.T) {
 	cases := map[string]Location{
-		"中国|0|0|0|CN":        {Country: "中国"},
-		"内网IP|内网IP|内网IP":     {Country: "unknown"},
-		"美国|加利福尼亚州|洛杉矶|0|US": {Country: "美国", Region: "加利福尼亚州", City: "洛杉矶"},
+		"中国|0|0|0|CN":                {Country: "中国"},
+		"内网IP|内网IP|内网IP":             {Country: "unknown"},
+		"Reserved|Reserved|Reserved": {Country: "unknown"},
+		"美国|加利福尼亚州|洛杉矶|0|US":         {Country: "美国", Region: "加利福尼亚州", City: "洛杉矶"},
 		"": {Country: "unknown"},
 	}
 	for raw, expected := range cases {
@@ -124,15 +127,47 @@ func TestParseRegionPlaceholders(t *testing.T) {
 	}
 }
 
-func TestGeoStoreWithoutFile(t *testing.T) {
+func TestEmbeddedGeoDatabaseResolvesRegions(t *testing.T) {
 	store := newGeoStore("")
-	if store.Available() {
-		t.Fatal("store without a file reports available")
+	if !store.Available() {
+		t.Fatal("embedded geo database did not load")
 	}
-	if location := store.Lookup(netip.MustParseAddr("1.0.0.5")); location.Country != "unknown" {
-		t.Fatalf("lookup without a table = %+v", location)
+	status := store.GeoStatus()
+	if status["loaded"] != true || status["source"] != "embedded" {
+		t.Fatalf("status = %+v", status)
+	}
+	if status["format"] != "ip2region-v3-ipv4" {
+		t.Fatalf("format = %v", status["format"])
+	}
+	// Two well-known public addresses must resolve to a real country; the exact
+	// labels follow the upstream database revision and are not asserted here.
+	for _, raw := range []string{"114.114.114.114", "8.8.8.8"} {
+		location := store.Lookup(netip.MustParseAddr(raw))
+		if location.Country == "" || location.Country == "unknown" {
+			t.Fatalf("%s resolved to %+v", raw, location)
+		}
 	}
 	if changed, err := store.reload(); err != nil || changed {
-		t.Fatalf("reload without a path = (%v,%v)", changed, err)
+		t.Fatalf("embedded reload = (%v,%v), want no reload", changed, err)
+	}
+}
+
+func TestExternalGeoFileTakesPrecedence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ip2region_v4.xdb")
+	if err := os.WriteFile(path, buildSyntheticXDB([]testSegment{{1, "中国|广东省|深圳市|电信|CN"}}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newGeoStore(path)
+	if status := store.GeoStatus(); status["source"] != "file" {
+		t.Fatalf("status = %+v", status)
+	}
+	if location := store.Lookup(netip.MustParseAddr("1.0.0.5")); location.Country != "中国" || location.City != "深圳市" {
+		t.Fatalf("external table lookup = %+v", location)
+	}
+	// An unreadable override falls back to the embedded database instead of
+	// degrading every region to unknown.
+	fallback := newGeoStore(filepath.Join(t.TempDir(), "missing.xdb"))
+	if !fallback.Available() || fallback.GeoStatus()["source"] != "embedded" {
+		t.Fatalf("missing override did not fall back: %+v", fallback.GeoStatus())
 	}
 }

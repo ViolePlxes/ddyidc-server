@@ -1,17 +1,19 @@
 # 访问采集与访问分析（visit analytics）
 
-状态：后端采集、聚合查询与后台首页访问分析已接入。前端静态页面由 nginx 提供，因此页面访问由 SPA 上报，接口访问由中间件采集。
+状态：后端采集、聚合查询与后台首页访问分析已接入。前端静态页面由 nginx 提供，因此页面访问由 SPA 上报，接口访问由中间件采集，不执行 JS 的爬虫由 nginx 访问日志补充。
 
 ## 1. 数据链路
 
 ```
 浏览器路由变化 ──POST /api/v1/visit/collect──┐
-后端 API 请求 ──中间件采集状态码/耗时/身份──┴─→ 内存队列
+后端 API 请求 ──中间件采集状态码/耗时/身份──┤
+nginx 页面访问日志（爬虫/非浏览器）──tail──┴─→ 内存队列
    → 批量事务写入（原始事件 + 预聚合）
    → 管理端 /admin/v1/visit-analytics/*
    → 后台首页「访问分析」
 ```
 
+- 三条来源互不重复：浏览器页面只由 beacon 记录一次；接口请求只由中间件记录；nginx 日志只补充“非浏览器客户端访问的页面外壳”（主要是爬虫与脚本），服务端会跳过浏览器 UA 与接口路径。
 - 队列满、限流、采样丢弃只计数并写日志，绝不影响业务响应。
 - 写库失败整批回滚并记录 `visit_analytics_write_failed`，预聚合不会与原始数据漂移。
 - 关闭顺序：`proc` 关闭回调先 flush 队列，最多等待 10 秒。
@@ -55,6 +57,17 @@
 
 采样：页面与上报默认 100%，接口默认 10%（`APISamplePercent`），单实例每秒写入上限默认 5000（`MaxEventsPerSecond`）。
 
+### 4.1 nginx 访问日志（爬虫来源）
+
+nginx 模板 `deploy/linux/nginx-ddyidc.conf` 为三个页面 location（`/`、console、sales）额外写一份 JSON 访问日志 `/var/log/nginx/ddyidc-visit.log`；接口、静态资源与随机管理入口不写该日志，原有安全日志在这些 location 中显式声明，内容与语义不变。
+
+- 字段：时间、Host、客户端地址、方法、`$uri`（不含查询串）、状态码、耗时、User-Agent、Referer。
+- 读取（`NginxLogFile` 非空时启用）：启动从文件末尾开始，避免重启回放历史；持续跟随追加；检测到轮转或截断时重新打开新文件从头读取；文件不存在按周期记一次日志，绝不阻塞启动。
+- 只转换**非浏览器**客户端（爬虫与 curl/脚本类）的页面请求；浏览器仍只由 beacon 记录一次，接口路径直接跳过，因此不会重复计数。
+- 服务账号通过 `SupplementaryGroups=adm` 只读 `0640 www-data adm` 日志；日志文件加入既有 `logrotate-ddyidc.conf` 分组（每日/100M，保留 30 份）。
+- 隐私：日志留在主机上用于摄取，入库前地址哈希、UA 只保留解析标签；日志本身由 logrotate 按 30 天自然过期，应用不复制日志原文。
+- 该日志依赖重新安装 nginx 模板与 systemd 单元；未安装前把 `NginxLogFile` 留空即可，其余采集不受影响。
+
 ## 5. 隐私
 
 - 原始 IP 不入库：只存 `HMAC-SHA256(IP, SHA256("ddyidc.visit-analytics.ip.v1" + AESKey))`。
@@ -94,18 +107,21 @@ VisitAnalytics:
   FlushMillis: 2000
   QueueSize: 8192
   RetentionDays: 90
-  GeoIPFile: /var/lib/ddyidc/storage/geoip/ip2region.xdb
+  GeoIPFile: ""
   GeoIPReloadMinutes: 60
 ```
 
-`Disabled` 是唯一总开关；省略整段配置时按默认值采集。`GeoIPFile` 为空或不存在的文件时，地域一律记为 `unknown`，不影响其他维度。
+`Disabled` 是唯一总开关；省略整段配置时按默认值采集。
 
-地域库：下载 ip2region xdb（v2 IPv4 或 v3 IPv4/IPv6，必须使用向量索引）后放到 `Runtime.DataDir/storage/geoip/`，文件更新后按 `GeoIPReloadMinutes` 自动热加载。只有 `system.visit_events` 的 `geo` 预聚合受其影响。
+地域库：**ip2region 官方 IPv4 数据库随二进制嵌入**（`internal/visitanalytics/data/ip2region_v4.xdb`，Apache-2.0，见同目录 `README.md` 的版本与 SHA-256），因此新装环境无需额外部署步骤即有真实地域；内网、保留地址与库中占位值（`0`、`内网IP`、`Reserved`）统一记为 `unknown`，不调用任何在线接口。
+
+`GeoIPFile` 仅用于覆盖：配置为绝对路径且文件可读时优先使用，文件更新后按 `GeoIPReloadMinutes` 热加载；文件缺失或损坏时自动回退到内嵌库，不会把地域全部降级为 `unknown`。只有 `system.visit_events` 的 `geo` 预聚合受其影响。
 
 ## 8. 验证
 
-- 单元测试：UA 解析矩阵、路径归一化与随机入口脱敏、来源优先级、地域库格式（合成 xdb）、采样/限流/队列、日期范围与筛选白名单、聚合维度、上报接口边界。
+- 单元测试：UA 解析矩阵、路径归一化与随机入口脱敏、来源优先级、地域库格式（合成 xdb + 内嵌库真实查询）、采样/限流/队列、日期范围与筛选白名单、聚合维度、上报接口边界、nginx 行解析/跟随/轮转/截断/重复计数防护。
 - 集成测试（`FOUNDATION_MYSQL_SOCKET`）：批量写入、预聚合、概览筛选、流向/地域/客户端/状态码查询、隐私断言、分区扩展与幂等。
+- nginx 模板：`nginx -t` 语法校验；`deploy/linux/tests/test_nginx_proxy.py` 与 `test_admin_security_nginx.py` 通过。
 - 见 `deploy/linux/tests/test_schema_migrations.sh` 与 `tools/security/integration-skips.json` 登记。
 
 ## 9. 发布前置条件
@@ -113,5 +129,10 @@ VisitAnalytics:
 1. 先执行离线迁移（迁移 066 + 分区扩展 + 运行时授权）。
 2. 再启动新版本后端。
 3. 前端最后发布（上报接口依赖后端路由）。
+4. 爬虫采集额外需要重装部署文件（已在 `/opt/ddyidc/deploy` 的环境首次启用时）：
+   `nginx-ddyidc.conf` 重新渲染到 `/etc/nginx/sites-available/ddyidc` 后 `nginx -t && systemctl reload nginx`；
+   `ddyidc.service` 覆盖安装后 `systemctl daemon-reload && systemctl restart ddyidc`；
+   `logrotate-ddyidc.conf` 覆盖到 `/etc/logrotate.d/ddyidc`。
+   未重装前把 `NginxLogFile` 留空，服务不会因缺少日志而报错。
 
-回滚：旧版本代码不读取新表，可直接回滚二进制；新表保留不删，分区在下次迁移时继续维护。
+回滚：旧版本代码不读取新表，可直接回滚二进制；新表保留不删，分区在下次迁移时继续维护。回滚前可删除 `/var/log/nginx/ddyidc-visit.log` 对应的 nginx 配置行并把 `NginxLogFile` 置空。

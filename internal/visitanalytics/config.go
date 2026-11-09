@@ -21,20 +21,26 @@ type Config struct {
 	RetentionDays      int     `json:",optional"`
 	GeoIPFile          string  `json:",optional"`
 	GeoIPReloadMinutes int     `json:",optional"`
+	// NginxLogFile is the JSON access log written by nginx for SPA shell
+	// requests. It is the only source for crawlers, which never run the browser
+	// beacon. Empty disables the reader.
+	NginxLogFile    string `json:",optional"`
+	NginxPollMillis int    `json:",optional"`
 }
 
 const (
-	defaultPageSample    = 100.0
-	defaultAPISample     = 10.0
-	defaultMaxPerSecond  = 5000
-	defaultBatchSize     = 200
-	defaultFlushMillis   = 2000
-	defaultQueueSize     = 8192
-	defaultRetentionDays = 90
-	defaultReloadMinutes = 60
-	maxBatchSize         = 1000
-	maxQueueSize         = 65536
-	maxRetentionDays     = 90
+	defaultPageSample      = 100.0
+	defaultAPISample       = 10.0
+	defaultMaxPerSecond    = 5000
+	defaultBatchSize       = 200
+	defaultFlushMillis     = 2000
+	defaultQueueSize       = 8192
+	defaultRetentionDays   = 90
+	defaultReloadMinutes   = 60
+	defaultNginxPollMillis = 250
+	maxBatchSize           = 1000
+	maxQueueSize           = 65536
+	maxRetentionDays       = 90
 )
 
 // normalized clamps operator input into the reviewed envelope. A zero sample
@@ -66,7 +72,11 @@ func (c Config) normalized() Config {
 	if c.GeoIPReloadMinutes <= 0 {
 		c.GeoIPReloadMinutes = defaultReloadMinutes
 	}
+	if c.NginxPollMillis <= 0 {
+		c.NginxPollMillis = defaultNginxPollMillis
+	}
 	c.GeoIPFile = strings.TrimSpace(c.GeoIPFile)
+	c.NginxLogFile = strings.TrimSpace(c.NginxLogFile)
 	return c
 }
 
@@ -77,6 +87,9 @@ func (c Config) flushInterval() time.Duration { return time.Duration(c.FlushMill
 func (c Config) Validate() error {
 	if c.GeoIPFile != "" && !strings.HasPrefix(c.GeoIPFile, "/") {
 		return errors.New("visit analytics geo database must be an absolute path")
+	}
+	if c.NginxLogFile != "" && !strings.HasPrefix(c.NginxLogFile, "/") {
+		return errors.New("visit analytics nginx log must be an absolute path")
 	}
 	return nil
 }

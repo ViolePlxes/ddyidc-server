@@ -1,6 +1,7 @@
 package visitanalytics
 
 import (
+	"embed"
 	"encoding/binary"
 	"errors"
 	"net/netip"
@@ -15,7 +16,18 @@ import (
 // supported; the reader keeps the whole file in memory so a lookup performs no
 // disk I/O and no network call. See https://github.com/lionsoul2014/ip2region
 // for the format (Apache-2.0).
+//
+// A copy of the official IPv4 database is embedded so a fresh install has real
+// regions without any extra deployment step. An external file in
+// VisitAnalytics.GeoIPFile takes precedence and can be updated without a
+// release.
+//
+//go:embed data/ip2region_v4.xdb
+var embeddedGeoDatabase embed.FS
+
 const (
+	embeddedGeoPath = "data/ip2region_v4.xdb"
+
 	xdbHeaderInfoLength = 256
 	xdbVectorIndexRows  = 256
 	xdbVectorIndexCols  = 256
@@ -44,7 +56,23 @@ type geoIndex struct {
 	data         []byte
 	segmentBytes int
 	ipv6         bool
+	structure    uint16
+	source       string
 	modTime      time.Time
+}
+
+// loadEmbeddedGeoIndex decodes the database shipped with the binary.
+func loadEmbeddedGeoIndex() (*geoIndex, error) {
+	data, err := embeddedGeoDatabase.ReadFile(embeddedGeoPath)
+	if err != nil {
+		return nil, err
+	}
+	index, err := parseGeoData(data)
+	if err != nil {
+		return nil, err
+	}
+	index.source = "embedded"
+	return index, nil
 }
 
 // loadGeoIndex reads and validates an xdb file.
@@ -65,6 +93,7 @@ func loadGeoIndex(path string) (*geoIndex, error) {
 		return nil, err
 	}
 	index.modTime = info.ModTime()
+	index.source = "file"
 	return index, nil
 }
 
@@ -78,13 +107,13 @@ func parseGeoData(data []byte) (*geoIndex, error) {
 	}
 	switch version {
 	case xdbStructureV2:
-		return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV4}, nil
+		return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV4, structure: version}, nil
 	case xdbStructureV3:
 		switch binary.LittleEndian.Uint16(data[16:]) {
 		case 4:
-			return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV4}, nil
+			return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV4, structure: version}, nil
 		case 6:
-			return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV6, ipv6: true}, nil
+			return &geoIndex{data: data, segmentBytes: xdbSegmentSizeV6, ipv6: true, structure: version}, nil
 		default:
 			return nil, errGeoUnsupported
 		}
@@ -193,8 +222,9 @@ func (g *geoIndex) compare(ip, segment []byte) int {
 	return 0
 }
 
-// parseRegion splits "国家|省份|城市|ISP|国家代码" and normalizes the "0" and
-// "内网IP" placeholders that ip2region uses for missing values.
+// parseRegion splits "国家|省份|城市|ISP|国家代码" and normalizes the placeholder
+// values ip2region uses for missing data: "0", "内网IP", "未知" and the
+// "Reserved" range used for documentation and special-purpose addresses.
 func parseRegion(region string) Location {
 	fields := strings.Split(strings.TrimSpace(region), "|")
 	value := func(index int) string {
@@ -202,8 +232,8 @@ func parseRegion(region string) Location {
 			return ""
 		}
 		field := strings.TrimSpace(fields[index])
-		switch field {
-		case "", "0", "-", "内网IP", "未知":
+		switch strings.ToLower(field) {
+		case "", "0", "-", "内网ip", "未知", "unknown", "reserved":
 			return ""
 		}
 		return truncate(field, 64)
@@ -211,6 +241,7 @@ func parseRegion(region string) Location {
 	location := Location{Country: value(0), Region: value(1), City: value(2)}
 	if location.Country == "" {
 		location.Country = "unknown"
+		location.Region, location.City = "", ""
 	}
 	return location
 }
@@ -224,10 +255,15 @@ type geoStore struct {
 
 func newGeoStore(path string) *geoStore {
 	store := &geoStore{path: path}
-	if path == "" {
-		return store
+	if path != "" {
+		if index, err := loadGeoIndex(path); err == nil {
+			store.current.Store(index)
+			return store
+		}
 	}
-	if index, err := loadGeoIndex(path); err == nil {
+	// Fall back to the database embedded in the binary so a missing or
+	// unreadable override never degrades regions to "unknown".
+	if index, err := loadEmbeddedGeoIndex(); err == nil {
 		store.current.Store(index)
 	}
 	return store
@@ -245,7 +281,8 @@ func (s *geoStore) Lookup(address netip.Addr) Location {
 // Available reports whether a table is loaded.
 func (s *geoStore) Available() bool { return s.current.Load() != nil }
 
-// reload re-reads the file when its modification time changed.
+// reload re-reads the external file when its modification time changed. The
+// embedded database never reloads.
 func (s *geoStore) reload() (bool, error) {
 	if s.path == "" {
 		return false, nil
@@ -255,7 +292,7 @@ func (s *geoStore) reload() (bool, error) {
 		return false, err
 	}
 	previous := s.current.Load()
-	if previous != nil && !previous.modTime.Before(info.ModTime()) {
+	if previous != nil && previous.source == "file" && !previous.modTime.Before(info.ModTime()) {
 		return false, nil
 	}
 	index, err := loadGeoIndex(s.path)
@@ -270,11 +307,18 @@ func (s *geoStore) reload() (bool, error) {
 func (s *geoStore) GeoStatus() map[string]any {
 	index := s.current.Load()
 	if index == nil {
-		return map[string]any{"loaded": false, "path": s.path, "format": ""}
+		return map[string]any{"loaded": false, "path": s.path, "format": "", "source": ""}
 	}
 	format := "ip2region-v2-ipv4"
-	if index.ipv6 {
+	switch {
+	case index.ipv6:
 		format = "ip2region-v3-ipv6"
+	case index.structure == xdbStructureV3:
+		format = "ip2region-v3-ipv4"
 	}
-	return map[string]any{"loaded": true, "path": s.path, "format": format, "modTime": index.modTime.Format(time.RFC3339)}
+	status := map[string]any{"loaded": true, "path": s.path, "format": format, "source": index.source}
+	if !index.modTime.IsZero() {
+		status["modTime"] = index.modTime.Format(time.RFC3339)
+	}
+	return status
 }

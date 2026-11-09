@@ -73,10 +73,17 @@ VisitAnalytics:
   FlushMillis: 2000
   QueueSize: 8192
   RetentionDays: 90
-  # Offline ip2region xdb inside Runtime.DataDir. Leave empty or unset to record
-  # every region as unknown; no online lookup is ever performed.
-  GeoIPFile: /var/lib/ddyidc/storage/geoip/ip2region.xdb
+  # The IPv4 database is embedded in the binary, so regions work without any
+  # extra file. Set an absolute path inside Runtime.DataDir only to override it;
+  # the file is reloaded when its modification time changes. No online lookup is
+  # ever performed.
+  GeoIPFile: ""
   GeoIPReloadMinutes: 60
+  # The nginx JSON page log covers crawlers, which never run the browser beacon.
+  # The file is read-only for the service (SupplementaryGroups=adm); leave the
+  # value empty when the nginx template that writes it is not installed yet.
+  NginxLogFile: /var/log/nginx/ddyidc-visit.log
+  NginxPollMillis: 250
 
 Payment:
   AlipaySecretFile: /etc/ddyidc/secrets/alipay.json

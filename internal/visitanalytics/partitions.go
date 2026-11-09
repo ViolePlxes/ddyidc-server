@@ -194,6 +194,7 @@ func (s *Service) StartMaintenance(ctx context.Context) {
 	}
 	if s.Enabled() {
 		s.StartWriter(ctx)
+		s.StartNginxLog(ctx)
 	}
 	s.reloadGeo()
 	if highest, err := PartitionHorizon(ctx, s.database); err == nil && !highest.IsZero() {
