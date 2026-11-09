@@ -66,7 +66,7 @@ func (p Paths) Prepare() error {
 	if err := os.MkdirAll(p.Root, 0750); err != nil {
 		return err
 	}
-	for _, name := range []string{"logs", "storage/certification", "storage/ticket-attachments", "tmp", "home", "cache/go-build", "cache/go-mod", "cache/npm", "run", "update-results/staging", "update-results/backups", "update/workspaces"} {
+	for _, name := range []string{"logs", "storage/certification", "storage/ticket-attachments", "storage/geoip", "tmp", "home", "cache/go-build", "cache/go-mod", "cache/npm", "run", "update-results/staging", "update-results/backups", "update/workspaces"} {
 		path := p.Join(name)
 		if err := p.Within(path); err != nil {
 			return err

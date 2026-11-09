@@ -42,5 +42,9 @@
   "065_domain_dns_notes.sql": {
     "sha256": "99848090356a0ad1df975bf40aa8af40190a6bc31a87eb0efd8a1b59316d0a58",
     "rollbackCompatible": true
+  },
+  "066_visit_analytics.sql": {
+    "sha256": "55672db28868b92653a22038cd850c55b6c314c280a1d3be7cb02164b47a3916",
+    "rollbackCompatible": true
   }
 }

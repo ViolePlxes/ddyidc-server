@@ -62,6 +62,22 @@ Notify:
 RemoteConsole:
   Engine: novnc
 
+# Visit analytics: privacy-bounded page and API statistics for the admin home.
+# Disabled is the only kill switch; omitted keys keep the documented defaults.
+VisitAnalytics:
+  Disabled: false
+  PageSamplePercent: 100
+  APISamplePercent: 10
+  MaxEventsPerSecond: 5000
+  BatchSize: 200
+  FlushMillis: 2000
+  QueueSize: 8192
+  RetentionDays: 90
+  # Offline ip2region xdb inside Runtime.DataDir. Leave empty or unset to record
+  # every region as unknown; no online lookup is ever performed.
+  GeoIPFile: /var/lib/ddyidc/storage/geoip/ip2region.xdb
+  GeoIPReloadMinutes: 60
+
 Payment:
   AlipaySecretFile: /etc/ddyidc/secrets/alipay.json
 

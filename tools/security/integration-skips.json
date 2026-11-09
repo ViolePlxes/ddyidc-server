@@ -796,5 +796,13 @@
   "ddyidc/internal/portal/TestCMSLabServer": {
     "disposition": "manual_preview_only",
     "verification": "Explicit local test harness only: DDYIDC_CMS_LAB_SERVE=1, guarded disposable UNIX socket, loopback 18092; must never start in CI or production. It is not a passing integration check."
+  },
+  "ddyidc/internal/visitanalytics/TestVisitAnalyticsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_schema_migrations.sh with disposable FOUNDATION_MYSQL_SOCKET: batch insert into system.visit_events, pre-aggregate upsert, overview identity/client slices, flow/geography/client/status queries and privacy assertions (no raw address or User-Agent). A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/visitanalytics/TestEnsurePartitionsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_schema_migrations.sh with disposable FOUNDATION_MYSQL_SOCKET: monthly partition extension, MAXVALUE catch-all retention and idempotent re-run on system.visit_events. A normal-suite skip is not a pass."
   }
 }
