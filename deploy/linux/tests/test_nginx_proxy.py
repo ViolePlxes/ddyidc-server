@@ -77,6 +77,9 @@ class NginxProxyTest(unittest.TestCase):
             body = body.replace("/etc/ddyidc/tls/fullchain.pem", str(cert)).replace("/etc/ddyidc/tls/privkey.pem", str(key))
             body = body.replace("/var/log/nginx/ddyidc-access.log", str(root / "access.log"))
             body = body.replace("/var/log/nginx/ddyidc-error.log", str(root / "error.log"))
+            # The visit log is written by the same three page locations; the
+            # isolated config must keep every log path inside the temp folder.
+            body = body.replace("/var/log/nginx/ddyidc-visit.log", str(root / "visit.log"))
             config = root / "nginx.conf"
             config.write_text(f"pid {root}/nginx.pid; error_log {root}/main.log; events {{}} http {{ access_log off; "
                               f"client_body_temp_path {root}/body; proxy_temp_path {root}/proxy; "
