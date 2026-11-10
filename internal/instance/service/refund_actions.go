@@ -93,7 +93,11 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 		if e != nil || detail.Request == nil {
 			return workflow.ErrConflict
 		}
-		if e = tx.Exec("SELECT id FROM `order`.orders WHERE id=? AND customer_id=? FOR UPDATE", detail.Request.ObjectID, detail.Request.CustomerID).Error; e != nil {
+		if detail.Request.Source == "instance" {
+			if e = tx.Exec("SELECT id FROM instance.instances WHERE id=? AND customer_id=? FOR UPDATE", detail.Request.ObjectID, detail.Request.CustomerID).Error; e != nil {
+				return e
+			}
+		} else if e = tx.Exec("SELECT id FROM `order`.orders WHERE id=? AND customer_id=? FOR UPDATE", detail.Request.ObjectID, detail.Request.CustomerID).Error; e != nil {
 			return e
 		}
 		// Serialize competing administrator decisions before any supplier request.
@@ -176,14 +180,19 @@ func (s *Service) MachineRefundAction(ctx context.Context, id int64, actor workf
 		now := time.Now().UTC().Truncate(time.Millisecond)
 		review := workflow.ReviewInput{AmountMode: in.AmountMode, CustomAmount: in.CustomAmount, Action: "approve", Reason: in.Reason, RequestID: in.RequestID, ExpectedUpdatedAt: detail.UpdatedAt, ExpectedAmount: calc.Refund.String(), ConfirmLarge: in.ConfirmLarge, Fees: fees}
 		body, _ := json.Marshal(review)
-		out = MachineRefundAction{ApplicationID: id, CustomerID: detail.UserID, OrderID: detail.Request.ObjectID, RequestID: in.RequestID, Action: in.Action, State: "prepared", Amount: calc.Refund.String(), AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Reason: in.Reason, ConfirmLarge: in.ConfirmLarge, ApplicationUpdatedAt: detail.UpdatedAt, ReviewInput: body, CreatedAt: now, UpdatedAt: now}
+		out = MachineRefundAction{ApplicationID: id, CustomerID: detail.UserID, OrderID: detail.OrderID, RequestID: in.RequestID, Action: in.Action, State: "prepared", Amount: calc.Refund.String(), AdminID: actor.ID, AdminName: actor.Name, OperatorIP: actor.IP, Reason: in.Reason, ConfirmLarge: in.ConfirmLarge, ApplicationUpdatedAt: detail.UpdatedAt, ReviewInput: body, CreatedAt: now, UpdatedAt: now}
 		if e = tx.Create(&out).Error; e != nil {
 			return e
 		}
 		if len(snapshot.Periods) == 0 || len(snapshot.Periods) > 50 {
 			return workflow.ErrCalculation
 		}
+		created := map[int64]bool{}
 		for _, period := range snapshot.Periods {
+			if created[period.InstanceID] {
+				continue
+			}
+			created[period.InstanceID] = true
 			var host dom.Host
 			if e = tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).First(&host, period.InstanceID).Error; e != nil {
 				return e
@@ -357,9 +366,15 @@ func (s *Service) completeMachineRefund(ctx context.Context, tx *gorm.DB, action
 		if e := s.refundHostUnlocked(tx, h.ID); e != nil {
 			return e
 		}
-		// Direct balance reimbursement ends local entitlement without a supplier call.
-		if e := tx.Unscoped().Model(&dom.Host{}).Where("id=?", h.ID).Updates(map[string]any{"status": 6, "power_status": "deleted", "updated_at": time.Now().UTC()}).Error; e != nil {
-			return e
+		// Direct balance reimbursement ends local entitlement without a supplier
+		// call. Machine-level refunds hand the entitlement ending to the review
+		// transaction instead, so the refund and the destruction commit together.
+		var machineRequest workflow.Request
+		machineScoped := tx.Where("application_id=?", action.ApplicationID).Take(&machineRequest).Error == nil && machineRequest.Source == "instance"
+		if !machineScoped {
+			if e := tx.Unscoped().Model(&dom.Host{}).Where("id=?", h.ID).Updates(map[string]any{"status": 6, "power_status": "deleted", "updated_at": time.Now().UTC()}).Error; e != nil {
+				return e
+			}
 		}
 	}
 	if e := tx.Model(&MachineRefundAction{}).Where("application_id=?", action.ApplicationID).Update("state", "completing").Error; e != nil {

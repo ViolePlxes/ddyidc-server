@@ -46,5 +46,9 @@
   "066_visit_analytics.sql": {
     "sha256": "55672db28868b92653a22038cd850c55b6c314c280a1d3be7cb02164b47a3916",
     "rollbackCompatible": true
+  },
+  "067_console_destroy_navigation.sql": {
+    "sha256": "674d894eaec3909170928fcb76c4d3ad816b4a4f97b92d7884f758bdc6eacf02",
+    "rollbackCompatible": true
   }
 }

@@ -1138,5 +1138,17 @@
     "enabled": true,
     "sort": 9,
     "gate": ""
+  },
+  {
+    "id": "940000001",
+    "scope": "console",
+    "parentId": "6",
+    "name": "实例销毁申请",
+    "href": "/console/destroy",
+    "icon": "ArrowsClockwiseIcon",
+    "target": "self",
+    "enabled": true,
+    "sort": 9,
+    "gate": ""
   }
 ]
