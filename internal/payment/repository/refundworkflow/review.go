@@ -284,6 +284,8 @@ func lockSource(tx *gorm.DB, r Request) error {
 	field := "customer_id"
 	switch r.Source {
 	case "order":
+	case "instance":
+		return lockInstanceSource(tx, r)
 	case "groupbuy":
 		table = "system.groupbuy_records"
 		field = "client_id"
@@ -330,6 +332,8 @@ func verifyEntitlement(tx *gorm.DB, r Request, s Snapshot) error {
 	switch r.Source {
 	case "order":
 		return verifyOrderEntitlement(tx, r, s)
+	case "instance":
+		return verifyInstanceEntitlement(tx, r, s)
 	case "groupbuy":
 		var count int64
 		if err := tx.Table("system.groupbuy_records").Where("id=? AND client_id=? AND status=1 AND pay_amount=? AND order_id IS NULL AND host_id IS NULL", r.ObjectID, r.CustomerID, int64(s.Paid)).Count(&count).Error; err != nil {
@@ -356,6 +360,8 @@ func verifyEntitlement(tx *gorm.DB, r Request, s Snapshot) error {
 }
 func finalize(tx *gorm.DB, r Request, calc Calculation, now time.Time, actor Actor, confirmLarge bool) error {
 	switch r.Source {
+	case "instance":
+		return finalizeInstance(tx, r, calc, now)
 	case "order":
 		changed, err := orderstate.CompleteReviewedRefundTx(tx, r.ObjectID, r.CustomerID, r.ApplicationID, now)
 		if err != nil {

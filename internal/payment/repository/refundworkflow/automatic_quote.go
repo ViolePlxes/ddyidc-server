@@ -13,6 +13,9 @@ func MachineQuote(ctx context.Context, db *gorm.DB, id int64) (Detail, Calculati
 	if e != nil {
 		return d, Calculation{}, Fees{}, e
 	}
+	if d.Request != nil && d.Request.Source == "instance" {
+		return InstanceQuote(ctx, db, id)
+	}
 	if d.Status != 0 || d.Request == nil || d.Request.Source != "order" {
 		return d, Calculation{}, Fees{}, ErrConflict
 	}

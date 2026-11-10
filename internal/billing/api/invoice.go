@@ -89,6 +89,15 @@ func LinkPrepaidGroupTx(tx *gorm.DB, order, record, user int64) error {
 func RecordReviewedRefundTx(tx *gorm.DB, kind string, id, user, application int64, proofSource string, at time.Time) error {
 	return svc.RecordReviewedRefundTx(tx, kind, id, user, application, proofSource, at)
 }
+
+// RecordRefundAllocationsTx settles one invoice per order for a reviewed refund
+// that spans several orders (machine-level refunds).
+func RecordRefundAllocationsTx(tx *gorm.DB, kind string, application int64, allocations []svc.RefundAllocation, at time.Time) error {
+	return svc.RecordRefundAllocationsTx(tx, kind, application, allocations, at)
+}
+
+// RefundAllocation is one order's share of a reviewed multi-order refund.
+type RefundAllocation = svc.RefundAllocation
 func ResolveRefundedReceiptTx(tx *gorm.DB, payment, user int64, at time.Time) error {
 	return svc.ResolveRefundedReceiptTx(tx, payment, user, at)
 }

@@ -196,3 +196,20 @@ func UpdateUnpaidRenewalAmountTx(tx *gorm.DB, id, user, cents int64) error {
 	}
 	return nil
 }
+
+// SettleReviewedMachineRefundTx moves one order that a machine-level refund
+// covered into its refunded state. The refund workflow owns the money, this
+// repository owns the order status write.
+func SettleReviewedMachineRefundTx(tx *gorm.DB, id, customerID int64, next uint8, at time.Time) (bool, error) {
+	if tx == nil || id <= 0 || customerID <= 0 || at.IsZero() {
+		return false, errors.New("invalid machine refund transition")
+	}
+	if next != dom.OrderStatusRefunded && next != dom.OrderStatusPartialRefund {
+		return false, errors.New("invalid machine refund status")
+	}
+	r := tx.Model(&dom.Order{}).Where("id=? AND customer_id=? AND status IN (2,5,6)", id, customerID).Updates(map[string]any{"status": next, "updated_at": at})
+	if r.Error != nil {
+		return false, r.Error
+	}
+	return r.RowsAffected == 1, nil
+}
