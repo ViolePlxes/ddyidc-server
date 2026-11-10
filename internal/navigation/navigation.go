@@ -303,17 +303,14 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		}
 		return true
 	}
-	// 大类 is configuration, not a customer-facing surface: only a super
-	// administrator may change it.
+	// 大类 is part of the navigation configuration, so every administrator who can
+	// open the navigation manager may edit it. Only the todo sections stay
+	// super-administrator scoped (see the scope handler above).
 	categoryHandler := func(operation string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			claims, _ := manager.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 			if claims == nil {
 				reply(w, 401, nil, "登录已失效或没有访问权限")
-				return
-			}
-			if !admintodo.IsSuper(r.Context(), s.db, claims.UserID) {
-				reply(w, 403, nil, "仅超级管理员可配置导航大类")
 				return
 			}
 			vars := pathvar.Vars(r)
