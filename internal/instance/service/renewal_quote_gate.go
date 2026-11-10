@@ -188,8 +188,14 @@ func (s *Service) verifyRenewalPayment(ctx context.Context, customer, orderID in
 		if e != nil || cost <= 0 || cost > r.Cost {
 			return ctx, errors.New("上游续费金额与报价不一致，已停止付款")
 		}
-		if e := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='unpaid'", r.ID).Updates(map[string]any{"invoice_id": invoice, "cost": cost, "state": "invoiced_verified", "last_error": "", "updated_at": time.Now()}).Error; e != nil {
-			return ctx, e
+		// Never lose a supplier invoice that already exists: persist it from
+		// either payable state and refuse to continue if the row moved on.
+		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state IN ('unpaid','invoiced_verified')", r.ID).Updates(map[string]any{"invoice_id": invoice, "cost": cost, "state": "invoiced_verified", "last_error": "", "updated_at": time.Now()})
+		if persisted.Error != nil {
+			return ctx, persisted.Error
+		}
+		if persisted.RowsAffected != 1 {
+			return ctx, errors.New("续费状态已变化，上游账单待核对，请刷新后重试")
 		}
 	}
 	return renewalquote.WithProof(ctx, evidence.ID), nil

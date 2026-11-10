@@ -383,7 +383,10 @@ func verifyBusiness(tx *gorm.DB, r ChangeRequest, amount Money) error {
 		if r.Channel != "instance_renewal" || r.Type != "instance_renewal_pay" {
 			return ErrBusiness
 		}
-		err := tx.Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("r.id=? AND r.customer_id=? AND r.state='unpaid' AND r.amount=? AND o.customer_id=r.customer_id AND o.status=1 AND o.pay_amount=?", r.RefID, r.CustomerID, (-amount).String(), int64(-amount)).Count(&count).Error
+		// Preparing the supplier invoice before the debit leaves the renewal in
+		// invoiced_verified, so both states are payable. A half-written row
+		// without an invoice id is never accepted.
+		err := tx.Table("instance.instance_renewals r").Joins("JOIN `order`.orders o ON o.id=r.order_id").Where("r.id=? AND r.customer_id=? AND (r.state='unpaid' OR (r.state='invoiced_verified' AND r.invoice_id<>'')) AND r.amount=? AND o.customer_id=r.customer_id AND o.status=1 AND o.pay_amount=?", r.RefID, r.CustomerID, (-amount).String(), int64(-amount)).Count(&count).Error
 		if err != nil {
 			return err
 		}

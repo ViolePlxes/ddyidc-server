@@ -70,6 +70,12 @@ func failure(w http.ResponseWriter, e error) {
 		respond(w, 409, nil, "账单服务暂不可用，请稍后重试")
 	case errors.Is(e, typ.ErrConflict):
 		respond(w, 409, nil, "账单状态已变化，请刷新核对后重试")
+	case errors.Is(e, balance.ErrBusiness):
+		respond(w, 409, nil, "对应业务的状态或金额已变化，请刷新核对后重试")
+	case errors.Is(e, balance.ErrReplay):
+		respond(w, 409, nil, "本次请求与已有支付记录不一致，请勿重复提交")
+	case errors.Is(e, balance.ErrInvalid):
+		respond(w, 409, nil, "账单金额或业务关联无效，请刷新核对后重试")
 	default:
 		respond(w, 500, nil, "账单操作未完成，请核对状态后重试")
 	}
