@@ -41,6 +41,7 @@ func RegisterHandlers(server *rest.Server, service *svc.Service, jwt *auth.Manag
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/destroy-quote", Handler: h.destroyQuote},
 		{Method: http.MethodPost, Path: "/api/v1/instance/:instanceId/destroy-request", Handler: h.submitDestroy},
 		{Method: http.MethodGet, Path: "/api/v1/destroy-requests", Handler: h.destroyRequests},
+		{Method: http.MethodGet, Path: "/api/v1/destroy-options", Handler: h.destroyOptions},
 		{Method: http.MethodGet, Path: "/api/v1/instance/:instanceId/status", Handler: h.status},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/status", Handler: h.status},
 		{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/import-options", Handler: h.importOptions},
