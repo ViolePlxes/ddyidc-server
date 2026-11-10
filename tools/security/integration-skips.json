@@ -1,4 +1,16 @@
 {
+  "ddyidc/internal/instance/service/TestRenewalBalanceAfterInvoicePreparationMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; supplier invoice prepared before the debit must still allow exactly one balance debit, one durable task and a paid order. A skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestRenewalBalanceAfterInvoicePreparationRetryMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; a failed debit must keep the prepared invoice and a funded retry must charge once without creating a second supplier invoice. A skip is not a pass."
+  },
+  "ddyidc/internal/instance/service/TestRenewalBalanceLayerInvoiceGuardMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; the ledger guard rejects invoiced_verified without an invoice id and accepts it once the invoice exists. A skip is not a pass."
+  },
   "ddyidc/internal/billing/service/TestInvoiceRuntimePrivilegesMySQL": {"disposition":"isolated_suite_required","verification":"Disposable socket-only MySQL: invoice-only runtime grants, deny DDL/deletion/audit mutation/configuration writes/balance writes/private configuration reads; temporary role removed."},
   "ddyidc/internal/billing/handler/TestInvoiceCustomerHTTPMySQL": {"disposition":"isolated_suite_required","verification":"Disposable MySQL/Redis: real customer sessions, invoice ownership, input tamper rejection, immutable document dispatch and settled source rejection; no gateway calls."},
   "ddyidc/internal/billing/service/TestInvoiceHistoricalBackfillMySQL": {"disposition":"isolated_suite_required","verification":"Disposable migrated socket only: pending/paid/refunded orders, recharge amounts, backfill replay and source/ledger invariance."},
