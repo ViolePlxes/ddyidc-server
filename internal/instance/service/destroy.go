@@ -2,9 +2,10 @@ package instance
 
 import (
 	"context"
+	"errors"
 	instance "ddyidc/internal/instance/domain"
-	workflow "ddyidc/internal/payment/repository/refundworkflow"
 	payment "ddyidc/internal/payment/domain"
+	workflow "ddyidc/internal/payment/repository/refundworkflow"
 	"time"
 )
 
@@ -57,6 +58,56 @@ func (s *Service) DestroyQuote(ctx context.Context, customer, instanceID int64) 
 
 func (s *Service) SubmitDestroy(ctx context.Context, customer, instanceID int64, reason, key string) (payment.RefundApplication, error) {
 	return workflow.SubmitInstance(ctx, s.db, customer, instanceID, reason, key)
+}
+
+// DestroyOption is one destroyable machine with its current refundable amount,
+// so the console list can show the estimate without a request per row.
+type DestroyOption struct {
+	InstanceID  int64      `json:"instanceId,string"`
+	InstanceNo  string     `json:"instanceNo"`
+	ProductName string     `json:"productName"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	Paid        string     `json:"paidAmount"`
+	Refundable  string     `json:"refundableAmount"`
+	Eligible    bool       `json:"eligible"`
+	Reason      string     `json:"reason,omitempty"`
+}
+
+func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]DestroyOption, error) {
+	if s.db == nil {
+		return nil, ErrUnsupported
+	}
+	var hosts []instance.Host
+	if err := s.db.WithContext(ctx).Where("customer_id=? AND status IN (3,4)", customer).Order("expires_at ASC,id ASC").Limit(100).Find(&hosts).Error; err != nil {
+		return nil, err
+	}
+	out := make([]DestroyOption, 0, len(hosts))
+	for _, h := range hosts {
+		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, ExpiresAt: h.ExpiresAt}
+		snapshot, calc, _, err := workflow.InstancePreview(ctx, s.db, customer, h.ID)
+		if err != nil {
+			option.Eligible = false
+			option.Reason = destroyOptionReason(err)
+			out = append(out, option)
+			continue
+		}
+		option.Eligible = true
+		option.Paid = snapshot.Paid.String()
+		option.Refundable = calc.Refund.String()
+		out = append(out, option)
+	}
+	return out, nil
+}
+
+func destroyOptionReason(err error) string {
+	switch {
+	case errors.Is(err, workflow.ErrCalculation):
+		return "计费周期或费用明细不完整，暂不能核算"
+	case errors.Is(err, workflow.ErrConflict):
+		return "实例状态已变化，请刷新"
+	default:
+		return "暂不能核算可退金额"
+	}
 }
 
 func (s *Service) DestroyRequests(ctx context.Context, customer int64) ([]DestroyRequest, error) {

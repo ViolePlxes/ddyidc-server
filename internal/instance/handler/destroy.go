@@ -62,3 +62,16 @@ func (h *handler) destroyRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{"items": rows})
 }
+
+func (h *handler) destroyOptions(w http.ResponseWriter, r *http.Request) {
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	rows, err := h.service.DestroyOptions(r.Context(), customer)
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"items": rows})
+}
