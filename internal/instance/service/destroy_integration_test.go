@@ -28,8 +28,16 @@ func TestMachineDestroyRefundMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	seedGateSupplier(t, db, supplierID, productID)
-	activated := time.Now().UTC().Add(-30 * 24 * time.Hour).Truncate(time.Second)
-	expiry := time.Now().UTC().Truncate(time.Second)
+	// Period boundaries are local midnights: the refund policy prorates by
+	// calendar day, so a fixture pinned to the current instant would count a
+	// used day whenever the test crosses local midnight.
+	now := time.Now().In(time.Local)
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	// The renewal period must not have started yet: the policy charges any
+	// partial used day, so a period starting "today" would always refund less
+	// than its paid amount.
+	activated := day.AddDate(0, 0, -31)
+	expiry := day.AddDate(0, 0, 1)
 	purchase := order.Order{ID: orderID, OrderNo: fmt.Sprintf("DESTROY-%d", orderID), CustomerID: customer, TotalAmount: 10000, PayAmount: 10000, Status: order.OrderStatusPaid}
 	if err := db.Create(&purchase).Error; err != nil {
 		t.Fatal(err)
@@ -56,7 +64,7 @@ func TestMachineDestroyRefundMySQL(t *testing.T) {
 			t.Fatalf("issue invoice for order %d: %v", id, e)
 		}
 	}
-	renewedTo := expiry.Add(30 * 24 * time.Hour)
+	renewedTo := expiry.AddDate(0, 0, 30)
 	proof, _ := json.Marshal(map[string]any{"orderId": fmt.Sprint(renewalOrderID), "expiresAt": renewedTo.Format(time.RFC3339)})
 	if err := db.Exec("INSERT INTO instance.instance_events(id,instance_id,event_type,operator_type,status,upstream_response,created_at) VALUES(?,?,'renew',3,2,?,NOW())", 99100, hostID, string(proof)).Error; err != nil {
 		t.Fatal(err)

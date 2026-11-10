@@ -40,6 +40,7 @@ type Node struct {
 	Target    string    `json:"target"`
 	Icon      string    `json:"icon"`
 	Gate      string    `json:"gate"`
+	Category  string    `json:"category"`
 	Enabled   bool      `json:"enabled"`
 	Sort      int       `json:"sort"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -67,6 +68,7 @@ type Input struct {
 	Href     string   `json:"href"`
 	Target   string   `json:"target"`
 	Icon     string   `json:"icon"`
+	Category string   `json:"category"`
 	Enabled  *bool    `json:"enabled"`
 	IDs      []string `json:"ids"`
 }
@@ -135,6 +137,7 @@ func (s *Service) List(ctx context.Context, scope string, enabledOnly bool) (Sna
 	})
 	return out, err
 }
+
 func validate(in Input) error {
 	if in.Enabled == nil || strings.TrimSpace(in.Name) == "" || utf8.RuneCountInString(in.Name) > 80 || len(in.Icon) > 80 || in.Icon == "" {
 		return errInvalid
@@ -227,10 +230,22 @@ func (s *Service) Change(ctx context.Context, scope, id, operation string, in In
 			existing.Href = in.Href
 			existing.Target = in.Target
 			existing.Icon = in.Icon
+			existing.Category = strings.TrimSpace(in.Category)
+			if in.ParentID == "0" && existing.Category != "" {
+				var known int64
+				if err := tx.Model(&Category{}).Where("name = ?", existing.Category).Count(&known).Error; err != nil {
+					return err
+				}
+				if known == 0 {
+					return errors.New("大类不存在，请先在“管理大类”中添加")
+				}
+			}
 			existing.Enabled = *in.Enabled
 			if in.ParentID == "0" {
 				existing.Href = ""
 				existing.Target = "self"
+			} else {
+				existing.Category = ""
 			}
 			if err := tx.Save(&existing).Error; err != nil {
 				return err
@@ -287,6 +302,52 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 			return false
 		}
 		return true
+	}
+	// 大类 is configuration, not a customer-facing surface: only a super
+	// administrator may change it.
+	categoryHandler := func(operation string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			claims, _ := manager.ParseAccessTokenFor(r.Context(), auth.SessionAdmin, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			if claims == nil {
+				reply(w, 401, nil, "登录已失效或没有访问权限")
+				return
+			}
+			if !admintodo.IsSuper(r.Context(), s.db, claims.UserID) {
+				reply(w, 403, nil, "仅超级管理员可配置导航大类")
+				return
+			}
+			vars := pathvar.Vars(r)
+			if operation == "list" {
+				out, err := s.Categories(r.Context())
+				if err != nil {
+					reply(w, 500, nil, "读取大类失败")
+					return
+				}
+				reply(w, 200, map[string]any{"categories": out}, "")
+				return
+			}
+			var in CategoryInput
+			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32768))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&in) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+				reply(w, 400, nil, "请求格式无效")
+				return
+			}
+			var err error
+			switch operation {
+			case "sort":
+				err = s.SortCategories(r.Context(), in.IDs)
+			case "delete":
+				err = s.RemoveCategory(r.Context(), vars["id"])
+			default:
+				err = s.SaveCategory(r.Context(), vars["id"], in)
+			}
+			if err != nil {
+				reply(w, 400, nil, err.Error())
+				return
+			}
+			reply(w, 200, nil, "已保存")
+		}
 	}
 	read := func(scope string, kind auth.SessionKind, role string) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -373,5 +434,10 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		{Method: "PUT", Path: "/admin/v1/navigation-config/:scope/nodes/:id", Handler: handler("save")},
 		{Method: "DELETE", Path: "/admin/v1/navigation-config/:scope/nodes/:id", Handler: handler("delete")},
 		{Method: "PUT", Path: "/admin/v1/navigation-config/:scope/sort", Handler: handler("sort")},
+		{Method: "GET", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("list")},
+		{Method: "POST", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("save")},
+		{Method: "PUT", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("sort")},
+		{Method: "PUT", Path: "/admin/v1/navigation-categories/:id", Handler: categoryHandler("save")},
+		{Method: "DELETE", Path: "/admin/v1/navigation-categories/:id", Handler: categoryHandler("delete")},
 	})
 }

@@ -50,5 +50,13 @@
   "067_console_destroy_navigation.sql": {
     "sha256": "674d894eaec3909170928fcb76c4d3ad816b4a4f97b92d7884f758bdc6eacf02",
     "rollbackCompatible": true
+  },
+  "068_navigation_category.sql": {
+    "sha256": "5e8105105bd6cc1715c723a69066695e953a6fa6a099312ed88a328689610911",
+    "rollbackCompatible": true
+  },
+  "069_navigation_categories.sql": {
+    "sha256": "f57f580d648ca982377126c0afa5b74e25d6cc523455d544a1b525e2fe16fbf4",
+    "rollbackCompatible": true
   }
 }
