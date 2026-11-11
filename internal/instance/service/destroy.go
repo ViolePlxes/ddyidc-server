@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	"errors"
+	"fmt"
 	instance "ddyidc/internal/instance/domain"
 	payment "ddyidc/internal/payment/domain"
 	workflow "ddyidc/internal/payment/repository/refundworkflow"
@@ -66,7 +67,9 @@ type DestroyOption struct {
 	InstanceID  int64      `json:"instanceId,string"`
 	InstanceNo  string     `json:"instanceNo"`
 	ProductName string     `json:"productName"`
+	IP          string     `json:"ip"`
 	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
+	Remaining   string     `json:"remaining"`
 	Paid        string     `json:"paidAmount"`
 	Refundable  string     `json:"refundableAmount"`
 	Eligible    bool       `json:"eligible"`
@@ -83,7 +86,10 @@ func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]Destroy
 	}
 	out := make([]DestroyOption, 0, len(hosts))
 	for _, h := range hosts {
-		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, ExpiresAt: h.ExpiresAt}
+		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, IP: h.PrimaryIP, ExpiresAt: h.ExpiresAt}
+		if h.ExpiresAt != nil {
+			option.Remaining = remainingLabel(h.ExpiresAt.Sub(time.Now().UTC()))
+		}
 		snapshot, calc, _, err := workflow.InstancePreview(ctx, s.db, customer, h.ID)
 		if err != nil {
 			option.Eligible = false
@@ -97,6 +103,22 @@ func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]Destroy
 		out = append(out, option)
 	}
 	return out, nil
+}
+
+// remainingLabel renders the time left with the same whole-day rounding the
+// refund policy uses: any started day counts as a full day.
+func remainingLabel(left time.Duration) string {
+	if left <= 0 {
+		return "已到期"
+	}
+	days := int64(left / (24 * time.Hour))
+	if left%(24*time.Hour) != 0 {
+		days++
+	}
+	if days >= 1 {
+		return fmt.Sprintf("剩余 %d 天", days)
+	}
+	return "剩余不足 1 天"
 }
 
 func destroyOptionReason(err error) string {
