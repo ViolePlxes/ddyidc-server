@@ -26,6 +26,7 @@ type Category struct {
 func (Category) TableName() string { return "system.navigation_categories" }
 
 type CategoryInput struct {
+	ID   string   `json:"id"`
 	Name string   `json:"name"`
 	IDs  []string `json:"ids"`
 }
