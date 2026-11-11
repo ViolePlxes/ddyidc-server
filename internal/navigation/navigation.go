@@ -210,8 +210,13 @@ func (s *Service) Change(ctx context.Context, scope, id, operation string, in In
 		}
 		switch operation {
 		case "save":
-			if id != "" && existing.ParentID != in.ParentID {
-				return errors.New("不可改变层级或所属分组")
+			// A menu item may move to another section of the same scope; a
+			// section itself stays at the top level.
+			moved := id != "" && existing.ParentID != in.ParentID
+			if moved {
+				if existing.ParentID == "0" || in.ParentID == "0" {
+					return errors.New("分类与菜单项之间不可互换层级")
+				}
 			}
 			if in.ParentID != "0" {
 				var parent Node
@@ -219,12 +224,16 @@ func (s *Service) Change(ctx context.Context, scope, id, operation string, in In
 					return errInvalid
 				}
 			}
-			if id == "" {
+			if id == "" || moved {
 				var max int
 				if err := tx.Model(&Node{}).Select("COALESCE(MAX(sort), -1)").Where("scope = ? AND parent_id = ?", scope, in.ParentID).Scan(&max).Error; err != nil {
 					return err
 				}
-				existing = Node{ID: fmt.Sprint(snowflake.GenID()), Scope: scope, ParentID: in.ParentID, Sort: max + 1}
+				if id == "" {
+					existing = Node{ID: fmt.Sprint(snowflake.GenID()), Scope: scope, ParentID: in.ParentID, Sort: max + 1}
+				} else {
+					existing.Sort = max + 1
+				}
 			}
 			existing.Name = strings.TrimSpace(in.Name)
 			existing.Href = in.Href
@@ -313,7 +322,6 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 				reply(w, 401, nil, "登录已失效或没有访问权限")
 				return
 			}
-			vars := pathvar.Vars(r)
 			if operation == "list" {
 				out, err := s.Categories(r.Context())
 				if err != nil {
@@ -335,9 +343,9 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 			case "sort":
 				err = s.SortCategories(r.Context(), in.IDs)
 			case "delete":
-				err = s.RemoveCategory(r.Context(), vars["id"])
+				err = s.RemoveCategory(r.Context(), in.ID)
 			default:
-				err = s.SaveCategory(r.Context(), vars["id"], in)
+				err = s.SaveCategory(r.Context(), in.ID, in)
 			}
 			if err != nil {
 				reply(w, 400, nil, err.Error())
@@ -433,8 +441,8 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 		{Method: "PUT", Path: "/admin/v1/navigation-config/:scope/sort", Handler: handler("sort")},
 		{Method: "GET", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("list")},
 		{Method: "POST", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("save")},
-		{Method: "PUT", Path: "/admin/v1/navigation-categories", Handler: categoryHandler("sort")},
-		{Method: "PUT", Path: "/admin/v1/navigation-categories/:id", Handler: categoryHandler("save")},
-		{Method: "DELETE", Path: "/admin/v1/navigation-categories/:id", Handler: categoryHandler("delete")},
+		{Method: "PUT", Path: "/admin/v1/navigation-categories/sort", Handler: categoryHandler("sort")},
+		{Method: "PUT", Path: "/admin/v1/navigation-categories/rename", Handler: categoryHandler("save")},
+		{Method: "DELETE", Path: "/admin/v1/navigation-categories/remove", Handler: categoryHandler("delete")},
 	})
 }
