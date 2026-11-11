@@ -67,7 +67,7 @@ func (s *Service) Categories(ctx context.Context) ([]Category, error) {
 	}
 	// Missing table or column: repair once and retry, so the editor never dead-ends.
 	if seedErr := s.ensureCategories(); seedErr != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w (repair: %v)", err, seedErr)
 	}
 	out = nil
 	return out, s.db.WithContext(ctx).Order("sort ASC,id ASC").Find(&out).Error

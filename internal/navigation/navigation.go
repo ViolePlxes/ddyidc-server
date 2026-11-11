@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -325,7 +326,8 @@ func Register(server *rest.Server, s *Service, manager *auth.Manager) {
 			if operation == "list" {
 				out, err := s.Categories(r.Context())
 				if err != nil {
-					reply(w, 500, nil, "读取大类失败")
+					log.Printf("[navigation] read categories: %v", err)
+					reply(w, 500, nil, "读取大类失败: "+err.Error())
 					return
 				}
 				reply(w, 200, map[string]any{"categories": out}, "")
