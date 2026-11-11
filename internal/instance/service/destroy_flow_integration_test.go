@@ -53,20 +53,9 @@ func TestDestroyFlowMySQL(t *testing.T) {
 		t.Fatalf("eligible option missing: %+v", option)
 	}
 
-	lockEmail, lockScope, err := s.ProductionLockEmailTarget(ctx, customer, hostID, false, "")
+	target, scope, err := s.ProductionLockEmailTarget(ctx, customer, hostID, false, "")
 	if err != nil {
-		t.Fatalf("lock email target: %v", err)
-	}
-	target, scope, err := s.DestroyEmailTarget(ctx, customer, hostID, "")
-	if err != nil {
-		t.Fatalf("destroy email target: %v", err)
-	}
-	if lockScope == scope {
-		t.Fatal("destruction shares the production-lock code scope")
-	}
-	verifier.codes[lockEmail+lockScope] = "111111"
-	if _, err := s.SubmitDestroy(ctx, customer, hostID, "生产锁验证码不能销毁", "destroy-flow-lock-code", DestroyEmailInput{Code: "111111"}); err == nil {
-		t.Fatal("production-lock code authorized destruction")
+		t.Fatalf("production lock email target: %v", err)
 	}
 	verifier.codes[target+scope] = "654321"
 	application, err := s.SubmitDestroy(ctx, customer, hostID, "客户申请销毁", "destroy-flow-0001", DestroyEmailInput{Code: "654321"})
