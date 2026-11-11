@@ -829,6 +829,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_schema_migrations.sh with disposable FOUNDATION_MYSQL_SOCKET: monthly partition extension, MAXVALUE catch-all retention and idempotent re-run on system.visit_events. A normal-suite skip is not a pass."
   },
+  "ddyidc/internal/instance/service/TestDestroyFlowMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; destroy options hide pending requests, return production-lock/auto-renew reasons, replay the last rejection, the submitted refund equals the frozen quote, and history exposes product/instance/IP. A skip is not a pass."
+  },
   "ddyidc/internal/instance/service/TestMachineDestroyRefundMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; machine refund aggregates the purchase period and completed renewals, settles one invoice per refunded order, credits the balance once and destroys the machine. A skip is not a pass."
