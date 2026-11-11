@@ -237,6 +237,7 @@ func (s *Service) Change(ctx context.Context, scope, id, operation string, in In
 				}
 			}
 			existing.Name = strings.TrimSpace(in.Name)
+			existing.ParentID = in.ParentID
 			existing.Href = in.Href
 			existing.Target = in.Target
 			existing.Icon = in.Icon
