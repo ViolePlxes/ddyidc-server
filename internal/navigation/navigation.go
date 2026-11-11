@@ -59,8 +59,9 @@ type scopeRow struct {
 func (scopeRow) TableName() string { return "system.navigation_scopes" }
 
 type Snapshot struct {
-	Revision int64  `json:"revision"`
-	Nodes    []Node `json:"nodes"`
+	Revision   int64      `json:"revision"`
+	Nodes      []Node     `json:"nodes"`
+	Categories []Category `json:"categories"`
 }
 type Input struct {
 	Revision *int64   `json:"revision"`
@@ -134,7 +135,11 @@ func (s *Service) List(ctx context.Context, scope string, enabledOnly bool) (Sna
 		if enabledOnly {
 			q = q.Where("enabled = ?", true)
 		}
-		return q.Find(&out.Nodes).Error
+		// The sidebar renders its blocks in this configured order.
+		if err := q.Find(&out.Nodes).Error; err != nil {
+			return err
+		}
+		return tx.Order("sort ASC, id ASC").Find(&out.Categories).Error
 	})
 	return out, err
 }
