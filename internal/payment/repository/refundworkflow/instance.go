@@ -36,6 +36,15 @@ type MachineSnapshot struct {
 	Allocations []MachineAllocation `json:"allocations"`
 }
 
+// SubmitCheck runs inside the submission transaction after the machine row is
+// locked. It lets the caller enforce current state (locks, renewals, pending
+// requests, mailbox proof) without writing anything when it refuses.
+type SubmitCheck func(*gorm.DB, instance.Host) error
+
+func machineFees(snapshot MachineSnapshot) Fees {
+	return Fees{Setup: snapshot.MinimumSetup.String(), Installation: "0.00", Handling: snapshot.MinimumHandling.String(), Gift: "0.00", Traffic: "0.00", ValueAdded: "0.00", Evidence: "机器退款：开通费仅在首购订单扣除一次，未使用天数按申请时间折算"}
+}
+
 // InstanceQuote computes the refundable amount of one machine: its purchase
 // period plus every completed renewal, minus the setup fee charged once on the
 // purchase order and the used days of each period.
@@ -51,7 +60,7 @@ func InstanceQuote(ctx context.Context, db *gorm.DB, id int64) (Detail, Calculat
 	if json.Unmarshal(d.Request.Snapshot, &snapshot) != nil {
 		return d, Calculation{}, Fees{}, ErrCalculation
 	}
-	fees := Fees{Setup: snapshot.MinimumSetup.String(), Installation: "0.00", Handling: snapshot.MinimumHandling.String(), Gift: "0.00", Traffic: "0.00", ValueAdded: "0.00", Evidence: "机器退款：开通费仅在首购订单扣除一次，未使用天数按申请时间折算"}
+	fees := machineFees(snapshot)
 	calc, e := Calculate(snapshot.Snapshot, d.CreatedAt, fees)
 	return d, calc, fees, e
 }
@@ -71,15 +80,15 @@ func InstancePreview(ctx context.Context, db *gorm.DB, customer, instanceID int6
 	if len(out.Warnings) > 0 {
 		return out, Calculation{}, Fees{}, ErrCalculation
 	}
-	fees := Fees{Setup: out.MinimumSetup.String(), Installation: "0.00", Handling: out.MinimumHandling.String(), Gift: "0.00", Traffic: "0.00", ValueAdded: "0.00", Evidence: "机器退款：开通费仅在首购订单扣除一次，未使用天数按申请时间折算"}
-	calc, err := Calculate(out.Snapshot, time.Now().UTC(), fees)
+	fees := machineFees(out)
+	calc, err := Calculate(out.Snapshot, time.Now().UTC().Truncate(time.Second), fees)
 	return out, calc, fees, err
 }
 
 // SubmitInstance creates a machine-level refund application for one instance.
 // The customer no longer refunds per order: the request owns every paid period
 // of the machine and the review settles each order's invoice with its share.
-func SubmitInstance(ctx context.Context, db *gorm.DB, customer, instanceID int64, reason, key string) (payment.RefundApplication, error) {
+func SubmitInstance(ctx context.Context, db *gorm.DB, customer, instanceID int64, reason, key string, checks ...SubmitCheck) (payment.RefundApplication, error) {
 	var out payment.RefundApplication
 	reason = strings.TrimSpace(reason)
 	if customer <= 0 || instanceID <= 0 || reason == "" || len([]rune(reason)) > 255 || len(key) < 8 || len(key) > 64 {
@@ -118,12 +127,23 @@ func SubmitInstance(ctx context.Context, db *gorm.DB, customer, instanceID int64
 			// reviewable conflict, not a smaller number.
 			return ErrCalculation
 		}
+		now := time.Now().UTC().Truncate(time.Second)
+		// Freeze the quote at the submission instant: the customer's history and
+		// the review both start from this same calculation.
+		calc, e := Calculate(snapshot.Snapshot, now, machineFees(snapshot))
+		if e != nil {
+			return e
+		}
+		for _, check := range checks {
+			if e := check(tx, h); e != nil {
+				return e
+			}
+		}
 		encoded, e := json.Marshal(snapshot)
 		if e != nil {
 			return e
 		}
-		now := time.Now().UTC().Truncate(time.Second)
-		out = payment.RefundApplication{ID: snowflake.GenID(), RefundNo: no, OrderID: h.OrderID, UserID: customer, RefundAmount: snapshot.Paid.String(), Reason: reason, Status: 0, CreatedAt: now, UpdatedAt: now}
+		out = payment.RefundApplication{ID: snowflake.GenID(), RefundNo: no, OrderID: h.OrderID, UserID: customer, RefundAmount: calc.Refund.String(), Reason: reason, Status: 0, CreatedAt: now, UpdatedAt: now}
 		if e := tx.Create(&out).Error; e != nil {
 			return e
 		}
@@ -169,13 +189,13 @@ func machineSnapshot(tx *gorm.DB, h instance.Host) (MachineSnapshot, error) {
 	out.Allocations = append(out.Allocations, MachineAllocation{OrderID: o.ID, Paid: paid})
 
 	var renewals []struct {
-		ID, OrderID                       int64
-		Amount                            balance.Money
-		BaseExpiry                        time.Time
-		State                             string
-		OwnershipVersion                  int64
-		CustomerID                        int64
-		InstanceID                        int64
+		ID, OrderID      int64
+		Amount           balance.Money
+		BaseExpiry       time.Time
+		State            string
+		OwnershipVersion int64
+		CustomerID       int64
+		InstanceID       int64
 	}
 	if err := tx.Table("instance.instance_renewals").Select("id,order_id,amount,base_expiry,state,ownership_version,customer_id,instance_id").Where("instance_id=? AND customer_id=?", h.ID, h.CustomerID).Order("base_expiry ASC,id ASC").Find(&renewals).Error; err != nil {
 		return out, err
@@ -230,7 +250,9 @@ func renewalCompletionExpiry(tx *gorm.DB, instanceID, orderID int64, start time.
 	}
 	var end *time.Time
 	for _, row := range rows {
-		var proof struct{ ExpiresAt string `json:"expiresAt"` }
+		var proof struct {
+			ExpiresAt string `json:"expiresAt"`
+		}
 		if json.Unmarshal([]byte(row.UpstreamResponse), &proof) != nil {
 			continue
 		}

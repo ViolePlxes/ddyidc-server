@@ -1,9 +1,13 @@
 package instance
 
 import (
+	svc "ddyidc/internal/instance/service"
 	"encoding/json"
 	"net/http"
 )
+
+// The mailbox code for destruction is requested through the production-lock
+// endpoint with purpose=destroy; no second verification channel exists.
 
 // The customer-facing 实例销毁申请 page: a refundable preview, the request itself
 // and the customer's own request history.
@@ -37,12 +41,14 @@ func (h *handler) submitDestroy(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Reason    string `json:"reason"`
 		RequestID string `json:"requestId"`
+		Email     string `json:"email"`
+		Code      string `json:"code"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "请求参数格式错误")
 		return
 	}
-	application, err := h.service.SubmitDestroy(r.Context(), customer, id, input.Reason, input.RequestID)
+	application, err := h.service.SubmitDestroy(r.Context(), customer, id, input.Reason, input.RequestID, svc.DestroyEmailInput{Email: input.Email, Code: input.Code})
 	if err != nil {
 		writeServiceError(w, err)
 		return

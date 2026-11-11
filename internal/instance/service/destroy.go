@@ -2,29 +2,35 @@ package instance
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	instance "ddyidc/internal/instance/domain"
 	payment "ddyidc/internal/payment/domain"
 	workflow "ddyidc/internal/payment/repository/refundworkflow"
+	"errors"
+	"fmt"
+	"gorm.io/gorm"
+	"strings"
 	"time"
 )
 
 // DestroyView is the customer-facing preview of a machine destruction: what the
 // machine has paid so far and what the refund policy would return today.
 type DestroyView struct {
-	InstanceID  int64                `json:"instanceId,string"`
-	InstanceNo  string               `json:"instanceNo"`
-	ProductName string               `json:"productName"`
-	Paid        string               `json:"paidAmount"`
-	Refundable  string               `json:"refundableAmount"`
+	InstanceID  int64                  `json:"instanceId,string"`
+	InstanceNo  string                 `json:"instanceNo"`
+	ProductName string                 `json:"productName"`
+	Paid        string                 `json:"paidAmount"`
+	Refundable  string                 `json:"refundableAmount"`
 	Periods     []workflow.PeriodQuote `json:"periods"`
-	Requests    []DestroyRequest     `json:"requests"`
+	Requests    []DestroyRequest       `json:"requests"`
 }
 
 type DestroyRequest struct {
 	ID           int64      `json:"id,string"`
 	RefundNo     string     `json:"refundNo"`
+	InstanceID   int64      `json:"instanceId,string"`
+	ProductName  string     `json:"productName"`
+	InstanceNo   string     `json:"instanceNo"`
+	IP           string     `json:"ip"`
 	Amount       string     `json:"amount"`
 	Reason       string     `json:"reason"`
 	Status       uint8      `json:"status"`
@@ -57,23 +63,64 @@ func (s *Service) DestroyQuote(ctx context.Context, customer, instanceID int64) 
 	return out, nil
 }
 
-func (s *Service) SubmitDestroy(ctx context.Context, customer, instanceID int64, reason, key string) (payment.RefundApplication, error) {
-	return workflow.SubmitInstance(ctx, s.db, customer, instanceID, reason, key)
+// SubmitDestroy refuses before the refund workflow writes anything: the machine
+// must not be production-locked or auto-renewing, must not already have a
+// destruction request in review, and the customer must prove the bound mailbox
+// through the same one-time code the production lock uses.
+func (s *Service) SubmitDestroy(ctx context.Context, customer, instanceID int64, reason, key string, email DestroyEmailInput) (payment.RefundApplication, error) {
+	if s.db == nil {
+		return payment.RefundApplication{}, ErrUnsupported
+	}
+	return workflow.SubmitInstance(ctx, s.db, customer, instanceID, reason, key, s.destroySubmitCheck(ctx, customer, email))
+}
+
+func (s *Service) destroySubmitCheck(ctx context.Context, customer int64, in DestroyEmailInput) workflow.SubmitCheck {
+	return func(tx *gorm.DB, h instance.Host) error {
+		var lock ProductionLock
+		switch err := tx.Where("instance_id=? AND enabled=1", h.ID).Take(&lock).Error; {
+		case err == nil:
+			return errors.New("已开启生产锁，请先关闭")
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+		var settings RenewalSettings
+		switch err := tx.Where("instance_id=? AND customer_id=? AND enabled=1", h.ID, customer).Take(&settings).Error; {
+		case err == nil:
+			return errors.New("已开启自动续费，请先关闭")
+		case !errors.Is(err, gorm.ErrRecordNotFound):
+			return err
+		}
+		var pending int64
+		if err := tx.Table("payment.payment_refunds a").
+			Joins("JOIN payment.todo_refund_requests q ON q.application_id=a.id").
+			Where("q.source='instance' AND q.object_id=? AND a.status IN (0,1)", h.ID).
+			Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending > 0 {
+			return errors.New("已有销毁申请在审核中")
+		}
+		if strings.TrimSpace(in.Code) == "" {
+			return errors.New("请先完成邮箱验证码验证")
+		}
+		return s.verifyDestroyEmailTx(ctx, tx, h, in)
+	}
 }
 
 // DestroyOption is one destroyable machine with its current refundable amount,
 // so the console list can show the estimate without a request per row.
 type DestroyOption struct {
-	InstanceID  int64      `json:"instanceId,string"`
-	InstanceNo  string     `json:"instanceNo"`
-	ProductName string     `json:"productName"`
-	IP          string     `json:"ip"`
-	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
-	Remaining   string     `json:"remaining"`
-	Paid        string     `json:"paidAmount"`
-	Refundable  string     `json:"refundableAmount"`
-	Eligible    bool       `json:"eligible"`
-	Reason      string     `json:"reason,omitempty"`
+	InstanceID       int64      `json:"instanceId,string"`
+	InstanceNo       string     `json:"instanceNo"`
+	ProductName      string     `json:"productName"`
+	IP               string     `json:"ip"`
+	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
+	Remaining        string     `json:"remaining"`
+	Paid             string     `json:"paidAmount"`
+	Refundable       string     `json:"refundableAmount"`
+	Eligible         bool       `json:"eligible"`
+	Reason           string     `json:"reason,omitempty"`
+	LastRejectReason string     `json:"lastRejectReason,omitempty"`
 }
 
 func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]DestroyOption, error) {
@@ -84,11 +131,79 @@ func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]Destroy
 	if err := s.db.WithContext(ctx).Where("customer_id=? AND status IN (3,4)", customer).Order("expires_at ASC,id ASC").Limit(100).Find(&hosts).Error; err != nil {
 		return nil, err
 	}
+	if len(hosts) == 0 {
+		return []DestroyOption{}, nil
+	}
+	ids := make([]int64, 0, len(hosts))
+	for _, h := range hosts {
+		ids = append(ids, h.ID)
+	}
+	pending := map[int64]bool{}
+	var pendingIDs []int64
+	if err := s.db.WithContext(ctx).Table("payment.payment_refunds a").
+		Joins("JOIN payment.todo_refund_requests q ON q.application_id=a.id").
+		Where("q.source='instance' AND q.customer_id=? AND a.status IN (0,1) AND q.object_id IN ?", customer, ids).
+		Pluck("q.object_id", &pendingIDs).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range pendingIDs {
+		pending[id] = true
+	}
+	locked := map[int64]bool{}
+	var lockIDs []int64
+	if err := s.db.WithContext(ctx).Table("instance.instance_production_locks").
+		Where("instance_id IN ? AND enabled=1", ids).Pluck("instance_id", &lockIDs).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range lockIDs {
+		locked[id] = true
+	}
+	autoRenewing := map[int64]bool{}
+	var autoIDs []int64
+	if err := s.db.WithContext(ctx).Table("instance.instance_renewal_settings").
+		Where("instance_id IN ? AND customer_id=? AND enabled=1", ids, customer).Pluck("instance_id", &autoIDs).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range autoIDs {
+		autoRenewing[id] = true
+	}
+	type rejection struct {
+		ObjectID    int64
+		AuditRemark string
+	}
+	var rejections []rejection
+	if err := s.db.WithContext(ctx).Table("payment.payment_refunds a").
+		Select("q.object_id object_id, COALESCE(a.audit_remark,'') audit_remark").
+		Joins("JOIN payment.todo_refund_requests q ON q.application_id=a.id").
+		Where("q.source='instance' AND q.customer_id=? AND a.status=2 AND q.object_id IN ?", customer, ids).
+		Order("a.created_at DESC,a.id DESC").Scan(&rejections).Error; err != nil {
+		return nil, err
+	}
+	lastReject := map[int64]string{}
+	for _, row := range rejections {
+		if _, seen := lastReject[row.ObjectID]; seen {
+			continue
+		}
+		lastReject[row.ObjectID] = strings.TrimSpace(row.AuditRemark)
+	}
 	out := make([]DestroyOption, 0, len(hosts))
 	for _, h := range hosts {
-		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, IP: h.PrimaryIP, ExpiresAt: h.ExpiresAt}
+		if pending[h.ID] {
+			continue
+		}
+		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, IP: h.PrimaryIP, ExpiresAt: h.ExpiresAt, LastRejectReason: lastReject[h.ID]}
 		if h.ExpiresAt != nil {
 			option.Remaining = remainingLabel(h.ExpiresAt.Sub(time.Now().UTC()))
+		}
+		if locked[h.ID] {
+			option.Reason = "已开启生产锁，请先关闭生产锁"
+			out = append(out, option)
+			continue
+		}
+		if autoRenewing[h.ID] {
+			option.Reason = "已开启自动续费，请先关闭自动续费"
+			out = append(out, option)
+			continue
 		}
 		snapshot, calc, _, err := workflow.InstancePreview(ctx, s.db, customer, h.ID)
 		if err != nil {
@@ -138,8 +253,9 @@ func (s *Service) DestroyRequests(ctx context.Context, customer int64) ([]Destro
 
 func (s *Service) destroyRequests(ctx context.Context, customer, instanceID int64) ([]DestroyRequest, error) {
 	query := s.db.WithContext(ctx).Table("payment.payment_refunds a").
-		Select("a.id, a.refund_no, a.refund_amount amount, a.reason, a.status, a.created_at, a.refunded_at, a.audit_remark review_reason").
+		Select("a.id, a.refund_no, q.object_id instance_id, a.refund_amount amount, a.reason, a.status, a.created_at, a.refunded_at, COALESCE(a.audit_remark,'') review_reason, COALESCE(i.product_name,'') product_name, COALESCE(i.instance_no,'') instance_no, COALESCE(i.primary_ip,'') ip").
 		Joins("JOIN payment.todo_refund_requests q ON q.application_id=a.id").
+		Joins("LEFT JOIN instance.instances i ON i.id=q.object_id").
 		Where("q.source='instance' AND a.user_id=?", customer)
 	if instanceID > 0 {
 		query = query.Where("q.object_id=?", instanceID)

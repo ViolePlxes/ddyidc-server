@@ -1,6 +1,7 @@
 package instance
 
 import (
+	svc "ddyidc/internal/instance/service"
 	"encoding/json"
 	"net/http"
 )
@@ -15,7 +16,13 @@ func (h *handler) productionLockEmail(w http.ResponseWriter, r *http.Request) {
 	if id == 0 {
 		return
 	}
-	out, e := h.service.ProductionLockEmailStatus(r.Context(), customer, id)
+	var out *svc.ProductionLockEmailStatus
+	var e error
+	if r.URL.Query().Get("purpose") == "destroy" {
+		out, e = h.service.DestroyEmailStatus(r.Context(), customer, id)
+	} else {
+		out, e = h.service.ProductionLockEmailStatus(r.Context(), customer, id)
+	}
 	if e != nil {
 		writeServiceError(w, e)
 		return
@@ -35,10 +42,11 @@ func (h *handler) sendProductionLockEmail(w http.ResponseWriter, r *http.Request
 	var in struct {
 		Enabled *bool  `json:"enabled"`
 		Email   string `json:"email"`
+		Purpose string `json:"purpose"`
 	}
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	d.DisallowUnknownFields()
-	if d.Decode(&in) != nil || in.Enabled == nil {
+	if d.Decode(&in) != nil || (in.Purpose != "destroy" && in.Enabled == nil) {
 		writeError(w, 400, "请求参数无效")
 		return
 	}
@@ -46,7 +54,13 @@ func (h *handler) sendProductionLockEmail(w http.ResponseWriter, r *http.Request
 		writeError(w, 503, "邮箱验证服务暂时不可用")
 		return
 	}
-	email, scope, e := h.service.ProductionLockEmailTarget(r.Context(), customer, id, *in.Enabled, in.Email)
+	var email, scope string
+	var e error
+	if in.Purpose == "destroy" {
+		email, scope, e = h.service.DestroyEmailTarget(r.Context(), customer, id, in.Email)
+	} else {
+		email, scope, e = h.service.ProductionLockEmailTarget(r.Context(), customer, id, *in.Enabled, in.Email)
+	}
 	if e != nil {
 		writeServiceError(w, e)
 		return
