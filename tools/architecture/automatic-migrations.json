@@ -58,5 +58,9 @@
   "069_navigation_categories.sql": {
     "sha256": "f57f580d648ca982377126c0afa5b74e25d6cc523455d544a1b525e2fe16fbf4",
     "rollbackCompatible": true
+  },
+  "070_navigation_categories_repair.sql": {
+    "sha256": "c2a75332086d9b19d90241c2f509563bbf66623ed3454a9ba633eeb4b7abbb69",
+    "rollbackCompatible": true
   }
 }

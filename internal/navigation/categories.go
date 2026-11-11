@@ -31,10 +31,46 @@ type CategoryInput struct {
 	IDs  []string `json:"ids"`
 }
 
+// categorySeed creates the table and its default rows on first use. An install
+// whose migration for this table was skipped (or an older binary) must still be
+// able to open the editor.
+const categorySeed = `CREATE TABLE IF NOT EXISTS system.navigation_categories (
+ id BIGINT PRIMARY KEY,
+ name VARCHAR(32) NOT NULL,
+ sort INT NOT NULL DEFAULT 0,
+ created_at DATETIME(3) NOT NULL,
+ updated_at DATETIME(3) NOT NULL,
+ UNIQUE KEY navigation_category_name (name)
+) ENGINE=InnoDB`
+
+var defaultCategories = []string{"业务管理", "服务管理", "支持与设置", "账户与权益", "运营管理", "销售管理", "更多服务"}
+
+func (s *Service) ensureCategories() error {
+	if err := s.db.Exec(categorySeed).Error; err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for index, name := range defaultCategories {
+		row := Category{ID: int64(960000001 + index), Name: name, Sort: index, CreatedAt: now, UpdatedAt: now}
+		if err := s.db.Where("name = ?", name).FirstOrCreate(&row, Category{Name: name}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) Categories(ctx context.Context) ([]Category, error) {
 	var out []Category
 	err := s.db.WithContext(ctx).Order("sort ASC,id ASC").Find(&out).Error
-	return out, err
+	if err == nil {
+		return out, nil
+	}
+	// Missing table or column: repair once and retry, so the editor never dead-ends.
+	if seedErr := s.ensureCategories(); seedErr != nil {
+		return nil, err
+	}
+	out = nil
+	return out, s.db.WithContext(ctx).Order("sort ASC,id ASC").Find(&out).Error
 }
 
 // categoryNames returns the current names so node writes can reject unknown

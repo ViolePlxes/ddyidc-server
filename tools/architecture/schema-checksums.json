@@ -67,5 +67,6 @@
   "066_visit_analytics.sql": "55672db28868b92653a22038cd850c55b6c314c280a1d3be7cb02164b47a3916",
   "067_console_destroy_navigation.sql": "674d894eaec3909170928fcb76c4d3ad816b4a4f97b92d7884f758bdc6eacf02",
   "068_navigation_category.sql": "5e8105105bd6cc1715c723a69066695e953a6fa6a099312ed88a328689610911",
-  "069_navigation_categories.sql": "f57f580d648ca982377126c0afa5b74e25d6cc523455d544a1b525e2fe16fbf4"
+  "069_navigation_categories.sql": "f57f580d648ca982377126c0afa5b74e25d6cc523455d544a1b525e2fe16fbf4",
+  "070_navigation_categories_repair.sql": "c2a75332086d9b19d90241c2f509563bbf66623ed3454a9ba633eeb4b7abbb69"
 }
