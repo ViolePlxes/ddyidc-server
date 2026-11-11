@@ -99,3 +99,20 @@ func TestCalculatePartialProviderDayAndNoService(t *testing.T) {
 		t.Fatalf("got %+v %v", got, err)
 	}
 }
+
+// 不足一天按一天算：用了 1 天 1 小时按 2 天扣，退款按剩余整天计算。
+func TestCalculateRoundsPartialUsedDayUp(t *testing.T) {
+	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(10 * 24 * time.Hour)
+	snapshot := Snapshot{Paid: 3000, Periods: []Period{{Paid: 3000, Start: &start, End: &end}}}
+	calc, err := Calculate(snapshot, start.Add(25*time.Hour), Fees{Setup: "0.00", Installation: "0.00", Handling: "0.00", Gift: "0.00", Traffic: "0.00", ValueAdded: "0.00", Evidence: "测试口径：已核对原始账单"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calc.Periods[0].UsedDays != 2 || calc.Periods[0].RemainingDays != 8 {
+		t.Fatalf("used=%d remaining=%d want 2/8", calc.Periods[0].UsedDays, calc.Periods[0].RemainingDays)
+	}
+	if calc.Refund != 2400 {
+		t.Fatalf("refund=%s want 24.00", calc.Refund.String())
+	}
+}
