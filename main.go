@@ -72,6 +72,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/proc"
 	"net/http"
 	"os"
@@ -266,12 +267,12 @@ func main() {
 
 	var c struct {
 		rest.RestConf
-		Runtime               runtimepaths.Config `json:",optional"`
-		DeploymentEnvironment string              `json:",optional"`
-		UpstreamTestPolicy    testpolicy.Config   `json:",optional"`
-		Outbound              outbound.Config     `json:",optional"`
-		Cron                  *distsync.Config    `json:",optional"`
-		Network               clientip.Config     `json:",optional"`
+		Runtime               runtimepaths.Config   `json:",optional"`
+		DeploymentEnvironment string                `json:",optional"`
+		UpstreamTestPolicy    testpolicy.Config     `json:",optional"`
+		Outbound              outbound.Config       `json:",optional"`
+		Cron                  *distsync.Config      `json:",optional"`
+		Network               clientip.Config       `json:",optional"`
 		VisitAnalytics        visitanalytics.Config `json:",optional"`
 		MySQL                 db.Config
 		Redis                 cache.Config
@@ -483,6 +484,9 @@ func main() {
 	notifyManager, err := notify.NewManager(db.G, c.Notify, []byte(c.Crypto.AESKey))
 	if err != nil {
 		panic("notify initialization failed: " + err.Error())
+	}
+	if view, configErr := notifyManager.Config(context.Background()); configErr == nil && view.Mail.Mock {
+		logx.Errorf("MAIL_CONFIG_INCOMPLETE: email verification will fail until SMTP host/port/username/password are configured")
 	}
 	c.Update.ReclamationDigests = reclamationInfrastructureDigests()
 	updateManager, err := update.NewManager(db.G, cache.RDB, c.Update)

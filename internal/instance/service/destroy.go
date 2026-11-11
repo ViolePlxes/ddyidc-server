@@ -24,6 +24,11 @@ type DestroyView struct {
 	Requests    []DestroyRequest       `json:"requests"`
 }
 
+type DestroyEmailInput struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
 type DestroyRequest struct {
 	ID           int64      `json:"id,string"`
 	RefundNo     string     `json:"refundNo"`
@@ -103,7 +108,9 @@ func (s *Service) destroySubmitCheck(ctx context.Context, customer int64, in Des
 		if strings.TrimSpace(in.Code) == "" {
 			return errors.New("请先完成邮箱验证码验证")
 		}
-		return s.verifyDestroyEmailTx(ctx, tx, h, in)
+		// Destruction consumes the production-lock credential and verifier
+		// unchanged; the unlock scope is the shared verification contract.
+		return s.verifyProductionLockEmailTx(ctx, tx, h, false, ProductionLockEmailInput{Email: in.Email, Code: in.Code})
 	}
 }
 

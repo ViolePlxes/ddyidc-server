@@ -6,8 +6,8 @@ import (
 	"net/http"
 )
 
-// The mailbox code for destruction is requested through the production-lock
-// endpoint with purpose=destroy; no second verification channel exists.
+// The mailbox code for destruction is requested through the existing
+// production-lock endpoint; no second verification channel exists.
 
 // The customer-facing 实例销毁申请 page: a refundable preview, the request itself
 // and the customer's own request history.

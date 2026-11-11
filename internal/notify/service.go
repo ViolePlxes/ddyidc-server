@@ -356,6 +356,13 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 	if err != nil {
 		// SDK/SMTP errors can contain request URLs, authentication material or
 		// server-supplied text. Do not persist or return the raw provider error.
+		if channel == ChannelEmail {
+			port := config.Mail.Port
+			if port == 0 {
+				port = 465
+			}
+			logx.Errorf("MAIL_SEND_FAILED host=%s port=%d stage=%s", config.Mail.Host, port, mailFailureStage(err))
+		}
 		errorText = "邮件服务发送失败，请检查邮件配置或服务商发送记录"
 		if channel == ChannelSMS {
 			errorText = "短信服务发送失败，请检查短信配置或服务商发送记录"
@@ -388,6 +395,33 @@ func (m *Manager) sendChannelWithRetry(ctx context.Context, template *Notificati
 		}
 	}
 	return err
+}
+
+// mailFailureStage maps the fixed Chinese stage prefixes from channels.go to a
+// bounded log label; the raw provider error is never logged.
+func mailFailureStage(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	message := err.Error()
+	for _, item := range []struct{ text, stage string }{
+		{"连接 SMTPS", "connect_tls"},
+		{"创建 SMTP 客户端", "client"},
+		{"连接 SMTP", "connect"},
+		{"SMTP STARTTLS", "starttls"},
+		{"587 服务未提供 STARTTLS", "starttls_unavailable"},
+		{"SMTP 认证", "auth"},
+		{"SMTP 发件人", "mail_from"},
+		{"SMTP 收件人", "rcpt"},
+		{"写入 SMTP 正文", "write"},
+		{"提交 SMTP 正文", "commit"},
+		{"SMTP 正文", "data"},
+	} {
+		if strings.Contains(message, item.text) {
+			return item.stage
+		}
+	}
+	return "unknown"
 }
 
 func (m *Manager) SendNotify(ctx context.Context, scene, target string, params map[string]string) error {
