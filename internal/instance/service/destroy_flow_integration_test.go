@@ -118,8 +118,8 @@ func TestDestroyFlowMySQL(t *testing.T) {
 	if option == nil || option.Eligible || option.Reason != "已开启生产锁，请先关闭生产锁" {
 		t.Fatalf("production lock not listed as blocked: %+v", option)
 	}
-	if _, err := s.SubmitDestroy(ctx, customer, hostID, "生产锁下销毁", "destroy-flow-0003", DestroyEmailInput{Code: "000000"}); err == nil || err.Error() != "已开启生产锁，请先关闭" {
-		t.Fatalf("production lock submission not refused: %v", err)
+	if _, err := s.SubmitDestroy(ctx, customer, hostID, "生产锁下销毁", "destroy-flow-0003", DestroyEmailInput{}); err == nil || err.Error() != "已开启生产锁，请先关闭" {
+		t.Fatalf("production lock submission not refused before mailbox proof: %v", err)
 	}
 
 	if err := db.Exec("DELETE FROM instance.instance_production_locks WHERE instance_id=?", hostID).Error; err != nil {
@@ -136,8 +136,8 @@ func TestDestroyFlowMySQL(t *testing.T) {
 	if option == nil || option.Eligible || option.Reason != "已开启自动续费，请先关闭自动续费" {
 		t.Fatalf("auto renewal not listed as blocked: %+v", option)
 	}
-	if _, err := s.SubmitDestroy(ctx, customer, hostID, "自动续费下销毁", "destroy-flow-0004", DestroyEmailInput{Code: "000000"}); err == nil || err.Error() != "已开启自动续费，请先关闭" {
-		t.Fatalf("auto renewal submission not refused: %v", err)
+	if _, err := s.SubmitDestroy(ctx, customer, hostID, "自动续费下销毁", "destroy-flow-0004", DestroyEmailInput{}); err == nil || err.Error() != "已开启自动续费，请先关闭" {
+		t.Fatalf("auto renewal submission not refused before mailbox proof: %v", err)
 	}
 
 	if err := db.Exec("DELETE FROM instance.instance_renewal_settings WHERE instance_id=?", hostID).Error; err != nil {
