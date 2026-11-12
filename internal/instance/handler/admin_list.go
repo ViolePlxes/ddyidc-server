@@ -54,7 +54,7 @@ func (h *handler) globalAccess(w http.ResponseWriter, r *http.Request) (svc.Admi
 }
 func adminListInput(r *http.Request) (svc.AdminListInput, error) {
 	q := r.URL.Query()
-	in := svc.AdminListInput{Search: q.Get("search"), View: q.Get("view"), CustomerID: q.Get("customerId"), ProductID: q.Get("productId"), SupplierID: q.Get("supplierId"), Status: q.Get("status"), Cycle: q.Get("cycle"), AutoRenew: q.Get("autoRenew"), CreatedFrom: q.Get("createdFrom"), CreatedTo: q.Get("createdTo"), ExpiresFrom: q.Get("expiresFrom"), ExpiresTo: q.Get("expiresTo"), MinAmount: q.Get("minAmount"), MaxAmount: q.Get("maxAmount"), Sort: q.Get("sort"), Direction: q.Get("direction")}
+	in := svc.AdminListInput{Search: q.Get("search"), View: q.Get("view"), CustomerID: q.Get("customerId"), ProductID: q.Get("productId"), SupplierID: q.Get("supplierId"), Status: q.Get("status"), Cycle: q.Get("cycle"), AutoRenew: q.Get("autoRenew"), CreatedFrom: q.Get("createdFrom"), CreatedTo: q.Get("createdTo"), ExpiresFrom: q.Get("expiresFrom"), ExpiresTo: q.Get("expiresTo"), MinAmount: q.Get("minAmount"), MaxAmount: q.Get("maxAmount"), MissingPrice: q.Get("missingPrice"), Sort: q.Get("sort"), Direction: q.Get("direction")}
 	in.ActivatedFrom = q.Get("activatedFrom")
 	in.ActivatedTo = q.Get("activatedTo")
 	for key, target := range map[string]*int{"page": &in.Page, "pageSize": &in.PageSize} {

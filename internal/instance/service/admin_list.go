@@ -19,8 +19,8 @@ var ErrAdminListInput = errors.New("产品列表参数无效")
 // A global permission explicitly grants all customers. Optional per-admin scope
 // in system_configs narrows it to customer IDs; malformed scopes fail closed.
 type AdminAccess struct {
-	AdminID               int64
-	CustomerIDs           []int64
+	AdminID                     int64
+	CustomerIDs                 []int64
 	Contact, Export, Sync, Edit bool
 }
 
@@ -104,6 +104,7 @@ type AdminListInput struct {
 	ExpiresTo     string `json:"expiresTo"`
 	MinAmount     string `json:"minAmount"`
 	MaxAmount     string `json:"maxAmount"`
+	MissingPrice  string `json:"missingPrice"`
 	Sort          string `json:"sort"`
 	Direction     string `json:"direction"`
 }
@@ -232,6 +233,9 @@ func normalizeAdminInput(in AdminListInput) (AdminListInput, error) {
 	if in.AutoRenew != "" && in.AutoRenew != "true" && in.AutoRenew != "false" {
 		return in, ErrAdminListInput
 	}
+	if in.MissingPrice != "" && in.MissingPrice != "1" {
+		return in, ErrAdminListInput
+	}
 	for _, v := range []string{in.ActivatedFrom, in.ActivatedTo, in.CreatedFrom, in.CreatedTo, in.ExpiresFrom, in.ExpiresTo} {
 		if v != "" {
 			d, e := time.Parse(time.RFC3339, v)
@@ -294,6 +298,9 @@ func adminBase(db *gorm.DB, a AdminAccess, in AdminListInput) *gorm.DB {
 	}
 	if in.AutoRenew != "" {
 		q = q.Where("COALESCE(rs.enabled,0)=?", in.AutoRenew == "true")
+	}
+	if in.MissingPrice == "1" {
+		q = q.Where(recurringSQL).Where(renewalSQL + " IS NULL")
 	}
 	for _, f := range []struct{ col, op, v string }{{"i.activated_at", ">=", in.ActivatedFrom}, {"i.activated_at", "<=", in.ActivatedTo}, {"i.created_at", ">=", in.CreatedFrom}, {"i.created_at", "<=", in.CreatedTo}, {"i.expires_at", ">=", in.ExpiresFrom}, {"i.expires_at", "<=", in.ExpiresTo}, {renewalSQL, ">=", in.MinAmount}, {renewalSQL, "<=", in.MaxAmount}} {
 		if f.v != "" {
@@ -373,7 +380,7 @@ func (s *Service) AdminList(ctx context.Context, a AdminAccess, in AdminListInpu
 			Amount  string
 			Missing int64
 		}
-		if err := q().Select("CAST(COALESCE(SUM(" + renewalSQL + "),0) AS CHAR) amount,COALESCE(SUM((" + renewalSQL + ") IS NULL),0) missing").Scan(&sum).Error; err != nil {
+		if err := q().Select("CAST(COALESCE(SUM(" + renewalSQL + "),0) AS CHAR) amount,COALESCE(SUM((" + recurringSQL + ") AND (" + renewalSQL + ") IS NULL),0) missing").Scan(&sum).Error; err != nil {
 			return err
 		}
 		result.TotalRenewalSum = sum.Amount
