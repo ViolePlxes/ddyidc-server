@@ -157,7 +157,6 @@ func TestAdminListMySQL(t *testing.T) {
 		}
 		if i == 4 {
 			amount = "null"
-			expiry = nil
 		}
 		if i == 5 {
 			state = 6
@@ -193,8 +192,17 @@ func TestAdminListMySQL(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if result.Total != 6 || len(result.Items) != 2 || result.Counts["suspended"] != 1 || result.Counts["due"] != 2 || result.Counts["expired"] != 1 || result.Counts["terminated"] != 1 || result.TotalRenewalSum != "50.05" || result.MissingPriceCount != 1 {
+	if result.Total != 6 || len(result.Items) != 2 || result.Counts["suspended"] != 1 || result.Counts["due"] != 3 || result.Counts["expired"] != 1 || result.Counts["terminated"] != 1 || result.TotalRenewalSum != "50.05" || result.MissingPriceCount != 1 {
 		t.Fatalf("wrong statistics: %+v", result)
+	}
+	missing, e := service.AdminList(ctx, a, AdminListInput{MissingPrice: "1", PageSize: 100})
+	if e != nil || missing.Total != result.MissingPriceCount || len(missing.Items) != int(missing.Total) {
+		t.Fatalf("missing quote filter mismatch: %+v %v", missing, e)
+	}
+	for _, row := range missing.Items {
+		if row.RenewalAmount != nil {
+			t.Fatalf("filtered row has a quote: %+v", row)
+		}
 	}
 	exec("UPDATE customer.customers SET username='v10_11722339' WHERE id=99004001")
 	current, e := service.AdminList(ctx, a, AdminListInput{})
