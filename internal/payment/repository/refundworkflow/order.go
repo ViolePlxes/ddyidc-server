@@ -176,7 +176,10 @@ func verifyOrderEntitlement(tx *gorm.DB, request Request, snapshot Snapshot) err
 }
 
 // Manual balance refunds rely on the authenticated administrator confirmation,
-// while preserving source, ownership, payment and service-period checks.
+// while preserving the order, customer, paid amount and refund-cap checks.
+// The machine entitlement is intentionally not re-validated for manual refunds:
+// the administrator approves them after settling the upstream side, so the
+// instance can already be deleted, re-bound or carry a different live expiry.
 func verifyOrderEntitlementPolicy(tx *gorm.DB, request Request, snapshot Snapshot, manual bool) error {
 	var o order.Order
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&o, request.ObjectID).Error; err != nil {
@@ -184,6 +187,11 @@ func verifyOrderEntitlementPolicy(tx *gorm.DB, request Request, snapshot Snapsho
 	}
 	if o.CustomerID != request.CustomerID || balance.Money(o.PayAmount) != snapshot.Paid || (o.Status != 2 && o.Status != 5 && o.Status != 6) {
 		return ErrConflict
+	}
+	if manual {
+		// Keep the refund based on the snapshot's purchased periods (Calculate
+		// already ran), never on the instance's current expiry or status.
+		return nil
 	}
 	var expectedHosts int64
 	for _, p := range snapshot.Periods {
