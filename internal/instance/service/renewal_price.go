@@ -92,24 +92,23 @@ func overridePrice(mode string, value float64, list balance.Money) (balance.Mone
 	if final <= 0 {
 		return list, false
 	}
-	if final > list {
-		final = list
-	}
 	return final, true
 }
 
 // applyRenewalOverride returns the final renewal price and its discount against
-// the catalogue amount. A price below the upstream procurement cost is rejected
-// so a configured contract price can never silently sell at a loss.
-func applyRenewalOverride(mode string, value float64, list, cost balance.Money) (balance.Money, balance.Money, bool) {
+// the catalogue amount. The administrator's explicit contract price is
+// authoritative: it may exceed the catalogue or fall below the upstream cost,
+// because the upstream side is settled separately.
+func applyRenewalOverride(mode string, value float64, list, _ balance.Money) (balance.Money, balance.Money, bool) {
 	final, ok := overridePrice(mode, value, list)
 	if !ok {
 		return list, 0, false
 	}
-	if cost > 0 && final < cost {
-		return list, 0, false
+	discount := list - final
+	if discount < 0 {
+		discount = 0
 	}
-	return final, list - final, true
+	return final, discount, true
 }
 
 func (s *Service) activeRenewalOverride(ctx context.Context, instanceID int64, cycle string, at time.Time) (*RenewalPriceOverride, error) {
@@ -246,12 +245,8 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 		if list <= 0 {
 			list = option.AmountMoney()
 		}
-		final, ok := overridePrice(mode, value, list)
-		if !ok {
+		if _, ok := overridePrice(mode, value, list); !ok {
 			return nil, errors.New("调价数值无效")
-		}
-		if option.Cost > 0 && final < option.Cost {
-			return nil, fmt.Errorf("「%s」不得低于上游成本价", option.Label)
 		}
 	}
 	if matched == 0 {

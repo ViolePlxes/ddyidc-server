@@ -167,8 +167,20 @@ func (s *Service) renewalOptions(ctx context.Context, customer, id int64) ([]Ren
 			continue
 		}
 		original, e := balance.ParseMoney(q.OriginalAmount)
-		if e != nil || original <= 0 || original < cost {
+		if e != nil || original <= 0 {
 			return nil, errors.New("供应商续费原价未确认")
+		}
+		if original < cost {
+			// A manually configured contract price is authoritative even when the
+			// supplier's own original looks inconsistent with the procurement cost;
+			// without one, fail closed rather than guess.
+			override, err := s.activeRenewalOverride(ctx, h.ID, q.Cycle, time.Now())
+			if err != nil {
+				return nil, err
+			}
+			if override == nil {
+				return nil, errors.New("供应商续费原价未确认")
+			}
 		}
 		amount, e := retailRenewal(original, price.Rate, "0", 0)
 		if e != nil {
