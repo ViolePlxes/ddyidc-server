@@ -78,12 +78,17 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 				if err != nil || original <= 0 {
 					return nil, fmt.Errorf("供应商续费原价无效")
 				}
-			} else if catalogue >= money {
+			} else if catalogue > 0 {
 				// The host's fixed-contract cycle can differ from the product's default
 				// cycle (for example a quarterly host on a monthly catalogue product).
-				// The standard response still carries this cycle's catalogue price, so use
-				// it instead of refusing to quote at all.
+				// The standard response still carries this cycle's catalogue price. A
+				// migrated contract can also cost more than that catalogue price, so
+				// keep the higher amount: quoting the lower catalogue would be rejected
+				// by the cost floor below and block every cycle.
 				original = catalogue
+				if money > original {
+					original = money
+				}
 			} else {
 				return nil, fmt.Errorf("固定合约完整续费原价未确认，请人工设置售价")
 			}

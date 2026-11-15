@@ -21,6 +21,39 @@ func newQuoteProvider(t *testing.T, handler http.HandlerFunc) *Provider {
 	return p
 }
 
+// A migrated fixed contract can cost more than the product catalogue price
+// (host 42591: quarterly 522.90 vs catalogue 327.00). The contract amount must
+// win so the quote is not rejected by the cost floor.
+func TestRenewalFixedContractContractAboveCatalogueUsesContractAmount(t *testing.T) {
+	p := newQuoteProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/host/renewpage":
+			fmt.Fprint(w, `{"status":200,"data":{"host":{"flag":"1","billingcycle":"quarterly","productid":514},"cycle":[`+
+				`{"billingcycle":"quarterly","billingcycle_zh":"季付","amount":"522.90","price":"327.00","duration":7776000},`+
+				`{"billingcycle":"annually","billingcycle_zh":"年付","amount":"1090.00","price":"1090.00","duration":31536000}]}}`)
+		case "/api/product/514":
+			fmt.Fprint(w, `{"status":200,"data":{"product":{"id":514,"name":"fixture","type":"dcimcloud","billingcycle":"monthly","product_price":"109.00"}}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+
+	quotes, err := p.RenewalQuotes(42591)
+	if err != nil || len(quotes) != 2 {
+		t.Fatalf("contract above catalogue should quote: %#v %v", quotes, err)
+	}
+	want := map[string][2]string{
+		"quarterly": {"522.90", "522.90"},
+		"annually":  {"1090.00", "1090.00"},
+	}
+	for _, quote := range quotes {
+		expect, ok := want[quote.Cycle]
+		if !ok || quote.Amount != expect[0] || quote.OriginalAmount != expect[1] {
+			t.Fatalf("unexpected quote for %s: %#v", quote.Cycle, quote)
+		}
+	}
+}
+
 // The standard basis discounts only the host's current cycle; the catalogue
 // price ("price") of that cycle is the customer-facing original. Other cycles
 // already carry their catalogue amount, so every cycle must be quoted (the
