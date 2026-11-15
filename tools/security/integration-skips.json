@@ -836,5 +836,9 @@
   "ddyidc/internal/instance/service/TestMachineDestroyRefundMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh against disposable officially migrated MySQL; machine refund aggregates the purchase period and completed renewals, settles one invoice per refunded order, credits the balance once and destroys the machine. A skip is not a pass."
+  },
+  "ddyidc/internal/payment/repository/refundworkflow/TestManualOrderRefundIgnoresChangedMachineEntitlementMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable FOUNDATION_MYSQL_SOCKET database: an order refunded after the machine was terminated must fail the automatic entitlement path, pass the manual path on the purchased snapshot, and still reject a foreign customer. A skip is not a pass."
   }
 }
