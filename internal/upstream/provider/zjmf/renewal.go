@@ -43,6 +43,7 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 			continue
 		}
 		var original billing.Money
+		var catalogue billing.Money
 		matches := 0
 		for _, value := range retailRows {
 			row, ok := value.(map[string]any)
@@ -53,6 +54,9 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 			original, err = billing.ParseMoney(firstMapString(row, "amount"))
 			if err != nil || original <= 0 {
 				return nil, fmt.Errorf("供应商完整续费原价未确认，停止报价")
+			}
+			if price, err := billing.ParseMoney(firstMapString(row, "price")); err == nil && price > 0 {
+				catalogue = price
 			}
 		}
 		if matches != 1 {
@@ -66,12 +70,22 @@ func (p *Provider) RenewalQuotes(id int64) ([]contracts.RenewalQuote, error) {
 				return nil, fmt.Errorf("供应商续费商品身份未确认")
 			}
 			detail, err := p.renewalOriginalProduct(pid)
-			if err != nil || detail == nil || detail.ID != pid || detail.Cycle != cycle || detail.HasConfigOptions || detail.Type == "mf_cloud" || detail.Type == "mf_dcim" {
+			if err != nil || detail == nil || detail.ID != pid || detail.HasConfigOptions || detail.Type == "mf_cloud" || detail.Type == "mf_dcim" {
 				return nil, fmt.Errorf("固定合约完整续费原价未确认，请人工设置售价")
 			}
-			original, err = billing.ParseMoney(strconv.FormatFloat(detail.Price, 'f', 2, 64))
-			if err != nil || original <= 0 {
-				return nil, fmt.Errorf("供应商续费原价无效")
+			if detail.Cycle == cycle {
+				original, err = billing.ParseMoney(strconv.FormatFloat(detail.Price, 'f', 2, 64))
+				if err != nil || original <= 0 {
+					return nil, fmt.Errorf("供应商续费原价无效")
+				}
+			} else if catalogue >= money {
+				// The host's fixed-contract cycle can differ from the product's default
+				// cycle (for example a quarterly host on a monthly catalogue product).
+				// The standard response still carries this cycle's catalogue price, so use
+				// it instead of refusing to quote at all.
+				original = catalogue
+			} else {
+				return nil, fmt.Errorf("固定合约完整续费原价未确认，请人工设置售价")
 			}
 		}
 		if original < money {
