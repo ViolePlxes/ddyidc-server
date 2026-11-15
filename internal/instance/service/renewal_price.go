@@ -36,18 +36,48 @@ type RenewalPriceOverride struct {
 func (RenewalPriceOverride) TableName() string { return "billing.renewal_price_overrides" }
 
 // RenewalPriceView is the admin read model: the current override, if any, plus
-// the catalogue price used as its base.
+// the catalogue price used as its base. Cycles lists every upstream renewal
+// duration with its catalogue price, procurement cost and effective override.
 type RenewalPriceView struct {
-	BaseAmount    string `json:"baseAmount"`
-	Amount        string `json:"amount"`
-	Discount      string `json:"discount"`
+	BaseAmount    string                  `json:"baseAmount"`
+	Amount        string                  `json:"amount"`
+	Discount      string                  `json:"discount"`
+	Cycle         string                  `json:"cycle"`
+	Mode          string                  `json:"mode"`
+	Value         string                  `json:"value"`
+	EffectiveFrom string                  `json:"effectiveFrom"`
+	EffectiveTo   string                  `json:"effectiveTo,omitempty"`
+	Reason        string                  `json:"reason,omitempty"`
+	Active        bool                    `json:"active"`
+	Cycles        []RenewalPriceCycleView `json:"cycles"`
+}
+
+type RenewalPriceCycleView struct {
 	Cycle         string `json:"cycle"`
-	Mode          string `json:"mode"`
-	Value         string `json:"value"`
-	EffectiveFrom string `json:"effectiveFrom"`
+	Label         string `json:"label"`
+	BaseAmount    string `json:"baseAmount"`
+	Cost          string `json:"cost"`
+	Amount        string `json:"amount"`
+	Discount      string `json:"discount,omitempty"`
+	Active        bool   `json:"active"`
+	Mode          string `json:"mode,omitempty"`
+	Value         string `json:"value,omitempty"`
+	EffectiveFrom string `json:"effectiveFrom,omitempty"`
 	EffectiveTo   string `json:"effectiveTo,omitempty"`
 	Reason        string `json:"reason,omitempty"`
-	Active        bool   `json:"active"`
+}
+
+// SetRenewalPricesInput replaces the instance's active prices in one edit: each
+// item prices one upstream cycle, and cycles left out return to the catalogue.
+type SetRenewalPricesInput struct {
+	Reason string `json:"reason"`
+	Items  []RenewalPriceItem `json:"items"`
+}
+
+type RenewalPriceItem struct {
+	Cycle string `json:"cycle"`
+	Mode  string `json:"mode"`
+	Value string `json:"value"`
 }
 
 type SetRenewalPriceInput struct {
@@ -173,6 +203,24 @@ func (s *Service) AdminRenewalPrice(ctx context.Context, a AdminAccess, customer
 		}
 		view.Active = true
 	}
+	for _, option := range options {
+		entry := RenewalPriceCycleView{
+			Cycle: option.Cycle, Label: option.Label, BaseAmount: option.ListAmount,
+			Cost: option.Cost.String(), Amount: option.Amount, Discount: option.Discount,
+		}
+		o, err := s.activeRenewalOverride(ctx, instanceID, option.Cycle, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		if o != nil {
+			entry.Active, entry.Mode, entry.Value, entry.Reason = true, o.Mode, o.Value, o.Reason
+			entry.EffectiveFrom = o.EffectiveFrom.In(time.Local).Format("2006-01-02")
+			if o.EffectiveTo != nil {
+				entry.EffectiveTo = o.EffectiveTo.In(time.Local).Format("2006-01-02")
+			}
+		}
+		view.Cycles = append(view.Cycles, entry)
+	}
 	return view, nil
 }
 
@@ -271,6 +319,103 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 			return e
 		}
 		return appendAdminAudit(tx, a.AdminID, ip, instanceID, customer, 0, "renewal_price", before, map[string]any{"mode": mode, "value": row.Value, "cycle": cycle, "effectiveFrom": from, "effectiveTo": to, "reason": reason})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.AdminRenewalPrice(ctx, a, customer, instanceID)
+}
+
+// SetAdminRenewalPrices replaces the instance's active renewal prices in one
+// edit. Every upstream cycle is offered; cycles left out return to the
+// catalogue price.
+func (s *Service) SetAdminRenewalPrices(ctx context.Context, a AdminAccess, ip string, customer, instanceID int64, in SetRenewalPricesInput) (*RenewalPriceView, error) {
+	if !a.Edit || !a.Allows(customer) {
+		return nil, ErrForbidden
+	}
+	reason := strings.TrimSpace(in.Reason)
+	if n := len([]rune(reason)); n < 2 || n > 200 {
+		return nil, errors.New("请填写 2-200 字的调价原因")
+	}
+	if len(in.Items) > 20 {
+		return nil, errors.New("一次最多调整 20 个周期")
+	}
+	options, err := s.renewalOptions(ctx, customer, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	byCycle := map[string]RenewalOption{}
+	for _, option := range options {
+		byCycle[normalizeCycle(option.Cycle)] = option
+	}
+	if len(byCycle) == 0 {
+		return nil, errors.New("该实例没有可用的续费周期")
+	}
+	type change struct {
+		Cycle string `json:"cycle"`
+		Mode  string `json:"mode"`
+		Value string `json:"value"`
+	}
+	changes := make([]change, 0, len(in.Items))
+	seen := map[string]bool{}
+	for _, item := range in.Items {
+		cycle := normalizeCycle(item.Cycle)
+		if cycle == "" || seen[cycle] {
+			return nil, errors.New("调价周期重复或为空")
+		}
+		seen[cycle] = true
+		option, ok := byCycle[cycle]
+		if !ok {
+			return nil, fmt.Errorf("续费周期「%s」不可用", item.Cycle)
+		}
+		raw := strings.TrimSpace(item.Value)
+		if raw == "" {
+			continue
+		}
+		mode := strings.ToLower(strings.TrimSpace(item.Mode))
+		if mode == "" {
+			mode = "fixed"
+		}
+		if mode != "fixed" && mode != "percent" {
+			return nil, errors.New("调价方式无效")
+		}
+		value, err := parseRenewalPriceValue(raw)
+		if err != nil {
+			return nil, err
+		}
+		if mode == "percent" && value > 100 {
+			return nil, errors.New("折扣率不能高于 100")
+		}
+		list := option.ListAmountMoney()
+		if list <= 0 {
+			list = option.AmountMoney()
+		}
+		if _, ok := overridePrice(mode, value, list); !ok {
+			return nil, errors.New("调价数值无效")
+		}
+		changes = append(changes, change{Cycle: cycle, Mode: mode, Value: fmt.Sprintf("%.2f", value)})
+	}
+	now := time.Now()
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var before []RenewalPriceOverride
+		if e := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("instance_id=? AND status='active'", instanceID).Find(&before).Error; e != nil {
+			return e
+		}
+		if e := tx.Model(&RenewalPriceOverride{}).Where("instance_id=? AND status='active'", instanceID).Updates(map[string]any{"status": "revoked", "updated_at": now}).Error; e != nil {
+			return e
+		}
+		for _, item := range changes {
+			row := RenewalPriceOverride{
+				CustomerID: customer, InstanceID: instanceID, Cycle: item.Cycle, Mode: item.Mode,
+				Value: item.Value, EffectiveFrom: now, Reason: reason, Status: "active",
+				CreatedBy: a.AdminID, CreatedAt: now, UpdatedAt: now,
+			}
+			row.ID = snowflake.GenID()
+			if e := tx.Create(&row).Error; e != nil {
+				return e
+			}
+		}
+		return appendAdminAudit(tx, a.AdminID, ip, instanceID, customer, 0, "renewal_prices", before, map[string]any{"reason": reason, "prices": changes})
 	})
 	if err != nil {
 		return nil, err

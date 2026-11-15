@@ -27,6 +27,7 @@ func (h *handler) managementRoutes() []rest.Route {
 	out = append(out,
 		rest.Route{Method: http.MethodGet, Path: "/admin/v1/customers/:customerId/instances/:instanceId/renewal-price", Handler: h.adminRenewalPrice},
 		rest.Route{Method: http.MethodPut, Path: "/admin/v1/customers/:customerId/instances/:instanceId/renewal-price", Handler: h.adminSetRenewalPrice},
+		rest.Route{Method: http.MethodPut, Path: "/admin/v1/customers/:customerId/instances/:instanceId/renewal-prices", Handler: h.adminSetRenewalPrices},
 		rest.Route{Method: http.MethodDelete, Path: "/admin/v1/customers/:customerId/instances/:instanceId/renewal-price", Handler: h.adminClearRenewalPrice},
 	)
 	out = append(out, rest.Route{Method: http.MethodDelete, Path: "/admin/v1/customers/:customerId/instances/:instanceId", Handler: h.remove})
@@ -299,6 +300,32 @@ func (h *handler) adminSetRenewalPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, e := h.service.SetAdminRenewalPrice(r.Context(), a, clientip.FromRequest(r), customer, id, in)
+	if e != nil {
+		writeServiceError(w, e)
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (h *handler) adminSetRenewalPrices(w http.ResponseWriter, r *http.Request) {
+	a, ok := h.globalAccess(w, r)
+	if !ok {
+		return
+	}
+	customer, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	id := pathID(w, r)
+	if id == 0 {
+		return
+	}
+	var in svc.SetRenewalPricesInput
+	if e := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in); e != nil {
+		writeError(w, http.StatusBadRequest, "调价参数无效")
+		return
+	}
+	out, e := h.service.SetAdminRenewalPrices(r.Context(), a, clientip.FromRequest(r), customer, id, in)
 	if e != nil {
 		writeServiceError(w, e)
 		return
