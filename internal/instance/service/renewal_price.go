@@ -494,24 +494,20 @@ func (q RenewalOption) ListAmountMoney() balance.Money {
 // applyRenewalPriceDisplay overlays active contract prices on a page of list
 // rows without calling the supplier. The stored listDisplay amount is the
 // catalogue retail price; a fixed/percent override replaces it for display.
+// A cycle disabled by the administrator is removed from the customer-facing
+// list instead of showing its old amount.
 func (s *Service) applyRenewalPriceDisplay(ctx context.Context, items []ListItem) {
 	if s.db == nil || len(items) == 0 {
 		return
 	}
 	ids := make([]int64, 0, len(items))
-	candidates := 0
 	for _, item := range items {
-		if item.RenewalAmount == "" {
-			continue
-		}
 		id, err := strconv.ParseInt(item.ID, 10, 64)
-		if err != nil || id <= 0 {
-			continue
+		if err == nil && id > 0 {
+			ids = append(ids, id)
 		}
-		ids = append(ids, id)
-		candidates++
 	}
-	if candidates == 0 {
+	if len(ids) == 0 {
 		return
 	}
 	now := time.Now()
@@ -521,10 +517,14 @@ func (s *Service) applyRenewalPriceDisplay(ctx context.Context, items []ListItem
 		Order("created_at DESC").Find(&rows).Error; err != nil {
 		return
 	}
-	byInstance := make(map[int64]RenewalPriceOverride, len(rows))
+	byInstance := make(map[int64]map[string]RenewalPriceOverride, len(rows))
 	for _, row := range rows {
-		if _, exists := byInstance[row.InstanceID]; !exists {
-			byInstance[row.InstanceID] = row
+		if byInstance[row.InstanceID] == nil {
+			byInstance[row.InstanceID] = map[string]RenewalPriceOverride{}
+		}
+		cycle := normalizeCycle(row.Cycle)
+		if _, exists := byInstance[row.InstanceID][cycle]; !exists {
+			byInstance[row.InstanceID][cycle] = row
 		}
 	}
 	for i := range items {
@@ -532,11 +532,21 @@ func (s *Service) applyRenewalPriceDisplay(ctx context.Context, items []ListItem
 		if err != nil {
 			continue
 		}
-		override, ok := byInstance[id]
+		overrides := byInstance[id]
+		if len(overrides) == 0 {
+			continue
+		}
+		override, ok := overrides[normalizeCycle(items[i].BillingCycle)]
+		if !ok {
+			override, ok = overrides[""]
+		}
 		if !ok {
 			continue
 		}
-		if override.Cycle != "" && !strings.EqualFold(override.Cycle, items[i].BillingCycle) {
+		if override.Mode == "disabled" {
+			// The administrator closed this cycle: do not show its name or price.
+			items[i].RenewalAmount = ""
+			items[i].BillingCycle = ""
 			continue
 		}
 		list, err := balance.ParseMoney(items[i].RenewalAmount)

@@ -426,7 +426,11 @@ func (s *Service) Detail(ctx context.Context, customerID, instanceID int64) (*De
 		// A saved host amount is the supplier's procurement charge, never the customer original price.
 		result.RenewalAmount = ""
 		result.Warning = "续费原价暂未确认，请稍后重试或联系支持"
-		if renewalProvider, ok := upstream.(contracts.RenewalProvider); ok {
+		if ov, err := s.activeRenewalOverride(ctx, host.ID, detail.BillingCycle, time.Now()); err == nil && ov != nil && ov.Mode == "disabled" {
+			// The administrator closed this cycle: hide its name and price from the customer.
+			result.BillingCycle = ""
+			result.Warning = "该计费周期已关闭，请在续费时选择其他周期"
+		} else if renewalProvider, ok := upstream.(contracts.RenewalProvider); ok {
 			quotes, quoteErr := renewalProvider.RenewalQuotes(parseHostID(host.UpstreamInstanceID))
 			var pricing struct{ Rate string }
 			priceErr := s.db.WithContext(ctx).Raw("SELECT rate FROM common.suppliers WHERE id=?", host.UpstreamProviderID).Scan(&pricing).Error
