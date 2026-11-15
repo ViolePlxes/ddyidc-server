@@ -60,6 +60,7 @@ type RenewalPriceCycleView struct {
 	Amount        string `json:"amount"`
 	Discount      string `json:"discount,omitempty"`
 	Active        bool   `json:"active"`
+	Enabled       bool   `json:"enabled"`
 	Mode          string `json:"mode,omitempty"`
 	Value         string `json:"value,omitempty"`
 	EffectiveFrom string `json:"effectiveFrom,omitempty"`
@@ -70,14 +71,15 @@ type RenewalPriceCycleView struct {
 // SetRenewalPricesInput replaces the instance's active prices in one edit: each
 // item prices one upstream cycle, and cycles left out return to the catalogue.
 type SetRenewalPricesInput struct {
-	Reason string `json:"reason"`
+	Reason string             `json:"reason"`
 	Items  []RenewalPriceItem `json:"items"`
 }
 
 type RenewalPriceItem struct {
-	Cycle string `json:"cycle"`
-	Mode  string `json:"mode"`
-	Value string `json:"value"`
+	Cycle   string `json:"cycle"`
+	Mode    string `json:"mode"`
+	Value   string `json:"value"`
+	Enabled *bool  `json:"enabled,omitempty"`
 }
 
 type SetRenewalPriceInput struct {
@@ -130,6 +132,9 @@ func overridePrice(mode string, value float64, list balance.Money) (balance.Mone
 // authoritative: it may exceed the catalogue or fall below the upstream cost,
 // because the upstream side is settled separately.
 func applyRenewalOverride(mode string, value float64, list, _ balance.Money) (balance.Money, balance.Money, bool) {
+	if mode == "disabled" {
+		return list, 0, false
+	}
 	final, ok := overridePrice(mode, value, list)
 	if !ok {
 		return list, 0, false
@@ -174,7 +179,7 @@ func (s *Service) AdminRenewalPrice(ctx context.Context, a AdminAccess, customer
 		return nil, err
 	}
 	_, snapshot := parseSnapshot(h.ConfigSnapshot)
-	options, err := s.renewalOptions(ctx, customer, instanceID)
+	options, err := s.renewalOptionsAll(ctx, customer, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -212,8 +217,12 @@ func (s *Service) AdminRenewalPrice(ctx context.Context, a AdminAccess, customer
 		if err != nil {
 			return nil, err
 		}
+		entry.Enabled = true
 		if o != nil {
 			entry.Active, entry.Mode, entry.Value, entry.Reason = true, o.Mode, o.Value, o.Reason
+			if o.Mode == "disabled" {
+				entry.Enabled = false
+			}
 			entry.EffectiveFrom = o.EffectiveFrom.In(time.Local).Format("2006-01-02")
 			if o.EffectiveTo != nil {
 				entry.EffectiveTo = o.EffectiveTo.In(time.Local).Format("2006-01-02")
@@ -279,7 +288,7 @@ func (s *Service) SetAdminRenewalPrice(ctx context.Context, a AdminAccess, ip st
 			return nil, errors.New("实例计费周期未确认，请指定续费周期")
 		}
 	}
-	options, err := s.renewalOptions(ctx, customer, instanceID)
+	options, err := s.renewalOptionsAll(ctx, customer, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +349,7 @@ func (s *Service) SetAdminRenewalPrices(ctx context.Context, a AdminAccess, ip s
 	if len(in.Items) > 20 {
 		return nil, errors.New("一次最多调整 20 个周期")
 	}
-	options, err := s.renewalOptions(ctx, customer, instanceID)
+	options, err := s.renewalOptionsAll(ctx, customer, instanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,6 +376,10 @@ func (s *Service) SetAdminRenewalPrices(ctx context.Context, a AdminAccess, ip s
 		option, ok := byCycle[cycle]
 		if !ok {
 			return nil, fmt.Errorf("续费周期「%s」不可用", item.Cycle)
+		}
+		if item.Enabled != nil && !*item.Enabled {
+			changes = append(changes, change{Cycle: cycle, Mode: "disabled", Value: "0.00"})
+			continue
 		}
 		raw := strings.TrimSpace(item.Value)
 		if raw == "" {

@@ -82,14 +82,14 @@ type RenewalOption struct {
 
 	QuoteRevision string `json:"quoteRevision"`
 
-	Cycle    string        `json:"cycle"`
-	Label    string        `json:"label"`
-	Amount   string        `json:"amount"`
-	ListAmount string      `json:"listAmount,omitempty"`
-	Discount   string      `json:"discount,omitempty"`
-	OverrideID string      `json:"overrideId,omitempty"`
-	Duration int64         `json:"duration"`
-	Cost     balance.Money `json:"-"`
+	Cycle      string        `json:"cycle"`
+	Label      string        `json:"label"`
+	Amount     string        `json:"amount"`
+	ListAmount string        `json:"listAmount,omitempty"`
+	Discount   string        `json:"discount,omitempty"`
+	OverrideID string        `json:"overrideId,omitempty"`
+	Duration   int64         `json:"duration"`
+	Cost       balance.Money `json:"-"`
 }
 type RenewalOrder struct {
 	ID      string `json:"id"`
@@ -127,6 +127,12 @@ func (s *Service) RenewalOptions(ctx context.Context, customer, id int64) ([]Ren
 	return s.joinRenewalQuoteRead(ctx, fmt.Sprintf("%d:%d", customer, id), func(shared context.Context) ([]RenewalOption, error) { return s.renewalOptions(shared, customer, id) })
 }
 func (s *Service) renewalOptions(ctx context.Context, customer, id int64) ([]RenewalOption, error) {
+	return s.renewalOptionsWith(ctx, customer, id, false)
+}
+func (s *Service) renewalOptionsAll(ctx context.Context, customer, id int64) ([]RenewalOption, error) {
+	return s.renewalOptionsWith(ctx, customer, id, true)
+}
+func (s *Service) renewalOptionsWith(ctx context.Context, customer, id int64, includeDisabled bool) ([]RenewalOption, error) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	h, e := s.owned(ctx, customer, id)
@@ -161,7 +167,34 @@ func (s *Service) renewalOptions(ctx context.Context, customer, id int64) ([]Ren
 		return nil, e
 	}
 	out := []RenewalOption{}
+	disabled := map[string]bool{}
+	{
+		var rows []RenewalPriceOverride
+		if e := s.db.WithContext(ctx).Where("instance_id=? AND status='active' AND mode='disabled'", h.ID).Find(&rows).Error; e == nil {
+			for _, row := range rows {
+				disabled[normalizeCycle(row.Cycle)] = true
+			}
+		}
+	}
 	for _, q := range quotes {
+		if disabled[normalizeCycle(q.Cycle)] {
+			if !includeDisabled {
+				continue
+			}
+			cost, _ := balance.ParseMoney(q.Amount)
+			original, _ := balance.ParseMoney(q.OriginalAmount)
+			amount, e := retailRenewal(original, price.Rate, "0", 0)
+			if e != nil || amount <= 0 {
+				amount = original
+			}
+			if amount <= 0 {
+				amount = cost
+			}
+			option := RenewalOption{ExchangeRate: price.Rate, Cycle: q.Cycle, Label: q.Label, Amount: amount.String(), ListAmount: amount.String(), Duration: q.Duration, Cost: cost}
+			option.QuoteRevision = renewalIntentRevision(*h, option)
+			out = append(out, option)
+			continue
+		}
 		cost, e := balance.ParseMoney(q.Amount)
 		if e != nil || cost <= 0 {
 			continue
