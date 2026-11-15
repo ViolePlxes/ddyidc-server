@@ -378,7 +378,9 @@ func (s *Service) SetAdminRenewalPrices(ctx context.Context, a AdminAccess, ip s
 			return nil, fmt.Errorf("续费周期「%s」不可用", item.Cycle)
 		}
 		if item.Enabled != nil && !*item.Enabled {
-			changes = append(changes, change{Cycle: cycle, Mode: "disabled", Value: "0.00"})
+			// The table enforces value > 0, so a disabled cycle stores a minimal
+			// positive placeholder; mode="disabled" is what hides it.
+			changes = append(changes, change{Cycle: cycle, Mode: "disabled", Value: "0.01"})
 			continue
 		}
 		raw := strings.TrimSpace(item.Value)
