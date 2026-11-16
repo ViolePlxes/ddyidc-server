@@ -90,7 +90,7 @@ func TestHighProtectionRoomsRequireAndExposeDDoS(t *testing.T) {
 			_, _ = w.Write([]byte(ddosRoomConfig))
 		case "createprice":
 			sentDDoS = query.Get("ddos")
-			_, _ = w.Write([]byte(priceBody("308.00")))
+			_, _ = w.Write([]byte(priceBodyPair("308.00", "443.00")))
 		}
 	}))
 	defer server.Close()

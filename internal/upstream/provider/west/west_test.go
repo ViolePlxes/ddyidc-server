@@ -44,8 +44,12 @@ const baseConfigBody = `{"result":200,"data":{
 	      {"name":"Windows 2019","value":"win_2019_x64","system":"win","bit":"64","account":"administrator","port":"3389"}]
 }}`
 
-func priceBody(cost string) string {
-	return `{"result":200,"data":{"price":` + cost + `,"fullprice":99.00}}`
+func priceBody(cost string) string { return priceBodyPair(cost, "99.00") }
+
+// priceBodyPair keeps the agent cost and the vendor list price separate so tests
+// can prove which one reaches the customer.
+func priceBodyPair(cost, list string) string {
+	return `{"result":200,"data":{"price":` + cost + `,"fullprice":` + list + `}}`
 }
 
 func TestConnectionTestUsesReadOnlyBalance(t *testing.T) {
@@ -77,7 +81,7 @@ func TestCatalogueMapsRoomsToProductsWithoutInventingStock(t *testing.T) {
 	if product.ID != 31 || !strings.Contains(product.Name, "成都电信") {
 		t.Fatalf("product identity lost: %+v", product)
 	}
-	if product.Price != 88.5 || product.Cycle != "monthly" || product.CurrencyCode != "CNY" {
+	if product.Price != 99 || product.Cycle != "monthly" || product.CurrencyCode != "CNY" {
 		t.Fatalf("unexpected price shape: %+v", product)
 	}
 	if product.Stock != -1 {
@@ -127,7 +131,7 @@ func TestCatalogueRejectsUnknownProduct(t *testing.T) {
 func TestQuotePriceWholeConfiguration(t *testing.T) {
 	p := fixture(t, map[string]string{
 		"/server/config/?act=base":        baseConfigBody,
-		"/server/create/?act=createprice": priceBody("123.40"),
+		"/server/create/?act=createprice": priceBodyPair("123.40", "168.00"),
 	})
 	result, err := p.Quote(context.Background(), contracts.QuoteRequest{
 		ProductID: 31, Cycle: "annually", Quantity: 1,
@@ -136,7 +140,7 @@ func TestQuotePriceWholeConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Total != "123.40" || result.Currency != "CNY" || result.SetupUnit != "0.00" {
+	if result.Total != "168.00" || result.Currency != "CNY" || result.SetupUnit != "0.00" {
 		t.Fatalf("unexpected quote: %+v", result)
 	}
 }
@@ -294,6 +298,58 @@ func TestUnsupportedEntriesStayClosed(t *testing.T) {
 	}
 	if p.VerifyWebhook("", nil) {
 		t.Fatal("unverifiable webhook accepted")
+	}
+}
+
+// The customer-facing surface must carry the vendor list price only. The agent
+// cost may never appear in the catalogue, the order page or the quote.
+func TestCustomerSurfaceNeverExposesAgentCost(t *testing.T) {
+	p := fixture(t, map[string]string{
+		"/server/config/?act=base":        baseConfigBody,
+		"/server/create/?act=createprice": priceBodyPair("60.00", "93.00"),
+	})
+	products, err := p.GetProductList()
+	if err != nil || len(products) != 1 {
+		t.Fatalf("catalogue: %v %+v", err, products)
+	}
+	if products[0].Price != 93 {
+		t.Fatalf("catalogue exposed the agent cost: %v", products[0].Price)
+	}
+	page, err := p.GetOrderPage(31)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Product.Price != 93 {
+		t.Fatalf("order page product price = %v", page.Product.Price)
+	}
+	for _, cycle := range page.Cycles {
+		if cycle.Price != 93 {
+			t.Fatalf("cycle %s price = %v", cycle.Billingcycle, cycle.Price)
+		}
+	}
+	quote, err := p.Quote(context.Background(), contracts.QuoteRequest{ProductID: 31, Cycle: "monthly", Quantity: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quote.Total != "93.00" {
+		t.Fatalf("quote exposed the agent cost: %s", quote.Total)
+	}
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"price":60`) {
+		t.Fatal("order page serialised the agent cost")
+	}
+}
+
+func TestQuoteRefusesWhenTheListPriceIsBelowCost(t *testing.T) {
+	p := fixture(t, map[string]string{
+		"/server/config/?act=base":        baseConfigBody,
+		"/server/create/?act=createprice": priceBodyPair("120.00", "100.00"),
+	})
+	if _, err := p.Quote(context.Background(), contracts.QuoteRequest{ProductID: 31, Cycle: "monthly", Quantity: 1}); err == nil {
+		t.Fatal("sold at a list price below cost")
 	}
 }
 
