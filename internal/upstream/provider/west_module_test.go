@@ -31,12 +31,12 @@ func TestWestModuleIsRegisteredWithVariantsAndHonestCapabilities(t *testing.T) {
 	if module.Capabilities["purchase"] != "implemented" {
 		t.Fatalf("purchase not opened after verification: %q", module.Capabilities["purchase"])
 	}
-	for _, capability := range []string{"catalog", "configuration", "quote", "instance"} {
+	for _, capability := range []string{"catalog", "configuration", "quote", "instance", "renewal"} {
 		if module.Capabilities[capability] != "implemented" {
 			t.Fatalf("%s should be implemented, got %q", capability, module.Capabilities[capability])
 		}
 	}
-	for _, capability := range []string{"renewal", "webhook", "remote"} {
+	for _, capability := range []string{"webhook", "remote"} {
 		if module.Capabilities[capability] != "unsupported" {
 			t.Fatalf("%s should be unsupported, got %q", capability, module.Capabilities[capability])
 		}
