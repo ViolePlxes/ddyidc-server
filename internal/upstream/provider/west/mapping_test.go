@@ -2,6 +2,7 @@ package west
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"ddyidc/internal/upstream/provider/contracts"
@@ -90,5 +91,59 @@ func TestImageOptionAndImageGroupsShareIdentities(t *testing.T) {
 	}
 	if len(optionIDs) != len(page.ImageGroups[0].Child) {
 		t.Fatal("image option and image groups list different counts")
+	}
+}
+
+// A null choice list crashes the customer order page: it calls
+// option.options.find(...) while building the checkout evidence. Every option
+// must therefore serialise options as [] — quantity options have no choices.
+func TestOrderPageNeverSerialisesNullChoiceLists(t *testing.T) {
+	p := fixture(t, map[string]string{
+		"/server/config/?act=base":        baseConfigBody,
+		"/server/create/?act=createprice": priceBody("60.00"),
+	})
+	page, err := p.GetOrderPage(31)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, option := range page.ConfigOptions {
+		if option.Options == nil {
+			t.Fatalf("option %s (%s) has a null choice list", option.Field, option.OptionType)
+		}
+	}
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"options":null`, `"cycles":null`, `"images":null`, `"imageGroups":null`, `"dataCenters":null`, `"networkTypes":null`} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("order page serialised %s", forbidden)
+		}
+	}
+}
+
+// The instance pages read arrays the same way, so an empty detail must not emit
+// null for config, ips or clientAreas either.
+func TestInstanceDetailNeverSerialisesNullArrays(t *testing.T) {
+	p := fixture(t, map[string]string{
+		"/server/?act=idtoip":        `{"result":200,"data":{"ip":"1.2.3.4"}}`,
+		"/server/manager/?act=info":  `{"result":200,"data":{"id":609502,"allocateip":"1.2.3.4"}}`,
+		"/server/system/?act=status": `{"result":200,"data":{"status":0}}`,
+	})
+	detail, err := p.GetInstanceDetail(609502)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.IPs == nil || detail.Config == nil || detail.ClientAreas == nil {
+		t.Fatalf("detail kept a nil collection: %+v", detail)
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{`"config":null`, `"ips":null`, `"clientAreas":null`} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("detail serialised %s", forbidden)
+		}
 	}
 }
