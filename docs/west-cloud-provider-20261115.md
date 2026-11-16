@@ -94,11 +94,10 @@
    - 调用后的网络异常 / HTTP 500 / 返回不可解析一律上报为**结果未知**（`ProcurementFailure` + `RequestWritten`），平台标记待核对，供应商内部**绝不重试**；
    - 平台侧还有 `order.upstream_orders` 唯一行（幂等）与 `ValidateLossGuard`（售价不得低于成本）兜底。
    模块 `capabilities.purchase` 已置 `implemented`，销售门禁按平台规则放开。
-2. **续费（W6）仍关闭**，两个原因：
-   - **流程已不再是阻塞**：平台经典续费路径（`renewal_execution.go`）是「客户付款 → CAS 抢占 `creating/paying` → 调用上游续费 → 校验到期日」，恰好匹配西数「调用即扣款」。因此只实现 `RenewalProvider`（不实现预开票的 `RenewalInvoicePreparer`）在语义上安全，且平台已用 CAS 防重复支付。
-   - **成本映射未验证（真正的阻塞）**：试用机上 `renewprice.price` **恒为 5**（试用价），只有 `fullprice` 随 `paymethod/renewtime` 变化。没有付费机样本，接入会把成本当成 5 元，零售价随之算错。
-   - 参数语义已确认（与 `createprice` 一致）：`paymethod` 是周期单位（0 月 / 2 季 / 3 半年 / 1 年），`renewtime` 是周期数。
-   结论：**先不注册 `RenewalProvider`**，等有一台付费实例后核对一次 `renewprice.price`，再接入。
+2. **续费（W6）已开放**：付费实例的 `renewprice` 会返回真实成本（实测付费机 2C8G/6M：月 209 / 季 608 / 半年 1042 / 年 1674，原价 279 / 810.99 / 1533 / 3348），与试用机恒为 5 的情况不同，因此可以按原价对客、按代理价核算。
+   - 实现 `RenewalProvider` 三个方法：`RenewalQuotes`（读 renewprice，`OriginalAmount`=原价、`Amount`=代理价、`Duration`=月数）、`CreateRenewalInvoice`（**只复核价格**并返回合成账单号 `west:<机器号>:<周期>:<月数>`，不扣款）、`PayRenewalInvoice`（解析账单号后调用一次 `renew`）。
+   - **不实现 `RenewalInvoicePreparer`**：西数 `renew` 调用即扣款，必须等平台收完客户的钱再动上游；有单测断言这一点。
+   - 平台侧 `instance_renewals` 用 CAS 保证 `paying` 只进一次，扣款失败会落 `uncertain` 等人工核对，不会重复扣。
 
 ## 六、待确认清单（下一步的前置）
 
