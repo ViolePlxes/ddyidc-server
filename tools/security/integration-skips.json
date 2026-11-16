@@ -47,7 +47,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Run deploy/linux/tests/test_renewal_quote_gate.sh with disposable officially migrated MySQL. A skip is not a pass."
   },
-  "ddyidc/internal/upstream/service/TestSupplierSnapshotConcurrencyMySQL": {
+  "ddyidc/internal/upstream/service/TestProductRenamePropagatesToProductAndInstancesMySQL": {
+    "disposition": "integration_only_requires_isolated_database",
+    "verification": "Disposable migrated socket only: renaming a mapping must update product.products.name and the existing instance snapshot in the same transaction."
+  },  "ddyidc/internal/upstream/service/TestSupplierSnapshotConcurrencyMySQL": {
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
     "verification": "Run deploy/linux/tests/test_adapter_modules.sh against a disposable officially migrated MySQL database; skip is not a pass."
