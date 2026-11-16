@@ -77,20 +77,34 @@ func TestImageOptionAndImageGroupsShareIdentities(t *testing.T) {
 	if image == nil || image.ID != optOS || !image.Required {
 		t.Fatalf("image option missing or wrong: %+v", image)
 	}
-	if len(page.ImageGroups) == 0 || len(page.ImageGroups[0].Child) == 0 {
-		t.Fatal("image groups missing")
+	if len(page.ImageGroups) < 2 {
+		t.Fatalf("the picker needs several families, got %d group(s)", len(page.ImageGroups))
+	}
+	// Every group is a picker card; together they must cover exactly the option
+	// values so the customer can reach every image.
+	seen := map[int]bool{}
+	for _, group := range page.ImageGroups {
+		if group.Name == "" || len(group.Child) == 0 {
+			t.Fatalf("empty image group: %+v", group)
+		}
+		for _, choice := range group.Child {
+			if seen[choice.ID] {
+				t.Fatalf("image %d appears in more than one group", choice.ID)
+			}
+			seen[choice.ID] = true
+		}
 	}
 	optionIDs := map[int]bool{}
 	for _, choice := range image.Options {
 		optionIDs[choice.ID] = true
 	}
-	for _, choice := range page.ImageGroups[0].Child {
-		if !optionIDs[choice.ID] {
-			t.Fatalf("image group id %d is not a selectable option value", choice.ID)
-		}
+	if len(optionIDs) != len(seen) {
+		t.Fatalf("image option has %d values but the groups list %d", len(optionIDs), len(seen))
 	}
-	if len(optionIDs) != len(page.ImageGroups[0].Child) {
-		t.Fatal("image option and image groups list different counts")
+	for id := range optionIDs {
+		if !seen[id] {
+			t.Fatalf("image option value %d is unreachable in every group", id)
+		}
 	}
 }
 

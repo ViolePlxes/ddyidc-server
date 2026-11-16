@@ -110,7 +110,7 @@ func TestOrderPageExposesPlatformCyclesAndStableImageIDs(t *testing.T) {
 	for _, option := range page.ConfigOptions {
 		fields[option.Field] = true
 	}
-	for _, required := range []string{"cpu", "ram", "osdata", "data", "flux", "disktype"} {
+	for _, required := range []string{"cpu", "memory", "system_disk", "data_disk", "bandwidth", "disktype"} {
 		if !fields[required] {
 			t.Fatalf("order page lost %s", required)
 		}
