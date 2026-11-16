@@ -852,7 +852,7 @@
     "disposition": "external_credentials_and_authorization_required",
     "verification": "Charged live test: needs WEST_LIVE=1 plus WEST_LIVE_CREATE=1 and an explicit user authorisation for one trial machine (5 CNY). Writes an allow-once marker so a second run is refused, and reconciles through listServers when the answer is lost instead of repeating the charge. Never run in routine CI. Evidence: deploy-notes/west-trial-provision-20261116.md. A normal-suite skip is not a pass."
   },
-  "ddyidc/internal/product/TestReplaceSpecsRenamesProductAndInstancesMySQL": {
+  "ddyidc/internal/product/repository/TestReplaceSpecsRenamesProductAndInstancesMySQL": {
     "disposition": "integration_only_requires_isolated_database",
     "verification": "Disposable migrated socket only: saving a renamed specification must rename product.products and the existing instance snapshot in the same transaction."
   }
