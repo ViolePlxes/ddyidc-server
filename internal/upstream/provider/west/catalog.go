@@ -227,14 +227,18 @@ const (
 // delivery path does not forward ImageID to procurement. Its field must be
 // "image": that is the field the order page treats as the image picker, and the
 // generic configuration list skips it so the customer never sees two pickers.
+//
+// Resource fields use the names the shared order page already recognises
+// (memory / system_disk / data_disk / bandwidth), so its existing slider control
+// renders them instead of a long selector. IDs never change.
 var optionFields = map[int]string{
 	optProdType: "prodtype",
 	optCPU:      "cpu",
-	optRAM:      "ram",
+	optRAM:      "memory",
 	optDiskType: "disktype",
-	optOSDisk:   "osdata",
-	optDataDisk: "data",
-	optFlux:     "flux",
+	optOSDisk:   "system_disk",
+	optDataDisk: "data_disk",
+	optFlux:     "bandwidth",
 	optCC:       "cc",
 	optSnapshot: "snapadv",
 	optService:  "servicetype",
@@ -289,11 +293,11 @@ func (p *Provider) configOptions(cfg *baseConfig, room roomEntry) ([]contracts.C
 	options := []contracts.ConfigOption{
 		option(optProdType, "prodtype", "CPU 类型", "select", true, prodTypeChoices, "1"),
 		{ID: optCPU, Name: "CPU", Field: "cpu", OptionType: "select", Required: true, Default: "1", Options: cpuOptions},
-		{ID: optRAM, Name: "内存", Field: "ram", OptionType: "select", Required: true, Default: "2", Options: ramOptions},
+		{ID: optRAM, Name: "内存", Field: "memory", OptionType: "select", Required: true, Default: "2", Options: ramOptions},
 		option(optDiskType, "disktype", "云盘类型", "select", true, diskTypeChoices, "1"),
-		qty(optOSDisk, "osdata", "系统盘（G）", 30, 1000, 10, "30"),
-		qty(optDataDisk, "data", "数据盘（G）", 0, 1000, 10, "20"),
-		qty(optFlux, "flux", "带宽（M）", 1, 1000, 1, "1"),
+		qty(optOSDisk, "system_disk", "系统盘（G）", 30, 1000, 10, "30"),
+		qty(optDataDisk, "data_disk", "数据盘（G）", 0, 1000, 10, "20"),
+		qty(optFlux, "bandwidth", "带宽（M）", 1, 1000, 1, "1"),
 		{ID: optOS, Name: "操作系统", Field: "image", OptionType: "select", Required: true, Default: "1", Options: images},
 	}
 	// High-protection rooms reject ddos=0 with errcode 50003, so the protection
@@ -301,10 +305,10 @@ func (p *Provider) configOptions(cfg *baseConfig, room roomEntry) ([]contracts.C
 	if list := ddosChoices(room); len(list) > 0 {
 		options = append(options, option(optDDoS, "ddos", "DDoS 防护（G）", "select", true, list, strconv.Itoa(list[0].ID)))
 	}
+	// 服务标准不对外开放：West 的工单式服务等级由代理合同决定，客户无法自选。
 	return append(options,
 		option(optCC, "cc", "CC 防护", "select", false, ccChoices, "1"),
 		option(optSnapshot, "snapadv", "高级云快照", "select", false, snapshotChoices, "1"),
-		option(optService, "servicetype", "服务标准", "select", false, serviceChoices, "1"),
 	), nil
 }
 
@@ -331,6 +335,44 @@ func imagesOf(list []osEntry) []contracts.ConfigOptionValue {
 	out := make([]contracts.ConfigOptionValue, 0, len(list))
 	for i, item := range list {
 		out = append(out, contracts.ConfigOptionValue{ID: i + 1, Name: item.Name})
+	}
+	return out
+}
+
+// imageFamily names the picker card an operating system belongs to. The order
+// page renders one card per family and lists that family's versions inside it,
+// so a single flat list would show as one card holding everything.
+func imageFamily(item osEntry) string {
+	haystack := strings.ToLower(item.Name + " " + item.Value)
+	switch {
+	case strings.Contains(haystack, "宝塔"), strings.Contains(haystack, "建站"), strings.Contains(haystack, "slb"), strings.Contains(haystack, "面板"):
+		return "预装面板"
+	case strings.Contains(haystack, "win"):
+		return "Windows"
+	default:
+		return "Linux"
+	}
+}
+
+// imageGroupsOf keeps every image identity (1-based position in the sorted
+// list) while grouping the picker cards by family.
+func imageGroupsOf(list []osEntry) []contracts.ImageGroup {
+	order := []string{"Windows", "Linux", "预装面板"}
+	grouped := make(map[string]*contracts.ImageGroup, len(order))
+	for i, item := range list {
+		family := imageFamily(item)
+		group, ok := grouped[family]
+		if !ok {
+			group = &contracts.ImageGroup{Name: family}
+			grouped[family] = group
+		}
+		group.Child = append(group.Child, contracts.ConfigOptionValue{ID: i + 1, Name: item.Name})
+	}
+	out := make([]contracts.ImageGroup, 0, len(order))
+	for _, name := range order {
+		if group, ok := grouped[name]; ok && len(group.Child) > 0 {
+			out = append(out, *group)
+		}
 	}
 	return out
 }
@@ -371,7 +413,7 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 		Product:       contracts.UpstreamProduct{ID: productID, Name: catalogueName(room), Price: cycles[0].Price, Cycle: "monthly", PayType: "prepaid", Type: "cloud", CurrencyCode: "CNY", Stock: -1},
 		DataCenters:   rooms,
 		Images:        imagesOf(list),
-		ImageGroups:   []contracts.ImageGroup{{Name: "操作系统", Child: imagesOf(list)}},
+		ImageGroups:   imageGroupsOf(list),
 		ConfigOptions: options,
 		Cycles:        cycles,
 		// The interface can only open prepaid bandwidth-billed servers.
@@ -451,7 +493,7 @@ func (p *Provider) queryFromOptions(cfg *baseConfig, room roomEntry, options map
 				return query, "", errors.New("CPU 规格无效")
 			}
 			query.CPU = float64(cores)
-		case "ram":
+		case "memory":
 			half, err := strconv.Atoi(value)
 			if err != nil || half <= 0 || !hasNumber(cfg.RAM, float64(half)/2) {
 				return query, "", errors.New("内存规格无效")
@@ -481,19 +523,19 @@ func (p *Provider) queryFromOptions(cfg *baseConfig, room roomEntry, options map
 				return query, "", errors.New("云快照选项无效")
 			}
 			fmt.Sscanf(item.Code, "%d", &query.SnapshotAdv)
-		case "osdata":
+		case "system_disk":
 			n, err := wholeNumber(value, 30, 1000, 10)
 			if err != nil {
 				return query, "", errors.New("系统盘大小无效")
 			}
 			query.OSDisk = n
-		case "data":
+		case "data_disk":
 			n, err := wholeNumber(value, 0, 1000, 10)
 			if err != nil {
 				return query, "", errors.New("数据盘大小无效")
 			}
 			query.DataDisk = n
-		case "flux":
+		case "bandwidth":
 			n, err := wholeNumber(value, 1, 1000, 1)
 			if err != nil {
 				return query, "", errors.New("带宽无效")
