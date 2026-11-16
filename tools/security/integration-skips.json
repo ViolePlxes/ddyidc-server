@@ -840,5 +840,13 @@
   "ddyidc/internal/payment/repository/refundworkflow/TestManualOrderRefundIgnoresChangedMachineEntitlementMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable FOUNDATION_MYSQL_SOCKET database: an order refunded after the machine was terminated must fail the automatic entitlement path, pass the manual path on the purchased snapshot, and still reject a foreign customer. A skip is not a pass."
+  },
+  "ddyidc/internal/upstream/provider/west/TestLiveReadOnly": {
+    "disposition": "external_credentials_and_authorization_required",
+    "verification": "Run with WEST_LIVE=1 and WEST_USERNAME/WEST_API_PASSWORD of the authorised 西部数码 agent account, optionally WEST_LIVE_HOST=<existing machine id>. Probes checkbalance, config/base, createprice and an existing machine; never spends money. Evidence: deploy-notes/west-release-v0.1.230-20261116.md and deploy-notes/west-trial-provision-20261116.md. A normal-suite skip is not a pass."
+  },
+  "ddyidc/internal/upstream/provider/west/TestLiveCreateTrial": {
+    "disposition": "external_credentials_and_authorization_required",
+    "verification": "Charged live test: needs WEST_LIVE=1 plus WEST_LIVE_CREATE=1 and an explicit user authorisation for one trial machine (5 CNY). Writes an allow-once marker so a second run is refused, and reconciles through listServers when the answer is lost instead of repeating the charge. Never run in routine CI. Evidence: deploy-notes/west-trial-provision-20261116.md. A normal-suite skip is not a pass."
   }
 }
