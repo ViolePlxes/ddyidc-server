@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"strconv"
+	"strings"
 )
 
 const (
@@ -236,6 +237,18 @@ func (r *GormRepository) ReplaceSpecs(c context.Context, productID int64, specs 
 		spec.Sort = 0
 		if existing.ID != 0 {
 			spec.CreatedAt = existing.CreatedAt
+		}
+		// The product name and the specification name are the same value in this
+		// platform (the admin edits one field), so a renamed specification must
+		// rename the product and its instances too; otherwise the customer keeps
+		// seeing the old name forever.
+		if name := strings.TrimSpace(spec.Name); name != "" && name != product.Name {
+			if err := tx.Table(productTable).Where("id=?", productID).Update("name", name).Error; err != nil {
+				return err
+			}
+			if err := tx.Table("instance.instances").Where("product_id=?", productID).Update("product_name", name).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Save(spec).Error
 	})
