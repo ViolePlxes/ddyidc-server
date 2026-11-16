@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -77,6 +78,14 @@ func (s *Service) Import(ctx context.Context, customerID int64, in ImportInput) 
 		return nil, errors.New("上游实例所属商品与所选产品不一致，未保存")
 	}
 	snapshot := snapshotFromUpstream(detail)
+	// The imported machine has no purchase order, so the renewal price cannot
+	// come from the order history; ask the supplier while the operator waits and
+	// store it, otherwise the console keeps showing "未同步" for the fee.
+	if rp, ok := p.(contracts.RenewalProvider); ok {
+		if quotes, quoteErr := rp.RenewalQuotes(hostID); quoteErr == nil {
+			applyRenewalQuoteToSnapshot(snapshot, quotes, detail.BillingCycle)
+		}
+	}
 	raw, e := json.Marshal(snapshot)
 	if e != nil {
 		return nil, e
@@ -96,4 +105,33 @@ func snapshotFromUpstream(detail *contracts.InstanceDetail) map[string]any {
 		display["port"] = detail.Port
 	}
 	return map[string]any{"configOptions": config, "hostname": detail.Hostname, "billingCycle": detail.BillingCycle, "listDisplay": display, "source": "upstream_import"}
+}
+
+// applyRenewalQuoteToSnapshot records the customer renewal price an imported
+// machine has no order for. Without it the console shows "未同步" for the fee,
+// because the list reads listDisplay.renewalAmount from the snapshot.
+func applyRenewalQuoteToSnapshot(snapshot map[string]any, quotes []contracts.RenewalQuote, cycle string) bool {
+	if len(quotes) == 0 {
+		return false
+	}
+	pick := quotes[0]
+	for _, quote := range quotes {
+		if cycle != "" && quote.Cycle == cycle {
+			pick = quote
+			break
+		}
+	}
+	if strings.TrimSpace(pick.OriginalAmount) == "" {
+		return false
+	}
+	display, ok := snapshot["listDisplay"].(map[string]any)
+	if !ok {
+		return false
+	}
+	display["renewalAmount"] = pick.OriginalAmount
+	if pick.Cycle != "" {
+		display["billingCycle"] = pick.Cycle
+		snapshot["billingCycle"] = pick.Cycle
+	}
+	return true
 }
