@@ -54,6 +54,13 @@ func applySupplierReadSnapshot(h *dom.Host, detail *contracts.InstanceDetail, fi
 	if cycle == "" {
 		cycle = listItem(h).BillingCycle
 	}
+	if cycle == "" && quoteErr == nil && len(options) > 0 {
+		// Some suppliers do not report the billing cycle (imported machines in
+		// particular). Falling back to the first quote keeps the fee visible
+		// instead of skipping the price block purely because the cycle is empty;
+		// the monthly quote is the baseline order.
+		cycle = options[0].Cycle
+	}
 	var selected *RenewalOption
 	if quoteErr == nil {
 		for i := range options {
