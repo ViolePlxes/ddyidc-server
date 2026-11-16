@@ -34,14 +34,14 @@ func NewProviderFactory() *ProviderFactory {
 	// immediate charge.
 	must(ModuleRegistration{
 		Manifest: Module{
-			ID: "west", Name: "对接西部数码", Version: "0.2.0", ContractVersion: 1,
-			Description: "西部数码弹性云服务器 V2 接口：目录、报价、开通、实例管理已实现并经真实账号验证；续费待流程决策",
+			ID: "west", Name: "对接西部数码", Version: "0.3.0", ContractVersion: 1,
+			Description: "西部数码弹性云服务器 V2 接口：目录、报价、开通、实例管理、续费已实现并经真实账号验证",
 			Capabilities: map[string]string{
 				"catalog":       "implemented",
 				"configuration": "implemented",
 				"quote":         "implemented",
 				"purchase":      "implemented",
-				"renewal":       "unsupported",
+				"renewal":       "implemented",
 				"instance":      "implemented",
 				"remote":        "unsupported",
 				"webhook":       "unsupported",

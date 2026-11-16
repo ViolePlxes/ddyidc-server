@@ -279,6 +279,18 @@ func (p *Provider) charts(ctx context.Context, ip string) (*chartData, error) {
 	return &data, nil
 }
 
+// renew charges the agent balance and extends one machine. It is a charged
+// write: callers must send it once, after the customer's payment is secured.
+func (p *Provider) renew(ctx context.Context, ip string, payMethod int) error {
+	return p.get(ctx, "/server/system/", map[string]string{
+		"act":       "renew",
+		"ip":        ip,
+		"renewtime": "1",
+		"paymethod": strconv.Itoa(payMethod),
+		"snapadv":   "0",
+	}, nil)
+}
+
 func (p *Provider) setState(ctx context.Context, ip, state string) error {
 	return p.get(ctx, "/server/system/", map[string]string{"act": "setstatus", "ip": ip, "status": state}, nil)
 }
