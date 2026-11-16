@@ -141,18 +141,26 @@ func (p *Provider) GetProductList() ([]contracts.UpstreamProduct, error) {
 		query := standardQuery(roomID)
 		// High-protection rooms only price with an explicit protection value.
 		query.DDoS = minDDoS(room)
-		cost, _, err := p.createPrice(ctx, query)
+		cost, listPrice, err := p.createPrice(ctx, query)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
+		if cost <= 0 || listPrice <= 0 {
+			if firstErr == nil {
+				firstErr = errors.New("西部数码未返回有效的原价或代理价")
+			}
+			continue
+		}
 		products = append(products, contracts.UpstreamProduct{
-			ID:           roomID,
-			Name:         catalogueName(room),
+			ID:   roomID,
+			Name: catalogueName(room),
+			// The customer-facing price is the vendor list price; the agent cost
+			// never leaves the provider and only feeds internal risk checks.
 			Description:  strings.TrimSpace(room.Remark),
-			Price:        cost,
+			Price:        listPrice,
 			Cycle:        "monthly",
 			PayType:      "prepaid",
 			Type:         "cloud",
@@ -183,9 +191,12 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	}
 	query := standardQuery(id)
 	query.DDoS = minDDoS(room)
-	cost, _, err := p.createPrice(ctx, query)
+	_, listPrice, err := p.createPrice(ctx, query)
 	if err != nil {
 		return nil, err
+	}
+	if listPrice <= 0 {
+		return nil, errors.New("西部数码未返回有效原价")
 	}
 	options, err := p.configOptions(cfg, room)
 	if err != nil {
@@ -194,7 +205,7 @@ func (p *Provider) GetProductDetail(id int) (*contracts.UpstreamProductDetail, e
 	return &contracts.UpstreamProductDetail{
 		UpstreamProduct: contracts.UpstreamProduct{
 			ID: id, Name: catalogueName(room), Description: strings.TrimSpace(room.Remark),
-			Price: cost, Cycle: "monthly", PayType: "prepaid", Type: "cloud",
+			Price: listPrice, Cycle: "monthly", PayType: "prepaid", Type: "cloud",
 			CurrencyCode: "CNY", Stock: -1,
 		},
 		Config:           map[string]string{"room": text(room.RoomID)},
@@ -396,13 +407,16 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 	for _, cycle := range billingCycles {
 		query := standardQuery(productID)
 		query.DDoS = minDDoS(room)
-		// One period per quote; paymethod decides which period.
+		// One period per quote; paymethod decides which period. The order page
+		// shows the vendor list price (原价), never the agent cost.
 		query.PayMethod = cycle.Paymath
-		cost, _, err := p.createPrice(ctx, query)
-		if err != nil {
+		if _, listPrice, err := p.createPrice(ctx, query); err != nil {
 			return nil, err
+		} else if listPrice <= 0 {
+			return nil, errors.New("西部数码未返回有效原价")
+		} else {
+			cycles = append(cycles, contracts.CycleItem{Billingcycle: cycle.Key, Label: cycle.Label, Price: listPrice})
 		}
-		cycles = append(cycles, contracts.CycleItem{Billingcycle: cycle.Key, Label: cycle.Label, Price: cost})
 	}
 	rooms := make([]contracts.ConfigOptionValue, 0, len(cfg.Room))
 	for _, item := range cfg.Room {
@@ -421,8 +435,10 @@ func (p *Provider) GetOrderPage(productID int) (*contracts.OrderPage, error) {
 	}, nil
 }
 
-// Quote returns the upstream cost for one machine. The platform converts it to a
-// retail amount with the supplier exchange rate.
+// Quote prices one machine at the vendor list price (原价). The customer must
+// never see the agent cost, so the cost is only read here to sanity-check that
+// the list price really is the higher of the two; procurement keeps its own
+// cost read for the balance check and the budget ceiling.
 func (p *Provider) Quote(ctx context.Context, in contracts.QuoteRequest) (*contracts.QuoteResult, error) {
 	_, payMethod, ok := cycleOf(in.Cycle)
 	if !ok {
@@ -443,14 +459,19 @@ func (p *Provider) Quote(ctx context.Context, in contracts.QuoteRequest) (*contr
 		return nil, err
 	}
 	query.PayMethod = payMethod
-	cost, _, err := p.createPrice(ctx, query)
+	cost, listPrice, err := p.createPrice(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	if cost <= 0 {
+	if listPrice <= 0 || cost <= 0 {
 		return nil, errors.New("西部数码未返回有效报价")
 	}
-	amount := strconv.FormatFloat(cost, 'f', 2, 64)
+	if listPrice < cost {
+		// A list price below our own cost would mean a loss-making sale; refuse
+		// instead of quietly selling at the lower number.
+		return nil, errors.New("西部数码原价低于代理价，禁止按原价销售")
+	}
+	amount := strconv.FormatFloat(listPrice, 'f', 2, 64)
 	return &contracts.QuoteResult{Total: amount, RenewalUnit: amount, SetupUnit: "0.00", Currency: "CNY"}, nil
 }
 
