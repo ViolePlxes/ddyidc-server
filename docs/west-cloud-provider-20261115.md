@@ -227,18 +227,24 @@ GetBalance               上游：用余额差算出真实成本
 |---|---|---|
 | 101 | prodtype | 选项 ID（1 通用 / 2 高频） |
 | 102 | cpu | 核数 |
-| 103 | ram | GB×2 |
+| 103 | memory | GB×2 |
 | 104 | disktype | 选项 ID（1 ebs / 2 ssd） |
-| 105 | osdata | 整数 G |
-| 106 | data | 整数 G |
-| 107 | flux | 整数 M |
+| 105 | system_disk | 整数 G |
+| 106 | data_disk | 整数 G |
+| 107 | bandwidth | 整数 M |
 | 108 | cc | 选项 ID |
 | 109 | snapadv | 选项 ID |
-| 110 | servicetype | 选项 ID |
+| 110 | servicetype | 选项 ID（**已停用**，仅为旧快照保留解析） |
 | 111 | ddos | 防护值本身 |
 | 112 | image | 镜像序号（1 起，按上游 value 排序） |
 
-**操作系统走配置项而不是 `OrderPage.Images`**：平台的交付链路不会把 `ImageID` 传给采购，只有配置项能到达。配置项的 `field` 必须是 `image`——订购页把它当作镜像选择器（`ProductConfig.tsx` 的 `imageOption`），并在通用配置列表里跳过它，所以不会出现两个系统选择器；`imageGroups` 的候选 ID 必须与选项值 ID 一致（有单测锁定）。`Images` 仍保留给其他读取方。新增字段时用新号段，禁止复用或重排。
+字段名用订购页已认识的那套（`cpu/memory/system_disk/data_disk/bandwidth`），共享组件因此直接用现成的滑杆样式渲染这四项，不需要为西数写控件；ID 与字段的对应关系不变，只改字段名不会影响已保存的订单快照（快照存的是 ID）。
+
+**操作系统走配置项而不是 `OrderPage.Images`**：平台的交付链路不会把 `ImageID` 传给采购，只有配置项能到达。配置项的 `field` 必须是 `image`——订购页把它当作镜像选择器（`ProductConfig.tsx` 的 `imageOption`），并在通用配置列表里跳过它，所以不会出现两个系统选择器；`imageGroups` 的候选 ID 必须与选项值 ID 一致（有单测锁定）。`Images` 仍保留给其他读取方。
+
+**`imageGroups` 按家族分卡片**：`Windows` / `Linux` / `预装面板`（宝塔、建站助手、SLB）。全部 18 个镜像都在，只是分到不同卡片里；组内 ID 与选项值 ID 一致，且测试会校验"每个镜像恰好属于一个组、组内不重复、并集等于选项值全集"。
+
+**服务标准（110）不再下发**：西数的服务等级由代理合同决定，客户无法自选；为兼容历史订单快照，解析逻辑仍保留。
 
 ### 11.4 上线前的最后一步
 
