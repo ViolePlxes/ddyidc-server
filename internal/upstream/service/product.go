@@ -243,10 +243,23 @@ func (s *Store) UpdateProduct(key string, in ProductInput) (model.UpstreamProduc
 		if err := tx.Table(v.TableName()).Where("id = ?", key).Save(&v).Error; err != nil {
 			return err
 		}
-		if v.ProductID != "" && v.ProductID != "0" {
-			return tx.Table((productdomain.Product{}).TableName()).Where("id = ?", v.ProductID).Update("group_id", v.ProductGroupID).Error
+		if v.ProductID == "" || v.ProductID == "0" {
+			return nil
 		}
-		return nil
+		updates := map[string]any{"group_id": v.ProductGroupID}
+		if strings.TrimSpace(v.Name) != "" {
+			updates["name"] = v.Name
+		}
+		if err := tx.Table((productdomain.Product{}).TableName()).Where("id = ?", v.ProductID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if strings.TrimSpace(v.Name) == "" {
+			return nil
+		}
+		// A rename must reach the customer: the product list reads the local
+		// product row and the instance list reads the instance snapshot, so both
+		// are brought in line or the operator sees a stale name forever.
+		return tx.Table("instance.instances").Where("product_id = ?", v.ProductID).Update("product_name", v.Name).Error
 	}); err != nil {
 		return v, err
 	}
