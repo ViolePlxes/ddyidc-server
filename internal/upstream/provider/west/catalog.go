@@ -277,7 +277,10 @@ func (p *Provider) configOptions(cfg *baseConfig, room roomEntry) ([]contracts.C
 		return nil, errors.New("西部数码未返回可用的 CPU 或内存规格")
 	}
 	qty := func(id int, field, name string, min, max, step float64, def string) contracts.ConfigOption {
-		return contracts.ConfigOption{ID: id, Name: name, Field: field, OptionType: "qty", Min: min, Max: max, Step: step, Default: def, Unit: ""}
+		// Options must serialise as [] and never as null: the order page treats
+		// every choice list as an array (option.options.find), so a null would
+		// break the customer page for quantity options.
+		return contracts.ConfigOption{ID: id, Name: name, Field: field, OptionType: "qty", Min: min, Max: max, Step: step, Default: def, Unit: "", Options: []contracts.ConfigOptionValue{}}
 	}
 	images := imagesOf(imageList(cfg))
 	if len(images) == 0 {

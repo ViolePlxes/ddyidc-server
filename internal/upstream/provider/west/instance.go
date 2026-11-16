@@ -128,6 +128,11 @@ func (p *Provider) GetInstanceDetail(hostID int64) (*contracts.InstanceDetail, e
 		Capabilities:    capabilities,
 		ExpiresAt:       parseWestTime(info.Expires),
 		ActivatedAt:     parseWestTime(info.StartTime),
+		// Empty collections must serialise as [] so the instance pages never call
+		// .find on null.
+		Config:      []contracts.InstanceConfig{},
+		IPs:         []contracts.InstanceIP{},
+		ClientAreas: []contracts.InstanceClientArea{},
 	}
 	if room, err := strconv.Atoi(strings.TrimSpace(info.Room)); err == nil && room > 0 {
 		detail.ProductID = strconv.Itoa(room)
