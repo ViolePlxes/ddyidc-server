@@ -76,6 +76,10 @@ type Site struct {
 	Copyright     string `json:"copyright"`
 	Filing        string `json:"filing"`
 	FilingURL     string `json:"filingUrl"`
+	// Licenses is free-form compliance text shown in the footer, one entry per
+	// line (ICP/公安备案、增值电信业务许可证等). Operators edit it in the admin
+	// console, so it stays plain text and is never interpreted as HTML.
+	Licenses      string `json:"licenses"`
 	Theme         string `json:"theme"`
 	Enabled       bool   `json:"enabled"`
 	HeaderEnabled bool   `json:"headerEnabled"`
@@ -168,6 +172,9 @@ func Validate(d Document) error {
 	}
 	if !safeURL(d.Site.Logo, true) || !safeURL(d.Site.FilingURL, false) {
 		return errors.New("站点图片或备案链接无效")
+	}
+	if len(d.Site.Licenses) > 2000 {
+		return errors.New("资质与许可证信息不能超过 2000 字")
 	}
 	var checkSEO = func(s SEO) bool {
 		return len(s.Title) <= 512 && len(s.Description) <= 2048 && len(s.Keywords) <= 1024 && safeURL(s.Image, true)
