@@ -62,3 +62,17 @@ func TestSitemapExcludesNoindexAndEscapesURL(t *testing.T) {
 		t.Fatal(xml)
 	}
 }
+
+// The footer licence block is operator-edited plain text, so it must stay
+// bounded and still accept the normal ICP/许可证 lines.
+func TestLicenseTextIsBounded(t *testing.T) {
+	d := Seed()
+	d.Site.Licenses = strings.Repeat("冀ICP备2023039940号-6\n", 200)
+	if Validate(d) == nil {
+		t.Fatal("accepted oversized licence text")
+	}
+	d.Site.Licenses = "冀ICP备2023039940号-6\n冀公网安备13080302000132号\n信息服务业务 ICP许可证: 冀B2-20240444"
+	if err := Validate(d); err != nil {
+		t.Fatalf("rejected a normal licence block: %v", err)
+	}
+}
