@@ -284,6 +284,17 @@ func pagesFor(snap Snapshot) []Page {
 func templateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"richBody": renderRichBody,
+		// The operator edits the licence block as one line per entry; the public
+		// footer renders each non-empty line separately.
+		"licenseLines": func(text string) []string {
+			out := []string{}
+			for _, line := range strings.Split(text, "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					out = append(out, line)
+				}
+			}
+			return out
+		},
 		"displayItems": func(m Module) []Item {
 			if !strings.HasPrefix(m.ID, "home-") {
 				return m.Items
