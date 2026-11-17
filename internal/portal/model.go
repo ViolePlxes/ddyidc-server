@@ -170,8 +170,11 @@ func Validate(d Document) error {
 	if strings.TrimSpace(d.Site.Brand) == "" || len(d.Pages) > 500 {
 		return errors.New("请填写品牌名称；页面数量不能超过 500")
 	}
-	if !safeURL(d.Site.Logo, true) || !safeURL(d.Site.FilingURL, false) {
-		return errors.New("站点图片或备案链接无效")
+	if !safeURL(d.Site.Logo, true) {
+		return errors.New("Logo 地址必须是有效的 https 地址或以 / 开头的站内路径，也可以留空")
+	}
+	if !safeURL(d.Site.FilingURL, false) {
+		return errors.New("备案查询链接必须是有效的 https 地址或以 / 开头的站内路径，也可以留空")
 	}
 	if len(d.Site.Licenses) > 2000 {
 		return errors.New("资质与许可证信息不能超过 2000 字")
