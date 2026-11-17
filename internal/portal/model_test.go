@@ -63,6 +63,26 @@ func TestSitemapExcludesNoindexAndEscapesURL(t *testing.T) {
 	}
 }
 
+// An empty optional link is valid; a malformed one must name itself so the
+// operator knows which field to fix.
+func TestOptionalSiteLinksAcceptEmptyAndNameTheFailingField(t *testing.T) {
+	d := Seed()
+	d.Site.Logo = ""
+	d.Site.FilingURL = ""
+	if err := Validate(d); err != nil {
+		t.Fatalf("empty logo/备案链接 rejected: %v", err)
+	}
+	d.Site.Logo = "多多云"
+	if err := Validate(d); err == nil || !strings.Contains(err.Error(), "Logo") {
+		t.Fatalf("logo error = %v", err)
+	}
+	d.Site.Logo = ""
+	d.Site.FilingURL = "备案查询"
+	if err := Validate(d); err == nil || !strings.Contains(err.Error(), "备案查询链接") {
+		t.Fatalf("filing link error = %v", err)
+	}
+}
+
 // The footer licence block is operator-edited plain text, so it must stay
 // bounded and still accept the normal ICP/许可证 lines.
 func TestLicenseTextIsBounded(t *testing.T) {
