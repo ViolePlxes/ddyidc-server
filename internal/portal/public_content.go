@@ -65,6 +65,12 @@ func publicContent(snap Snapshot) PublicContent {
 	return out
 }
 func (s *Service) publicContent(w http.ResponseWriter, r *http.Request) {
+	// The public site is served from a different host than the API, and the
+	// browser drops the response without this header, which left the portal on
+	// its built-in defaults (no operator content at all). The payload is public
+	// and the client never sends credentials, so a wildcard is correct here.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Vary", "Origin")
 	snap, _, err := s.Current(r.Context())
 	if err != nil || !snap.Document.Site.Enabled {
 		reply(w, http.StatusServiceUnavailable, nil, "公开内容暂时不可用")

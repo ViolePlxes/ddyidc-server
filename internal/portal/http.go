@@ -47,6 +47,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 func (s *Service) publicDocument(w http.ResponseWriter, r *http.Request) {
+	// Same cross-host rule as publicContent: the rendered document is public, so
+	// allow any origin to read it.
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Vary", "Origin")
 	path := r.URL.Query().Get("path")
 	if path == "" {
 		path = "/"
