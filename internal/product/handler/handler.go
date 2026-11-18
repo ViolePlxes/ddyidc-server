@@ -118,7 +118,7 @@ func (h *publicHandler) detail(w http.ResponseWriter, r *http.Request) {
 		"infoSource": infoSource, "warning": warning, "readOnly": outbound.DetailReadOnly(),
 		"groupName": product.GroupName, "sort": product.Sort,
 		"name": product.Name, "summary": product.Summary, "description": product.Description,
-		"moduleType": "实例", "price": product.Price, "cycle": cycle, "stock": stock, "config": config,
+		"moduleType": "实例", "price": product.Price, "cycle": cycle, "stock": stock, "config": publicConfig(config),
 		"configMode": configMode, "configOptions": configOptions, "specs": publicSpecs(specs),
 		"catalogSpec": publicSpec(view.Spec), "upstreamStock": view.UpstreamStock,
 		"configurable": product.SupplierID != "" && product.SupplierID != "0" && product.UpstreamProductID > 0,
@@ -307,6 +307,27 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": 1, "message": message})
 }
 
+// publicConfig keeps only customer-facing specification keys. The upstream
+// product config also carries cost, stock-control and billing switches, and the
+// storefront renders every pair it receives, so anything not on this allowlist
+// (给用户看的规格) must stay private.
+func publicConfig(config map[string]string) map[string]string {
+	if len(config) == 0 {
+		return config
+	}
+	allowed := map[string]bool{
+		"cpu": true, "vcpu": true, "memory": true, "ram": true, "bandwidth": true, "traffic": true,
+		"disk": true, "disktype": true, "system_disk": true, "data_disk": true, "system": true, "os": true,
+		"defense": true, "ddos": true, "ip": true, "ipv4": true, "ipv6": true, "line": true, "location": true,
+	}
+	out := make(map[string]string, len(config))
+	for key, value := range config {
+		if allowed[strings.ToLower(strings.TrimSpace(key))] {
+			out[key] = value
+		}
+	}
+	return out
+}
 func publicSpec(v domain.ProductSpec) map[string]any {
 	return map[string]any{"id": fmt.Sprint(v.ID), "productId": fmt.Sprint(v.ProductID), "name": v.Name, "vcpu": v.VCPU, "memory": v.Memory, "osFamily": v.OSFamily, "processorModel": v.ProcessorModel, "processorFrequency": v.ProcessorFrequency, "defense": v.Defense, "upstreamBandwidth": v.UpstreamBandwidth, "downstreamRate": v.DownstreamRate, "stock": v.Stock, "priceMode": v.PriceMode, "price": v.Price, "sort": v.Sort}
 }
