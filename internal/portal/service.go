@@ -106,6 +106,12 @@ type View struct {
 	GeneratedAt string
 	Structured  template.JS
 }
+
+// LicenseLine is one footer compliance entry; Href is empty for plain text.
+type LicenseLine struct {
+	Text string
+	Href string
+}
 type Service struct {
 	db         *gorm.DB
 	root, dist string
@@ -284,14 +290,25 @@ func pagesFor(snap Snapshot) []Page {
 func templateFunctions() template.FuncMap {
 	return template.FuncMap{
 		"richBody": renderRichBody,
-		// The operator edits the licence block as one line per entry; the public
-		// footer renders each non-empty line separately.
-		"licenseLines": func(text string) []string {
-			out := []string{}
+		// The operator edits the licence block as one line per entry; a line may
+		// carry a link as "显示文字|https://链接". The public footer renders each
+		// non-empty line separately and links only to safe targets.
+		"licenseLines": func(text string) []LicenseLine {
+			out := []LicenseLine{}
 			for _, line := range strings.Split(text, "\n") {
-				if line = strings.TrimSpace(line); line != "" {
-					out = append(out, line)
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
 				}
+				item := LicenseLine{Text: line}
+				if label, target, ok := strings.Cut(line, "|"); ok {
+					label = strings.TrimSpace(label)
+					target = strings.TrimSpace(target)
+					if label != "" && safeURL(target, false) {
+						item = LicenseLine{Text: label, Href: target}
+					}
+				}
+				out = append(out, item)
 			}
 			return out
 		},
