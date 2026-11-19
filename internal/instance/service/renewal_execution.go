@@ -3,6 +3,7 @@ package instance
 import (
 	"context"
 	billing "ddyidc/internal/billing/balance"
+	"ddyidc/internal/finance/executionlog"
 	dom "ddyidc/internal/instance/domain"
 	"ddyidc/internal/notification"
 	order "ddyidc/internal/order/domain"
@@ -42,6 +43,7 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 	if e = s.db.WithContext(ctx).Where("id=? AND customer_id=?", orderID, customer).Take(&o).Error; e != nil {
 		return true, e
 	}
+	s.recordRenewalExecution(s.db.WithContext(ctx), &r, executionlog.StatusQueued, "", "")
 	if r.State == "completed" {
 		return true, nil
 	}
@@ -165,6 +167,9 @@ func (s *Service) ProvisionRenewal(ctx context.Context, customer, orderID int64,
 			return true, nil
 		}
 		if e = rp.PayRenewalInvoice(r.InvoiceID); e != nil {
+			// The payment may have been accepted before the response was lost, so
+			// the ledger records an unknown outcome and a human decides.
+			s.recordRenewalExecution(s.db.WithContext(ctx), &r, executionlog.StatusDispatchUnknown, "renewal_pay_failed", renewalPaymentReason(e))
 			return true, s.renewalUncertain(ctx, r.ID, renewalPaymentReason(e))
 		}
 		persisted := s.db.WithContext(ctx).Model(&Renewal{}).Where("id=? AND state='paying'", r.ID).Updates(map[string]any{"state": "verifying", "updated_at": time.Now()})
@@ -260,6 +265,7 @@ func (s *Service) completeRenewal(ctx context.Context, r Renewal, expiry time.Ti
 		if e := tx.Model(&current).Updates(map[string]any{"state": "completed", "last_error": "", "updated_at": now}).Error; e != nil {
 			return e
 		}
+		s.recordRenewalExecution(tx, &current, executionlog.StatusCompleted, "", "")
 		if paid.Status == order.OrderStatusPaid {
 			changed, err := orderstate.CompletePaidTx(tx, r.OrderID, r.CustomerID, now)
 			if err != nil {

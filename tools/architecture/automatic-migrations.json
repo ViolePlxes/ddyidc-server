@@ -62,5 +62,9 @@
   "070_navigation_categories_repair.sql": {
     "sha256": "c2a75332086d9b19d90241c2f509563bbf66623ed3454a9ba633eeb4b7abbb69",
     "rollbackCompatible": true
+  },
+  "071_finance_execution_events.sql": {
+    "sha256": "4e795bf1f2bd383f84be336045732e168d50d88671172c57433c58dae1789fa9",
+    "rollbackCompatible": true
   }
 }

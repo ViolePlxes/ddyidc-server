@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"ddyidc/internal/finance/executionlog"
 	"ddyidc/internal/upstream/provider/contracts"
 	"encoding/json"
 	"fmt"
@@ -97,6 +98,7 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 		return s.provisionResultWithDates(ctx, link), nil
 	}
 
+	s.recordFinanceExecution(&link, executionlog.StatusQueued, "", "")
 	p, err := s.ProviderFor(product.SupplierID)
 	if err != nil {
 		s.failProvision(table, &link, err)
@@ -139,6 +141,7 @@ func (s *Store) ProvisionOrder(ctx context.Context, in ProvisionInput) (*Provisi
 	}).Error; err != nil {
 		return nil, fmt.Errorf("上游已扣款但本地关联保存失败: %w", err)
 	}
+	s.recordFinanceExecution(&link, executionlog.StatusCompleted, "", "")
 	return s.provisionResultWithDates(ctx, link), nil
 }
 
@@ -183,10 +186,51 @@ func (s *Store) failProvision(table string, link *model.UpstreamOrder, failure e
 	// upstream response text, authentication or the customer's configuration.
 	raw, _ := json.Marshal(map[string]any{"event": "procurement_failed", "order_id": link.OrderID, "procurement_id": link.ID, "supplier_id": link.SupplierID, "stage": evidence.Stage, "code": evidence.Code, "http_status": evidence.HTTPStatus, "supplier_status": evidence.SupplierStatus, "transport_phase": evidence.TransportPhase, "request_written": evidence.RequestWritten, "first_byte": evidence.FirstByte, "elapsed_ms": evidence.ElapsedMS, "evidence_persisted": err == nil})
 	log.Print(string(raw))
+	s.recordFinanceExecution(link, financeFailureStatus(evidence, retry), evidence.Code, evidence.Error())
 	if retry && err == nil && result.RowsAffected == 1 {
 		return &contracts.SafePreflightRetry{Cause: evidence}
 	}
 	return failure
+}
+
+// financeFailureStatus maps procurement evidence onto the finance ledger states.
+// A request that may have reached the supplier is never marked retryable: only a
+// provably unexecuted attempt (no write, or an explicit pre-execution rejection)
+// may be executed again without a human.
+func financeFailureStatus(evidence *contracts.ProcurementFailure, preflightRetry bool) string {
+	switch {
+	case preflightRetry:
+		return executionlog.StatusRetryPending
+	case evidence.HTTPStatus == 429 || evidence.HTTPStatus == 403:
+		return executionlog.StatusRetryPending
+	case !evidence.RequestWritten && evidence.HTTPStatus == 0:
+		return executionlog.StatusFailed
+	default:
+		return executionlog.StatusDispatchUnknown
+	}
+}
+
+// recordFinanceExecution writes the delivery row for finance-type suppliers only.
+// West and other adapters never reach this ledger.
+func (s *Store) recordFinanceExecution(link *model.UpstreamOrder, status, code, message string) {
+	if s.isMemory() || s.db == nil {
+		return
+	}
+	var supplierType string
+	if err := s.db.Raw("SELECT type FROM common.suppliers WHERE id = ?", link.SupplierID).Scan(&supplierType).Error; err != nil {
+		return
+	}
+	if supplierType != "finance" && supplierType != "default" {
+		return
+	}
+	unit := link.ID
+	_, _ = executionlog.Record(s.db, executionlog.BeginInput{
+		Module:         executionlog.ModuleDelivery,
+		IdempotencyKey: "delivery:" + unit,
+		EntityType:     "order_unit",
+		EntityUID:      unit,
+		Operation:      "create",
+	}, status, code, message)
 }
 
 func provisionResult(link model.UpstreamOrder) *ProvisionResult {
