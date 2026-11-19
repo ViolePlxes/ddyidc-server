@@ -4,6 +4,7 @@ import (
 	"context"
 	"ddyidc/internal/shared/snowflake"
 	"ddyidc/internal/shared/workgate"
+	"ddyidc/pkg/procurementbudget"
 	"errors"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -109,8 +110,11 @@ func TestDurableTasksMySQL(t *testing.T) {
 	if err := database.Raw("SELECT TIMESTAMPDIFF(SECOND,NOW(3),lease_until) FROM system.durable_tasks WHERE id=?", selected.ID).Scan(&remaining).Error; err != nil {
 		t.Fatal(err)
 	}
-	if remaining < 350 || remaining > 360 {
-		t.Fatalf("procurement lease=%ds, want six minutes", remaining)
+	// Derive the expected lease from the budget instead of hardcoding it: the
+	// procurement window is expected to change as suppliers need more time.
+	want := int(procurementbudget.Lease / time.Second)
+	if remaining < want-10 || remaining > want+10 {
+		t.Fatalf("procurement lease=%ds, want %ds", remaining, want)
 	}
 	oldToken := selected.LeaseToken
 	selected.LeaseToken = "forged"
