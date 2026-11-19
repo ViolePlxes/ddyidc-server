@@ -977,6 +977,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			lastErr = err
 			if trace != nil {
 				lastErr = trace.failure(err, 0)
+				if failure, ok := lastErr.(*contracts.ProcurementFailure); ok {
+					logProcurementCall(p.Supplier.ID, method, endpoint, attempt+1, 0, failure.ElapsedMS, failure)
+				}
 			}
 			if attempt+1 < attempts {
 				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
@@ -999,6 +1002,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			lastErr = readErr
 			if trace != nil {
 				lastErr = trace.failure(readErr, response.StatusCode)
+				if failure, ok := lastErr.(*contracts.ProcurementFailure); ok {
+					logProcurementCall(p.Supplier.ID, method, endpoint, attempt+1, response.StatusCode, failure.ElapsedMS, failure)
+				}
 			}
 			if attempt+1 < attempts {
 				if err := requestBackoff(ctx, scoped, isQKIDC, attempt); err != nil {
@@ -1009,6 +1015,9 @@ func (p *Provider) request(method, endpoint string, body io.Reader, contentType,
 			break
 		}
 		writeAudit(endpoint, method, attempt+1, bodyBytes, response.StatusCode, payload, nil, remoteAudit)
+		if p.procurementContext && trace != nil {
+			logProcurementCall(p.Supplier.ID, method, endpoint, attempt+1, response.StatusCode, time.Since(trace.started).Milliseconds(), nil)
+		}
 		retryable := response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500
 		if scoped && (response.StatusCode == 403 || response.StatusCode == 429) {
 			if p.procurementContext {
