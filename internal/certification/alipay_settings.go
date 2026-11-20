@@ -83,12 +83,61 @@ func feeCents(value string) (int64, error) {
 	return whole*100 + fraction, nil
 }
 
-func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string) error {
-	switch in.Channel {
-	case "manual", "alipay", "tencent":
-	default:
-		return errors.New("认证通道无效")
+// A customer picks a provider, so the settings store the set of enabled
+// channels instead of a single active one. Legacy single-channel
+// configurations are accepted and normalised into the same list.
+func selectedChannels(settings Settings) ([]string, error) {
+	requested := settings.Channels
+	if len(requested) == 0 {
+		if settings.Channel == "" {
+			requested = []string{"manual"}
+		} else {
+			requested = []string{settings.Channel}
+		}
 	}
+	present := map[string]bool{}
+	for _, value := range requested {
+		valid := false
+		for _, known := range certificationChannels {
+			if value == known {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return nil, errors.New("认证通道无效")
+		}
+		present[value] = true
+	}
+	out := make([]string, 0, len(present))
+	for _, known := range certificationChannels {
+		if present[known] {
+			out = append(out, known)
+		}
+	}
+	if len(out) == 0 {
+		return nil, errors.New("请至少开启一种认证通道")
+	}
+	return out, nil
+}
+
+func containsChannel(channels []string, channel string) bool {
+	for _, value := range channels {
+		if value == channel {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string) error {
+	channels, err := selectedChannels(in.Settings)
+	if err != nil {
+		return err
+	}
+	in.Settings.Channels = channels
+	// Channel keeps the legacy single-value meaning for older readers.
+	in.Settings.Channel = channels[0]
 	switch in.BizCode {
 	case "FACE", "SMART_FACE", "CERT_PHOTO", "CERT_PHOTO_FACE":
 	default:
@@ -117,7 +166,7 @@ func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string)
 		if strings.TrimSpace(in.PrivateKey) != "" {
 			credentials.PrivateKey = strings.TrimSpace(in.PrivateKey)
 		}
-		if in.Channel == "alipay" || in.PublicKey != "" || in.PrivateKey != "" {
+		if containsChannel(channels, "alipay") || in.PublicKey != "" || in.PrivateKey != "" {
 			if !regexp.MustCompile(`^[0-9]{10,32}$`).MatchString(credentials.AppID) {
 				return errors.New("支付宝AppID格式无效")
 			}
@@ -136,7 +185,7 @@ func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string)
 		if err := tx.Exec("INSERT INTO system.system_configs(id,`key`,value,description) VALUES(?,'certification.alipay',?,'支付宝认证加密配置') ON DUPLICATE KEY UPDATE value=VALUES(value)", snowflake.GenID(), encrypted).Error; err != nil {
 			return err
 		}
-		tencentUpdated, err := s.saveTencent(tx, in)
+		tencentUpdated, err := s.saveTencent(tx, in, containsChannel(channels, "tencent"))
 		if err != nil {
 			return err
 		}

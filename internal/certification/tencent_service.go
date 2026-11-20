@@ -109,17 +109,17 @@ func (s *Service) initializeTencent(ctx context.Context, customer int64, in Inpu
 		if err != nil && !fresh {
 			return err
 		}
+		if !fresh && row.Status == 2 {
+			return ErrUsed
+		}
 		if !fresh && row.Status == 3 {
 			return errors.New("认证未通过，请联系客服重新申请")
-		}
-		if !fresh && (row.Status == 2 || row.CertifyChannel != "tencent") {
-			return ErrUsed
 		}
 		cfg, err := LoadSettings(tx)
 		if err != nil {
 			return err
 		}
-		if !cfg.Enabled || cfg.Channel != "tencent" {
+		if !cfg.Enabled || !cfg.Allows("tencent") {
 			return errors.New("腾讯慧眼认证通道暂未开放")
 		}
 		credentials, err := s.tencentCredentials(tx)
@@ -143,6 +143,13 @@ func (s *Service) initializeTencent(ctx context.Context, customer int64, in Inpu
 		// A paid attempt stays bound to the submitted identity until consumed.
 		if !fresh && (row.DocumentHash != s.hash(in.DocumentNumber) || row.Name != in.Name) {
 			return errors.New("重新认证须使用原姓名和证件号码，避免与已发起认证混淆")
+		}
+		// Switching provider before passing drops the previous session token.
+		if !fresh && row.CertifyChannel != "tencent" {
+			row.CertifyChannel = "tencent"
+			row.CertifyID = ""
+			row.CertifyConfig = ""
+			row.CertifyExpiresAt = nil
 		}
 		encrypted, err := crypt.Encrypt(in.DocumentNumber, s.key)
 		if err != nil {

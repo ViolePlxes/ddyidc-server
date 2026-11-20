@@ -27,15 +27,63 @@ var ErrUsed = errors.New("每人仅有一次免费实名认证机会")
 var ErrRequired = errors.New("请先完成实名认证后再购买")
 
 type Settings struct {
-	Channel               string `json:"channel"`
-	BizCode               string `json:"bizCode"`
-	FreeAttempts          int    `json:"freeAttempts"`
-	Fee                   string `json:"fee"`
-	Enabled               bool   `json:"enabled"`
-	RequirePurchase       bool   `json:"requirePurchase"`
-	CompanyEnabled        bool   `json:"companyEnabled"`
-	CompanyRequiresPerson bool   `json:"companyRequiresPerson"`
+	Channel               string   `json:"channel"`
+	Channels              []string `json:"channels,omitempty"`
+	BizCode               string   `json:"bizCode"`
+	FreeAttempts          int      `json:"freeAttempts"`
+	Fee                   string   `json:"fee"`
+	Enabled               bool     `json:"enabled"`
+	RequirePurchase       bool     `json:"requirePurchase"`
+	CompanyEnabled        bool     `json:"companyEnabled"`
+	CompanyRequiresPerson bool     `json:"companyRequiresPerson"`
 }
+
+// certificationChannels is the only accepted set; order is used for display.
+var certificationChannels = []string{"manual", "alipay", "tencent"}
+
+// allowedChannels resolves the stored configuration into the channel list the
+// customer may choose from. Legacy single-channel configurations keep working:
+// an empty channels list falls back to channel, which itself defaults to manual.
+func (s Settings) allowedChannels() []string {
+	present := map[string]bool{}
+	for _, value := range s.Channels {
+		present[value] = true
+	}
+	if len(present) == 0 {
+		active := s.Channel
+		if active == "" {
+			active = "manual"
+		}
+		present[active] = true
+	}
+	out := make([]string, 0, len(present))
+	for _, value := range certificationChannels {
+		if present[value] {
+			out = append(out, value)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{"manual"}
+	}
+	return out
+}
+
+func (s Settings) Allows(channel string) bool {
+	for _, value := range s.allowedChannels() {
+		if value == channel {
+			return true
+		}
+	}
+	return false
+}
+
+// normalised returns settings whose channels list always reflects what is
+// actually allowed, so API consumers never have to re-derive it.
+func (s Settings) normalised() Settings {
+	s.Channels = s.allowedChannels()
+	return s
+}
+
 type Record struct {
 	CertifyChannel    string     `json:"certifyChannel"`
 	CertifyID         string     `json:"-"`
@@ -99,14 +147,16 @@ func LoadSettings(db *gorm.DB) (Settings, error) {
 	var row struct{ Value string }
 	err := db.Table("system.system_configs").Select("value").Where("`key`=?", "certification.settings").Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return Settings{}, nil
+		return Settings{Channel: "manual", BizCode: "FACE", FreeAttempts: 1, Fee: "0"}.normalised(), nil
 	}
 	if err != nil {
 		return Settings{}, err
 	}
 	out := Settings{Channel: "manual", BizCode: "FACE", FreeAttempts: 1, Fee: "0"}
-	err = json.Unmarshal([]byte(row.Value), &out)
-	return out, err
+	if err = json.Unmarshal([]byte(row.Value), &out); err != nil {
+		return out, err
+	}
+	return out.normalised(), nil
 }
 func Approved(db *gorm.DB, id int64) (bool, error) {
 	var count int64
@@ -259,8 +309,8 @@ func (s *Service) Submit(ctx context.Context, customer int64, kind int, in Input
 		if !cfg.Enabled {
 			return errors.New("实名认证暂未开放")
 		}
-		if kind == 1 && cfg.Channel != "manual" {
-			return errors.New("请使用当前实名认证通道完成认证")
+		if kind == 1 && !cfg.Allows("manual") {
+			return errors.New("请使用当前开放的实名认证通道完成认证")
 		}
 		if kind == 2 && (!cfg.CompanyEnabled || cfg.CompanyRequiresPerson) {
 			return errors.New("当前设置不允许提交企业认证；每人仅有一次免费机会")

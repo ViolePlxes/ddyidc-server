@@ -626,6 +626,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a simulated faceid transport: encrypted credentials, masked admin response, DetectAuth snapshot without SecretKey, fee gate, minute throttle and channel switch. A skip is not a pass."
   },
+  "ddyidc/internal/certification/TestChannelChoiceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated MySQL/Redis with simulated Alipay and faceid transports: the customer picks both providers, switches before passing without losing the identity/attempt/fee binding, the previous session becomes unqueryable and an approved record rejects a second channel. A skip is not a pass."
+  },
   "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."

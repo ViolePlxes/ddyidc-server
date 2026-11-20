@@ -53,8 +53,9 @@ func (s *Service) tencentAdminView(db *gorm.DB) (tencentAdminView, error) {
 }
 
 // saveTencent keeps blank fields as stored values, so rotating only the secret
-// key does not require re-typing the rest of the bundle.
-func (s *Service) saveTencent(tx *gorm.DB, in AdminSettings) (bool, error) {
+// key does not require re-typing the rest of the bundle. required is true when
+// the channel is enabled for customers, which forces a complete bundle.
+func (s *Service) saveTencent(tx *gorm.DB, in AdminSettings, required bool) (bool, error) {
 	current, err := s.tencentCredentials(tx)
 	if err != nil {
 		return false, err
@@ -75,14 +76,14 @@ func (s *Service) saveTencent(tx *gorm.DB, in AdminSettings) (bool, error) {
 		current.SimThreshold = in.SimThreshold
 	}
 	touched := secretID != "" || secretKey != "" || ruleID != "" || in.SimThreshold != 0
-	if !touched && in.Channel != "tencent" {
+	if !touched && !required {
 		return false, nil
 	}
 	current = current.withDefaults()
 	if in.SimThreshold < 0 || in.SimThreshold > 100 {
 		return false, errors.New("比对相似度阈值须为1至100")
 	}
-	if in.Channel == "tencent" && !current.configured() {
+	if required && !current.configured() {
 		return false, errors.New("启用腾讯慧眼前请填写 SecretId、SecretKey 与 RuleId")
 	}
 	if current.SecretID != "" || current.SecretKey != "" || current.RuleID != "" {

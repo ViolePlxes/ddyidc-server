@@ -86,14 +86,17 @@ func (s *Service) initializeAlipay(ctx context.Context, customer int64, in Input
 		if err != nil && !fresh {
 			return err
 		}
-		if !fresh && (row.Status == 2 || row.CertifyChannel != "alipay") {
+		if !fresh && row.Status == 2 {
 			return ErrUsed
+		}
+		if !fresh && row.Status == 3 {
+			return errors.New("认证未通过，请联系客服重新申请")
 		}
 		cfg, err := LoadSettings(tx)
 		if err != nil {
 			return err
 		}
-		if !cfg.Enabled || cfg.Channel != "alipay" {
+		if !cfg.Enabled || !cfg.Allows("alipay") {
 			return errors.New("支付宝认证通道暂未开放")
 		}
 		credentials, err := s.credentials(tx)
@@ -111,6 +114,14 @@ func (s *Service) initializeAlipay(ctx context.Context, customer int64, in Input
 		// Paid attempts stay bound to the submitted identity until consumed.
 		if !fresh && (row.DocumentHash != s.hash(in.DocumentNumber) || row.Name != in.Name) {
 			return errors.New("重新认证须使用原姓名和证件号码，避免与已发起认证混淆")
+		}
+		// The customer may switch provider before passing: the previous session is
+		// dropped so no stale provider token can be queried afterwards.
+		if !fresh && row.CertifyChannel != "alipay" {
+			row.CertifyChannel = "alipay"
+			row.CertifyID = ""
+			row.CertifyConfig = ""
+			row.CertifyExpiresAt = nil
 		}
 		encrypted, err := crypt.Encrypt(in.DocumentNumber, s.key)
 		if err != nil {

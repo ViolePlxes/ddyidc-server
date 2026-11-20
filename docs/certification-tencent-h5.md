@@ -9,6 +9,17 @@
 用户侧流程、限流、计费、审计、判定与数据保护与支付宝实现逐条对齐；支付宝代码路径保持原有行为。
 不引入腾讯云 SDK（标准库实现 TC3-HMAC-SHA256），不保存人脸照片/视频（`InfoType=1` 只取文本结论）。
 
+## 通道启用与用户选择（2026-11-20 起）
+
+认证方式由**用户在前台自选**，后台不再固定单一通道：
+
+- `system.system_configs['certification.settings']` 保留 `channels` 数组（如 `["manual","alipay","tencent"]`）；旧配置只有 `channel` 单值时自动视作 `[channel]`，无需迁移。
+- `Settings.allowedChannels()` 归一化并去重（顺序 manual→alipay→tencent），`Allows(channel)` 为唯一判定入口；`channel` 字段仍写入（取列表首项）以兼容旧读取方。
+- 两个自动通道的 `initialize` 分别校验自身是否开启；`/info` 返回 `channels`，前台据此渲染选择器。
+- 同一客户在**未通过**（`status=1`）前可以改用另一通道：切换时清空 `certify_id`/`certify_config`/`certify_expires_at`，旧供应商会话立即不可查询；`certify_attempts` 与 `certify_fee_order` 不重置，避免借切换重置次数或重复收费。
+- `status=2` 拒绝再次发起；`status=3` 需管理员处理，自动通道不允许解除限制。
+- 后台设置改为三个独立开关（人工审核 / 支付宝 / 腾讯慧眼），开启某通道时该校验其凭据：支付宝要求 AppID 与密钥可用，腾讯要求 SecretId/SecretKey/RuleId 完整。
+
 ## 代码位置
 
 | 层 | 文件 | 关键符号 |
