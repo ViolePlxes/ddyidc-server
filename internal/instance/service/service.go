@@ -70,25 +70,26 @@ type ListInput struct {
 }
 
 type ListItem struct {
-	DeliveryPending  bool   `json:"deliveryPending"`
-	ProductionLocked bool   `json:"productionLocked"`
-	AutoRenew        bool   `json:"autoRenew"`
-	ReadOnly         bool   `json:"readOnly"`
-	Hostname         string `json:"hostname,omitempty"`
-	Port             string `json:"port,omitempty"`
-	OperatingSystem  string `json:"operatingSystem,omitempty"`
-	RenewalAmount    string `json:"renewalAmount,omitempty"`
-	LastSyncedAt     string `json:"lastSyncedAt,omitempty"`
-	Remark           string `json:"remark"`
-	ID               string `json:"id"`
-	Name             string `json:"name"`
-	ProductName      string `json:"productName"`
-	PrimaryIP        string `json:"primaryIp,omitempty"`
-	Status           uint8  `json:"status"`
-	PowerStatus      string `json:"powerStatus,omitempty"`
-	BillingCycle     string `json:"billingCycle,omitempty"`
-	ExpiresAt        string `json:"expiresAt,omitempty"`
-	CreatedAt        string `json:"createdAt"`
+	DeliveryPending  bool     `json:"deliveryPending"`
+	ProductionLocked bool     `json:"productionLocked"`
+	AutoRenew        bool     `json:"autoRenew"`
+	ReadOnly         bool     `json:"readOnly"`
+	Hostname         string   `json:"hostname,omitempty"`
+	Port             string   `json:"port,omitempty"`
+	OperatingSystem  string   `json:"operatingSystem,omitempty"`
+	RenewalAmount    string   `json:"renewalAmount,omitempty"`
+	LastSyncedAt     string   `json:"lastSyncedAt,omitempty"`
+	Remark           string   `json:"remark"`
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	ProductName      string   `json:"productName"`
+	PrimaryIP        string   `json:"primaryIp,omitempty"`
+	IPs              []string `json:"ips,omitempty"`
+	Status           uint8    `json:"status"`
+	PowerStatus      string   `json:"powerStatus,omitempty"`
+	BillingCycle     string   `json:"billingCycle,omitempty"`
+	ExpiresAt        string   `json:"expiresAt,omitempty"`
+	CreatedAt        string   `json:"createdAt"`
 }
 
 type ListResult struct {
@@ -225,10 +226,17 @@ type rawSnapshot struct {
 		DisplayValue string `json:"displayValue"`
 		Position     int    `json:"position"`
 	} `json:"configOptions"`
-	SyncedConfig       []syncedConfigItem `json:"syncedConfig"`
-	Hostname           string             `json:"hostname"`
-	BillingCycle       string             `json:"billingCycle"`
-	PasswordCiphertext string             `json:"passwordCiphertext"`
+	SyncedConfig []syncedConfigItem `json:"syncedConfig"`
+	SyncedIPs    []struct {
+		Address string `json:"address"`
+		Primary bool   `json:"primary"`
+	} `json:"syncedIps"`
+	IPs []struct {
+		Address string `json:"address"`
+	} `json:"ips"`
+	Hostname           string `json:"hostname"`
+	BillingCycle       string `json:"billingCycle"`
+	PasswordCiphertext string `json:"passwordCiphertext"`
 }
 
 func (s *Service) List(ctx context.Context, customerID int64, in ListInput) (*ListResult, error) {
@@ -935,6 +943,7 @@ func listItem(host *dom.Host) ListItem {
 		result.ReadOnly = true
 		result.DeliveryPending = true
 	}
+	result.IPs = ipAddresses(host.PrimaryIP, snapshot)
 	result.OperatingSystem = host.OperatingSystem
 	result.RenewalAmount = snapshot.RenewalAmount
 	if result.OperatingSystem == "" {
@@ -1156,4 +1165,28 @@ func validPassword(value string) bool {
 		}
 	}
 	return upper && lower && digit
+}
+
+// ipAddresses returns every address the supplier reported, primary first. The
+// list view used to show only primary_ip, which hid additional addresses the
+// supplier had already provisioned for the machine.
+func ipAddresses(primary string, snapshot rawSnapshot) []string {
+	seen := make(map[string]bool, 2)
+	out := make([]string, 0, 2)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			return
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	add(primary)
+	for _, ip := range snapshot.SyncedIPs {
+		add(ip.Address)
+	}
+	for _, ip := range snapshot.IPs {
+		add(ip.Address)
+	}
+	return out
 }
