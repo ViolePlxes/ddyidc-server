@@ -70,5 +70,6 @@
   "069_navigation_categories.sql": "f57f580d648ca982377126c0afa5b74e25d6cc523455d544a1b525e2fe16fbf4",
   "070_navigation_categories_repair.sql": "c2a75332086d9b19d90241c2f509563bbf66623ed3454a9ba633eeb4b7abbb69",
   "071_finance_execution_events.sql": "4e795bf1f2bd383f84be336045732e168d50d88671172c57433c58dae1789fa9",
-  "072_renewal_price_reference.sql": "031515a088155874a4f0eb42a0220e6d993c87357de9425e82f9d8120c3f5542"
+  "072_renewal_price_reference.sql": "031515a088155874a4f0eb42a0220e6d993c87357de9425e82f9d8120c3f5542",
+  "073_certification_tencent.sql": "12fa61dc4e251038d62f631d9a4270a9138c52c4f466f490171380edd076f200"
 }

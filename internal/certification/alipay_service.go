@@ -50,13 +50,17 @@ func validateAlipayIdentity(in *Input) error {
 }
 
 func (s *Service) attemptLimit(ctx context.Context, customer int64, operatorIP string) error {
+	return s.attemptLimitFor(ctx, "alipay", customer, operatorIP)
+}
+
+func (s *Service) attemptLimitFor(ctx context.Context, channel string, customer int64, operatorIP string) error {
 	if s.redis == nil {
 		return errors.New("安全服务暂不可用")
 	}
 	// Check all counters before incrementing any: failed minute checks don't consume daily quota.
 	script := `for i,key in ipairs(KEYS) do if tonumber(redis.call('GET',key) or '0')>=tonumber(ARGV[i*2-1]) then return 0 end end; for i,key in ipairs(KEYS) do local n=redis.call('INCR',key);if n==1 then redis.call('EXPIRE',key,ARGV[i*2]) end end;return 1`
-	prefix := fmt.Sprintf("certification:alipay:attempt:%d", customer)
-	n, err := s.redis.Eval(ctx, script, []string{prefix + ":minute", prefix + ":daily", "certification:alipay:ip:" + s.hash(operatorIP)}, 1, 60, 3, 86400, 30, 86400).Int()
+	prefix := fmt.Sprintf("certification:%s:attempt:%d", channel, customer)
+	n, err := s.redis.Eval(ctx, script, []string{prefix + ":minute", prefix + ":daily", "certification:" + channel + ":ip:" + s.hash(operatorIP)}, 1, 60, 3, 86400, 30, 86400).Int()
 	if err != nil {
 		return errors.New("安全服务暂不可用")
 	}

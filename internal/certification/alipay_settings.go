@@ -18,6 +18,14 @@ type AdminSettings struct {
 	PrivateKey           string `json:"privateKey,omitempty"`
 	PublicKeyMasked      string `json:"publicKeyMasked"`
 	PrivateKeyConfigured bool   `json:"privateKeyConfigured"`
+	// Tencent 慧眼 credentials are write-only; only the masked SecretId and a
+	// configured flag are ever returned.
+	TencentSecretID            string  `json:"tencentSecretId"`
+	TencentSecretKey           string  `json:"tencentSecretKey,omitempty"`
+	TencentSecretIDMasked      string  `json:"tencentSecretIdMasked"`
+	TencentSecretKeyConfigured bool    `json:"tencentSecretKeyConfigured"`
+	TencentRuleID              string  `json:"tencentRuleId"`
+	SimThreshold               float64 `json:"simThreshold"`
 }
 
 func (s *Service) credentials(db *gorm.DB) (alipayCredentials, error) {
@@ -49,11 +57,15 @@ func (s *Service) adminSettings() (AdminSettings, error) {
 	if err != nil {
 		return AdminSettings{}, err
 	}
+	tencent, err := s.tencentAdminView(s.db)
+	if err != nil {
+		return AdminSettings{}, err
+	}
 	public := ""
 	if credentials.PublicKey != "" {
 		public = "已配置（公钥已隐藏）"
 	}
-	return AdminSettings{Settings: cfg, AppID: credentials.AppID, PublicKeyMasked: public, PrivateKeyConfigured: credentials.PrivateKey != ""}, nil
+	return AdminSettings{Settings: cfg, AppID: credentials.AppID, PublicKeyMasked: public, PrivateKeyConfigured: credentials.PrivateKey != "", TencentSecretIDMasked: tencent.Masked, TencentSecretKeyConfigured: tencent.Configured, TencentRuleID: tencent.RuleID, SimThreshold: tencent.Threshold}, nil
 }
 
 var feePattern = regexp.MustCompile(`^(0|[1-9][0-9]{0,4})(\.[0-9]{1,2})?$`)
@@ -72,7 +84,9 @@ func feeCents(value string) (int64, error) {
 }
 
 func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string) error {
-	if in.Channel != "manual" && in.Channel != "alipay" {
+	switch in.Channel {
+	case "manual", "alipay", "tencent":
+	default:
 		return errors.New("认证通道无效")
 	}
 	switch in.BizCode {
@@ -122,10 +136,14 @@ func (s *Service) saveSettings(in AdminSettings, actor int64, operatorIP string)
 		if err := tx.Exec("INSERT INTO system.system_configs(id,`key`,value,description) VALUES(?,'certification.alipay',?,'支付宝认证加密配置') ON DUPLICATE KEY UPDATE value=VALUES(value)", snowflake.GenID(), encrypted).Error; err != nil {
 			return err
 		}
+		tencentUpdated, err := s.saveTencent(tx, in)
+		if err != nil {
+			return err
+		}
 		plain, _ := json.Marshal(in.Settings)
 		if err := tx.Table("system.system_configs").Where("`key`='certification.settings'").Update("value", string(plain)).Error; err != nil {
 			return err
 		}
-		return audit(tx, actor, true, "settings", 0, map[string]any{"settings": in.Settings, "credentialsUpdated": in.PublicKey != "" || in.PrivateKey != ""}, operatorIP)
+		return audit(tx, actor, true, "settings", 0, map[string]any{"settings": in.Settings, "credentialsUpdated": in.PublicKey != "" || in.PrivateKey != "", "tencentCredentialsUpdated": tencentUpdated}, operatorIP)
 	})
 }

@@ -79,7 +79,7 @@ func projection(kind string) (string, error) {
 	case "tickets":
 		return `SELECT CAST(t.id AS CHAR) id,'ticket' source,CAST(t.client_id AS CHAR) customer_id,t.title,t.ticket_num number,CAST(t.status AS CHAR) status,'' amount,'' order_id,'' instance_id,t.create_time created_at,t.update_time updated_at FROM ticket.ticket t JOIN ticket.ticket_status s ON s.id=t.status WHERE s.status=0`, nil
 	case "certifications":
-		return `SELECT CAST(r.id AS CHAR) id,'certification' source,CAST(r.customer_id AS CHAR) customer_id,CASE WHEN r.type=2 THEN '企业实名审核' ELSE '个人实名审核' END title,CAST(r.id AS CHAR) number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at,(r.type=1 AND COALESCE(r.certify_channel,'')='alipay') automatic_certification FROM customer.customer_realname r WHERE ` + manualCertificationPredicate, nil
+		return `SELECT CAST(r.id AS CHAR) id,'certification' source,CAST(r.customer_id AS CHAR) customer_id,CASE WHEN r.type=2 THEN '企业实名审核' ELSE '个人实名审核' END title,CAST(r.id AS CHAR) number,CAST(r.status AS CHAR) status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at,(r.type=1 AND COALESCE(r.certify_channel,'') IN ('alipay','tencent')) automatic_certification FROM customer.customer_realname r WHERE ` + manualCertificationPredicate, nil
 	case "recommendations":
 		return `SELECT CAST(r.id AS CHAR) id,'invite' source,CAST(r.user_id AS CHAR) customer_id,CONCAT('优惠码申请 · ',COALESCE(r.pending_code,r.code)) title,COALESCE(r.pending_code,r.code) number,CASE WHEN r.pending_code IS NOT NULL THEN '0' ELSE CAST(r.status AS CHAR) END status,'' amount,'' order_id,'' instance_id,r.created_at,r.updated_at FROM marketing.invites r WHERE (r.status=0 OR r.pending_code IS NOT NULL)`, nil
 	case "withdrawals":

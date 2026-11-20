@@ -29,7 +29,7 @@ func Register(server *rest.Server, s *Service, jwt *auth.Manager) {
 		for _, x := range []struct {
 			method, path string
 			fn           http.HandlerFunc
-		}{{"POST", "/alipay/initialize", h.alipayInitialize}, {"GET", "/alipay/certify", h.alipayCertify}, {"GET", "/alipay/status", h.alipayQuery}, {"GET", "/info", h.info}, {"POST", "/person", h.submit}, {"POST", "/company", h.submit}, {"POST", "/uploads", h.upload}, {"GET", "/files/:file", h.file}} {
+		}{{"POST", "/alipay/initialize", h.alipayInitialize}, {"GET", "/alipay/certify", h.alipayCertify}, {"GET", "/alipay/status", h.alipayQuery}, {"POST", "/tencent/initialize", h.tencentInitialize}, {"GET", "/tencent/certify", h.tencentCertify}, {"GET", "/tencent/status", h.tencentStatus}, {"GET", "/tencent/callback", h.tencentCallback}, {"GET", "/info", h.info}, {"POST", "/person", h.submit}, {"POST", "/company", h.submit}, {"POST", "/uploads", h.upload}, {"GET", "/files/:file", h.file}} {
 			routes = append(routes, rest.Route{Method: x.method, Path: prefix + x.path, Handler: x.fn})
 		}
 	}
