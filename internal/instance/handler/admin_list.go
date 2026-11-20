@@ -26,6 +26,8 @@ func (h *handler) adminListRoutes() []rest.Route {
 		{Method: http.MethodGet, Path: "/admin/v1/instances/export", Handler: h.adminInstanceExport},
 		{Method: http.MethodPost, Path: "/admin/v1/instances/sync", Handler: h.adminInstanceSync},
 		{Method: http.MethodGet, Path: "/admin/v1/instances/sync/:taskId", Handler: h.adminInstanceSyncResult},
+		{Method: http.MethodGet, Path: "/admin/v1/instances/destroy-settings", Handler: h.adminDestroySettings},
+		{Method: http.MethodPut, Path: "/admin/v1/instances/destroy-settings", Handler: h.adminDestroySettings},
 	}
 }
 func (h *handler) globalAccess(w http.ResponseWriter, r *http.Request) (svc.AdminAccess, bool) {
