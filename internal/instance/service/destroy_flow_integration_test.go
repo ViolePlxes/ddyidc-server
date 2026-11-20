@@ -34,7 +34,7 @@ func TestDestroyFlowMySQL(t *testing.T) {
 	if err := db.Create(&order.OrderItem{ID: itemID, OrderID: orderID, ProductID: 91031, ProductName: "destroy flow fixture", ModuleType: "cloud", ConfigSnapshot: `{"billingDays":30,"billingCycle":"monthly"}`, Qty: 1, UnitPrice: 10000, Subtotal: 10000, InstanceID: &hostID}).Error; err != nil {
 		t.Fatal(err)
 	}
-	host := domain.Host{ID: hostID, InstanceNo: "DESTROY-FLOW", ProductName: "销毁流程测试机", CustomerID: customer, OrderID: orderID, OrderItemID: itemID, ProductID: 91031, ModuleType: "cloud", ConfigSnapshot: "{}", Status: 3, UpstreamInstanceID: "998405", PrimaryIP: "203.0.113.10", OwnershipVersion: 1, ActivatedAt: &activated, ExpiresAt: &expiry}
+	host := domain.Host{ID: hostID, InstanceNo: "DESTROY-FLOW", ProductName: "销毁流程测试机", CustomerID: customer, OrderID: orderID, OrderItemID: itemID, ProductID: 91031, ModuleType: "cloud", ConfigSnapshot: "{}", Status: 3, UpstreamInstanceID: "998405", PrimaryIP: "203.0.113.10", Remark: "客户备注", OwnershipVersion: 1, ActivatedAt: &activated, ExpiresAt: &expiry}
 	if err := db.Create(&host).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,18 @@ func TestDestroyFlowMySQL(t *testing.T) {
 	option := findDestroyOption(options, hostID)
 	if option == nil || !option.Eligible || option.Refundable == "" || option.Refundable == "0.00" {
 		t.Fatalf("eligible option missing: %+v", option)
+	}
+	// The confirmation dialog names the exact machine: product, id, name, ip and
+	// remark come from the host row and its pulled snapshot.
+	if option.ProductName != "销毁流程测试机" || option.InstanceNo != "DESTROY-FLOW" || option.Name != "DESTROY-FLOW" || option.IP != "203.0.113.10" || option.Remark != "客户备注" {
+		t.Fatalf("option identity = %+v", option)
+	}
+	quote, err := s.DestroyQuote(ctx, customer, hostID)
+	if err != nil {
+		t.Fatalf("destroy quote: %v", err)
+	}
+	if quote.Name != "DESTROY-FLOW" || quote.ProductName != "销毁流程测试机" || quote.IP != "203.0.113.10" || quote.Remark != "客户备注" || quote.Refundable != option.Refundable {
+		t.Fatalf("quote identity = %+v", quote)
 	}
 
 	target, scope, err := s.ProductionLockEmailTarget(ctx, customer, hostID, false, "")
