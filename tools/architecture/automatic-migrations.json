@@ -66,5 +66,9 @@
   "071_finance_execution_events.sql": {
     "sha256": "4e795bf1f2bd383f84be336045732e168d50d88671172c57433c58dae1789fa9",
     "rollbackCompatible": true
+  },
+  "072_renewal_price_reference.sql": {
+    "sha256": "031515a088155874a4f0eb42a0220e6d993c87357de9425e82f9d8120c3f5542",
+    "rollbackCompatible": true
   }
 }
