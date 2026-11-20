@@ -30,7 +30,8 @@ func TestCertificationQueueMySQL(t *testing.T) {
 	}{
 		{"manual", 1, 1, true, false}, {"", 1, 1, true, false}, {nil, 1, 1, true, false},
 		{"alipay", 1, 1, false, true}, {"alipay", 1, 2, false, true}, {"alipay", 1, 3, false, true},
-		{"manual", 2, 1, true, false}, {"alipay", 2, 1, true, false}, {"manual", 1, 2, false, false},
+		{"tencent", 1, 1, false, true}, {"tencent", 1, 3, false, true},
+		{"manual", 2, 1, true, false}, {"alipay", 2, 1, true, false}, {"tencent", 2, 1, true, false}, {"manual", 1, 2, false, false},
 	}
 	for i, c := range cases {
 		id := 1000 + i
@@ -60,7 +61,7 @@ func TestCertificationQueueMySQL(t *testing.T) {
 	if err := tx.Raw("SELECT COUNT(*) FROM customer.customer_realname r WHERE " + manualCertificationPredicate).Scan(&count).Error; err != nil {
 		t.Fatal(err)
 	}
-	if count != 5 || page.Total != count {
+	if count != 6 || page.Total != count {
 		t.Fatalf("count/list mismatch: %d %+v", count, page)
 	}
 	var aggregate struct{ Count int64 }

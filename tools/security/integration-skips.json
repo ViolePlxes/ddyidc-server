@@ -622,6 +622,18 @@
     "disposition": "isolated_suite_required",
     "verification": "Disposable MySQL only: pending manual/alipay review, terminal status, audit and single concurrent winner. A normal skip is not a pass."
   },
+  "ddyidc/internal/certification/TestTencentInitializeMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated MySQL/Redis with a simulated faceid transport: encrypted credentials, masked admin response, DetectAuth snapshot without SecretKey, fee gate, minute throttle and channel switch. A skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."
+  },
+  "ddyidc/internal/certification/TestTencentStatusRejectMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated MySQL/Redis with a below-threshold fixture: three retryable failures, status=3, sealed verdict and no auto-pass audit. A skip is not a pass."
+  },
   "ddyidc/internal/cdnsell/TestStatisticsCacheAuthorizationMySQL": {
     "disposition": "isolated_suite_required",
     "label": "隔离测试、本地联调用",
