@@ -13,11 +13,15 @@ import (
 )
 
 // DestroyView is the customer-facing preview of a machine destruction: what the
-// machine has paid so far and what the refund policy would return today.
+// machine has paid so far and what the refund policy would return today. It
+// names the exact machine so the customer can see what is being destroyed.
 type DestroyView struct {
 	InstanceID  int64                  `json:"instanceId,string"`
 	InstanceNo  string                 `json:"instanceNo"`
+	Name        string                 `json:"name"`
 	ProductName string                 `json:"productName"`
+	IP          string                 `json:"ip"`
+	Remark      string                 `json:"remark,omitempty"`
 	Paid        string                 `json:"paidAmount"`
 	Refundable  string                 `json:"refundableAmount"`
 	Periods     []workflow.PeriodQuote `json:"periods"`
@@ -59,7 +63,7 @@ func (s *Service) DestroyQuote(ctx context.Context, customer, instanceID int64) 
 	if err != nil {
 		return out, err
 	}
-	out = DestroyView{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, Paid: snapshot.Paid.String(), Refundable: calc.Refund.String(), Periods: calc.Periods}
+	out = DestroyView{InstanceID: h.ID, InstanceNo: h.InstanceNo, Name: hostDisplayName(h), ProductName: h.ProductName, IP: h.PrimaryIP, Remark: strings.TrimSpace(h.Remark), Paid: snapshot.Paid.String(), Refundable: calc.Refund.String(), Periods: calc.Periods}
 	requests, err := s.destroyRequests(ctx, customer, instanceID)
 	if err != nil {
 		return out, err
@@ -124,12 +128,15 @@ func (s *Service) destroySubmitCheck(ctx context.Context, customer int64, in Des
 }
 
 // DestroyOption is one destroyable machine with its current refundable amount,
-// so the console list can show the estimate without a request per row.
+// so the console list can show the estimate without a request per row. Name and
+// remark let the confirmation dialog name the exact machine.
 type DestroyOption struct {
 	InstanceID       int64      `json:"instanceId,string"`
 	InstanceNo       string     `json:"instanceNo"`
+	Name             string     `json:"name"`
 	ProductName      string     `json:"productName"`
 	IP               string     `json:"ip"`
+	Remark           string     `json:"remark,omitempty"`
 	ExpiresAt        *time.Time `json:"expiresAt,omitempty"`
 	Remaining        string     `json:"remaining"`
 	Paid             string     `json:"paidAmount"`
@@ -137,6 +144,20 @@ type DestroyOption struct {
 	Eligible         bool       `json:"eligible"`
 	Reason           string     `json:"reason,omitempty"`
 	LastRejectReason string     `json:"lastRejectReason,omitempty"`
+}
+
+// hostDisplayName mirrors the list/detail naming: the pulled hostname wins, then
+// the instance number. Legacy snapshots without a hostname fall back the same way.
+func hostDisplayName(h instance.Host) string {
+	_, snapshot := parseSnapshot(h.ConfigSnapshot)
+	name := strings.TrimSpace(snapshot.Hostname)
+	if snapshot.ListDisplay != nil && strings.TrimSpace(snapshot.ListDisplay.Hostname) != "" {
+		name = strings.TrimSpace(snapshot.ListDisplay.Hostname)
+	}
+	if name == "" {
+		name = h.InstanceNo
+	}
+	return name
 }
 
 func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]DestroyOption, error) {
@@ -207,7 +228,7 @@ func (s *Service) DestroyOptions(ctx context.Context, customer int64) ([]Destroy
 		if pending[h.ID] {
 			continue
 		}
-		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, ProductName: h.ProductName, IP: h.PrimaryIP, ExpiresAt: h.ExpiresAt, LastRejectReason: lastReject[h.ID]}
+		option := DestroyOption{InstanceID: h.ID, InstanceNo: h.InstanceNo, Name: hostDisplayName(h), ProductName: h.ProductName, IP: h.PrimaryIP, Remark: strings.TrimSpace(h.Remark), ExpiresAt: h.ExpiresAt, LastRejectReason: lastReject[h.ID]}
 		if h.ExpiresAt != nil {
 			option.Remaining = remainingLabel(h.ExpiresAt.Sub(time.Now().UTC()))
 		}
