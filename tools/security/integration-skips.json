@@ -630,6 +630,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with simulated Alipay and faceid transports: the customer picks both providers, switches before passing without losing the identity/attempt/fee binding, the previous session becomes unqueryable and an approved record rejects a second channel. A skip is not a pass."
   },
+  "ddyidc/internal/instance/service/TestDestroySettingsMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Run against disposable migrated FOUNDATION_MYSQL_SOCKET fixtures (deploy/linux/tests/test_renewal_quote_gate.sh runs it): destroy settings default to requiring the mailbox code, an explicit off value lets the reason alone through, re-enabling restores the requirement and a corrupt row falls back to requiring it. A skip is not a pass."
+  },
   "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."
