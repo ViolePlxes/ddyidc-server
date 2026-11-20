@@ -189,7 +189,7 @@ const referencePriceSQL = "(SELECT rp.amount FROM instance.renewal_price_referen
 const estimateSQL = "CASE WHEN (" + renewalSQL + ") IS NULL AND " + financeSupplierSQL + " THEN " + referencePriceSQL + " END"
 const effectiveRenewalSQL = "COALESCE(" + renewalSQL + "," + estimateSQL + ")"
 const referenceVerifiedSQL = "(SELECT CAST(UNIX_TIMESTAMP(rp.verified_at) AS UNSIGNED) FROM instance.renewal_price_reference rp WHERE rp.supplier_id=i.upstream_provider_id AND rp.product_id=i.product_id AND rp.cycle=" + cycleSQL + " LIMIT 1)"
-const renewalStateSQL = "CASE WHEN (" + renewalSQL + ") IS NOT NULL THEN 'verified' WHEN (" + estimateSQL + ") IS NOT NULL THEN 'product_reference' ELSE '' END"
+const renewalStateSQL = "CASE WHEN (" + renewalSQL + ") IS NOT NULL THEN COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.priceState')),''),'verified') WHEN (" + estimateSQL + ") IS NOT NULL THEN 'product_reference' ELSE '' END"
 const customerNameSQL = "CASE WHEN c.username REGEXP '^v10[_-][0-9]+$' THEN CAST(i.customer_id AS CHAR) ELSE COALESCE(NULLIF(c.username,''),CAST(i.customer_id AS CHAR)) END"
 const ipSQL = "COALESCE(JSON_EXTRACT(i.config_snapshot,'$.syncedIps'),JSON_EXTRACT(i.config_snapshot,'$.ips'),JSON_ARRAY())"
 const runningSQL = "i.status=3 AND COALESCE(i.power_status,'') NOT IN ('suspended','deleted','expired','fault')"
