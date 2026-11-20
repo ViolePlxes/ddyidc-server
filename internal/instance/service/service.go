@@ -84,7 +84,7 @@ type ListItem struct {
 	Name             string   `json:"name"`
 	ProductName      string   `json:"productName"`
 	PrimaryIP        string   `json:"primaryIp,omitempty"`
-	IPs              []string `json:"ips,omitempty"`
+	IPs              []string `json:"ipAddresses,omitempty"`
 	Status           uint8    `json:"status"`
 	PowerStatus      string   `json:"powerStatus,omitempty"`
 	BillingCycle     string   `json:"billingCycle,omitempty"`
