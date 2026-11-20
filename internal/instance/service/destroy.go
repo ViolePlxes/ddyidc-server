@@ -105,6 +105,15 @@ func (s *Service) destroySubmitCheck(ctx context.Context, customer int64, in Des
 		if pending > 0 {
 			return errors.New("已有销毁申请在审核中")
 		}
+		// The mailbox proof is an admin-controlled switch: when it is off the
+		// request is accepted on the reason alone, without a second credential.
+		destroySettings, err := LoadDestroySettings(tx)
+		if err != nil {
+			return err
+		}
+		if !destroySettings.RequireEmailVerification {
+			return nil
+		}
 		if strings.TrimSpace(in.Code) == "" {
 			return errors.New("请先完成邮箱验证码验证")
 		}
