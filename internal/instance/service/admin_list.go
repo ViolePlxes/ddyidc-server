@@ -122,7 +122,7 @@ type AdminInstanceRow struct {
 	RealNameRecordID   string             `json:"realNameRecordId"`
 	RenewalSyncedAt    int64              `json:"renewalSyncedAt"`
 	RenewalStale       bool               `json:"renewalStale" gorm:"-"`
-	RenewalPriceState  string             `json:"-"`
+	RenewalPriceState  string             `json:"renewalPriceState"`
 	Phone              string             `json:"phone"`
 	Email              string             `json:"email"`
 	SupplierName       string             `json:"supplierName"`
@@ -179,6 +179,17 @@ const snapshotSQL = "JSON_EXTRACT(i.config_snapshot,'$.supplierReadSnapshot')"
 const quoteAmountSQL = "JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.amount'))"
 const quoteVerifiedSQL = "JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.customerId'))=CAST(i.customer_id AS CHAR) AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.ownershipVersion'))=CAST(i.ownership_version AS CHAR) AND i.upstream_provider_id>0 AND COALESCE(i.upstream_instance_id,'')<>'' AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.supplierId'))=CAST(i.upstream_provider_id AS CHAR) AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.remoteId'))=i.upstream_instance_id AND " + cycleSQL + "<>'' AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.billingCycle'))=" + cycleSQL + " AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.priceSource'))='upstream_original' AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.priceState')) IN ('verified','last_known') AND JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.verifiedAt')) REGEXP '^[0-9]+$' AND CAST(JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.verifiedAt')) AS UNSIGNED)>0"
 const renewalSQL = "CASE WHEN (" + quoteVerifiedSQL + ") AND " + quoteAmountSQL + " REGEXP '^[0-9]{1,12}([.][0-9]{1,2})?$' AND CAST(" + quoteAmountSQL + " AS DECIMAL(14,2))>0 THEN CAST(" + quoteAmountSQL + " AS DECIMAL(14,2)) ELSE NULL END"
+
+// The finance system keeps renewal prices on the product, refreshed from the
+// supplier. Finance-type suppliers get the same fallback: when a machine has no
+// fresh per-host quote, the latest verified product/cycle reference price is used
+// for the admin total and labelled as a reference, never shown to the customer.
+const financeSupplierSQL = "COALESCE(s.type,'') IN ('finance','default')"
+const referencePriceSQL = "(SELECT rp.amount FROM instance.renewal_price_reference rp WHERE rp.supplier_id=i.upstream_provider_id AND rp.product_id=i.product_id AND rp.cycle=" + cycleSQL + " LIMIT 1)"
+const estimateSQL = "CASE WHEN (" + renewalSQL + ") IS NULL AND " + financeSupplierSQL + " THEN " + referencePriceSQL + " END"
+const effectiveRenewalSQL = "COALESCE(" + renewalSQL + "," + estimateSQL + ")"
+const referenceVerifiedSQL = "(SELECT CAST(UNIX_TIMESTAMP(rp.verified_at) AS UNSIGNED) FROM instance.renewal_price_reference rp WHERE rp.supplier_id=i.upstream_provider_id AND rp.product_id=i.product_id AND rp.cycle=" + cycleSQL + " LIMIT 1)"
+const renewalStateSQL = "CASE WHEN (" + renewalSQL + ") IS NOT NULL THEN 'verified' WHEN (" + estimateSQL + ") IS NOT NULL THEN 'product_reference' ELSE '' END"
 const customerNameSQL = "CASE WHEN c.username REGEXP '^v10[_-][0-9]+$' THEN CAST(i.customer_id AS CHAR) ELSE COALESCE(NULLIF(c.username,''),CAST(i.customer_id AS CHAR)) END"
 const ipSQL = "COALESCE(JSON_EXTRACT(i.config_snapshot,'$.syncedIps'),JSON_EXTRACT(i.config_snapshot,'$.ips'),JSON_ARRAY())"
 const runningSQL = "i.status=3 AND COALESCE(i.power_status,'') NOT IN ('suspended','deleted','expired','fault')"
@@ -186,7 +197,7 @@ const suspendedSQL = "COALESCE(i.power_status,'')='suspended' AND i.status<>6"
 const recurringSQL = "" + cycleSQL + " NOT IN ('','free','onetime','one_time','once') AND i.status<>6 AND i.expires_at IS NOT NULL"
 const abnormalSQL = "(i.status=1 OR COALESCE(i.power_status,'')='fault' OR c.id IS NULL OR EXISTS(SELECT 1 FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3)) AND i.status<>6"
 
-var adminSorts = map[string]string{"createdAt": "i.created_at", "expiresAt": "i.expires_at", "activatedAt": "i.activated_at", "renewalAmount": renewalSQL, "customer": customerNameSQL, "product": "i.product_name"}
+var adminSorts = map[string]string{"createdAt": "i.created_at", "expiresAt": "i.expires_at", "activatedAt": "i.activated_at", "renewalAmount": effectiveRenewalSQL, "customer": customerNameSQL, "product": "i.product_name"}
 
 func normalizeAdminInput(in AdminListInput) (AdminListInput, error) {
 	if in.Page < 1 {
@@ -300,9 +311,9 @@ func adminBase(db *gorm.DB, a AdminAccess, in AdminListInput) *gorm.DB {
 		q = q.Where("COALESCE(rs.enabled,0)=?", in.AutoRenew == "true")
 	}
 	if in.MissingPrice == "1" {
-		q = q.Where(recurringSQL).Where(renewalSQL + " IS NULL")
+		q = q.Where(recurringSQL).Where("i.status IN (3,4)").Where(effectiveRenewalSQL + " IS NULL")
 	}
-	for _, f := range []struct{ col, op, v string }{{"i.activated_at", ">=", in.ActivatedFrom}, {"i.activated_at", "<=", in.ActivatedTo}, {"i.created_at", ">=", in.CreatedFrom}, {"i.created_at", "<=", in.CreatedTo}, {"i.expires_at", ">=", in.ExpiresFrom}, {"i.expires_at", "<=", in.ExpiresTo}, {renewalSQL, ">=", in.MinAmount}, {renewalSQL, "<=", in.MaxAmount}} {
+	for _, f := range []struct{ col, op, v string }{{"i.activated_at", ">=", in.ActivatedFrom}, {"i.activated_at", "<=", in.ActivatedTo}, {"i.created_at", ">=", in.CreatedFrom}, {"i.created_at", "<=", in.CreatedTo}, {"i.expires_at", ">=", in.ExpiresFrom}, {"i.expires_at", "<=", in.ExpiresTo}, {effectiveRenewalSQL, ">=", in.MinAmount}, {effectiveRenewalSQL, "<=", in.MaxAmount}} {
 		if f.v != "" {
 			var v any = f.v
 			if strings.HasSuffix(f.col, "_at") {
@@ -352,7 +363,7 @@ func adminView(q *gorm.DB, view string, now time.Time) *gorm.DB {
 	return q
 }
 
-const adminProjection = "CAST(i.id AS CHAR) id,CAST(i.customer_id AS CHAR) customer_id,CAST(i.product_id AS CHAR) product_id,COALESCE(CAST(i.upstream_provider_id AS CHAR),'') supplier_id,CAST(i.order_id AS CHAR) order_id,i.instance_no,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.hostname')),'') hostname,i.product_name," + customerNameSQL + " username,COALESCE((SELECT NULLIF(TRIM(cr.name),'') FROM customer.customer_realname cr WHERE cr.customer_id=c.id AND cr.status=2 ORDER BY cr.updated_at DESC,cr.id DESC LIMIT 1),'') real_name,COALESCE((SELECT CAST(cr.id AS CHAR) FROM customer.customer_realname cr WHERE cr.customer_id=c.id AND cr.status=2 AND NULLIF(TRIM(cr.name),'') IS NOT NULL ORDER BY cr.updated_at DESC,cr.id DESC LIMIT 1),'') real_name_record_id,COALESCE(c.phone,'') phone,COALESCE(c.email,'') email,COALESCE(s.name,'') supplier_name,COALESCE(o.order_no,JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.legacyOrderNo')),'') order_no,i.remark,COALESCE(i.primary_ip,'') primary_ip,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.listDisplay.port')),'') port,i.status,COALESCE(i.power_status,'') power_status," + cycleSQL + " cycle,CAST((" + renewalSQL + ") AS CHAR) renewal_amount,CASE WHEN (" + renewalSQL + ") IS NOT NULL THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.verifiedAt')) AS UNSIGNED) ELSE 0 END renewal_synced_at,JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.priceState')) renewal_price_state,COALESCE(rs.enabled,0) auto_renew,COALESCE(i.upstream_instance_id,'') upstream_instance_id,CAST(i.ownership_version AS CHAR) ownership_version,COALESCE(i.operating_system,'') operating_system,i.created_at,i.activated_at,i.expires_at,i.last_synced_at,CAST(" + ipSQL + " AS CHAR) ip_json,(SELECT COUNT(*) FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3) error_count,(c.id IS NULL) customer_missing"
+const adminProjection = "CAST(i.id AS CHAR) id,CAST(i.customer_id AS CHAR) customer_id,CAST(i.product_id AS CHAR) product_id,COALESCE(CAST(i.upstream_provider_id AS CHAR),'') supplier_id,CAST(i.order_id AS CHAR) order_id,i.instance_no,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.hostname')),'') hostname,i.product_name," + customerNameSQL + " username,COALESCE((SELECT NULLIF(TRIM(cr.name),'') FROM customer.customer_realname cr WHERE cr.customer_id=c.id AND cr.status=2 ORDER BY cr.updated_at DESC,cr.id DESC LIMIT 1),'') real_name,COALESCE((SELECT CAST(cr.id AS CHAR) FROM customer.customer_realname cr WHERE cr.customer_id=c.id AND cr.status=2 AND NULLIF(TRIM(cr.name),'') IS NOT NULL ORDER BY cr.updated_at DESC,cr.id DESC LIMIT 1),'') real_name_record_id,COALESCE(c.phone,'') phone,COALESCE(c.email,'') email,COALESCE(s.name,'') supplier_name,COALESCE(o.order_no,JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.legacyOrderNo')),'') order_no,i.remark,COALESCE(i.primary_ip,'') primary_ip,COALESCE(JSON_UNQUOTE(JSON_EXTRACT(i.config_snapshot,'$.listDisplay.port')),'') port,i.status,COALESCE(i.power_status,'') power_status," + cycleSQL + " cycle,CAST((" + effectiveRenewalSQL + ") AS CHAR) renewal_amount,CASE WHEN (" + renewalSQL + ") IS NOT NULL THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(" + snapshotSQL + ",'$.verifiedAt')) AS UNSIGNED) WHEN (" + estimateSQL + ") IS NOT NULL THEN COALESCE(" + referenceVerifiedSQL + ",0) ELSE 0 END renewal_synced_at,(" + renewalStateSQL + ") renewal_price_state,COALESCE(rs.enabled,0) auto_renew,COALESCE(i.upstream_instance_id,'') upstream_instance_id,CAST(i.ownership_version AS CHAR) ownership_version,COALESCE(i.operating_system,'') operating_system,i.created_at,i.activated_at,i.expires_at,i.last_synced_at,CAST(" + ipSQL + " AS CHAR) ip_json,(SELECT COUNT(*) FROM instance.instance_events e WHERE e.instance_id=i.id AND e.status=3) error_count,(c.id IS NULL) customer_missing"
 
 func (s *Service) AdminList(ctx context.Context, a AdminAccess, in AdminListInput) (*AdminListResult, error) {
 	in, e := normalizeAdminInput(in)
@@ -380,7 +391,7 @@ func (s *Service) AdminList(ctx context.Context, a AdminAccess, in AdminListInpu
 			Amount  string
 			Missing int64
 		}
-		if err := q().Select("CAST(COALESCE(SUM(" + renewalSQL + "),0) AS CHAR) amount,COALESCE(SUM((" + recurringSQL + ") AND (" + renewalSQL + ") IS NULL),0) missing").Scan(&sum).Error; err != nil {
+		if err := q().Select("CAST(COALESCE(SUM(" + effectiveRenewalSQL + "),0) AS CHAR) amount,COALESCE(SUM((" + recurringSQL + ") AND (" + effectiveRenewalSQL + ") IS NULL AND i.status IN (3,4)),0) missing").Scan(&sum).Error; err != nil {
 			return err
 		}
 		result.TotalRenewalSum = sum.Amount

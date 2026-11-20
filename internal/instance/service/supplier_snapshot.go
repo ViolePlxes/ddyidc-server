@@ -198,7 +198,18 @@ func (s *Service) syncSupplierReadItem(ctx context.Context, supplier, run string
 		if e = applySupplierReadSnapshot(&current, detail, fields, options, quoteErr, stamp); e != nil {
 			return e
 		}
-		return tx.Model(&current).Updates(fields).Error
+		if e := tx.Model(&current).Updates(fields).Error; e != nil {
+			return e
+		}
+		if quoteErr == nil {
+			for _, option := range options {
+				if option.Cycle == cycle {
+					s.recordRenewalPriceReference(ctx, tx, &current, cycle, option.Amount)
+					break
+				}
+			}
+		}
+		return nil
 	})
 	if e != nil {
 		return e
@@ -207,4 +218,22 @@ func (s *Service) syncSupplierReadItem(ctx context.Context, supplier, run string
 		return errors.New("续费原价未更新，保留上次有效报价")
 	}
 	return nil
+}
+
+// recordRenewalPriceReference mirrors the finance system's product price table:
+// the latest verified supplier original price per (supplier, product, cycle).
+// Only finance-type suppliers write here; west and other adapters never do.
+func (s *Service) recordRenewalPriceReference(ctx context.Context, tx *gorm.DB, host *dom.Host, cycle, amount string) {
+	if tx == nil || host == nil || host.UpstreamProviderID == nil || cycle == "" || amount == "" {
+		return
+	}
+	var supplierType string
+	if err := tx.WithContext(ctx).Raw("SELECT type FROM common.suppliers WHERE id=?", *host.UpstreamProviderID).Scan(&supplierType).Error; err != nil {
+		return
+	}
+	if supplierType != "finance" && supplierType != "default" {
+		return
+	}
+	_ = tx.WithContext(ctx).Exec("INSERT INTO instance.renewal_price_reference (supplier_id,product_id,cycle,amount,verified_at,created_at,updated_at) VALUES (?,?,?,?,NOW(3),NOW(3),NOW(3)) ON DUPLICATE KEY UPDATE amount=VALUES(amount),verified_at=VALUES(verified_at),updated_at=NOW(3)",
+		*host.UpstreamProviderID, host.ProductID, cycle, amount)
 }
