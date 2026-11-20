@@ -17,7 +17,7 @@ func TestPendingManualReviewMySQL(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.Exec("CREATE TABLE IF NOT EXISTS customer.customer_realname (id bigint PRIMARY KEY, customer_id bigint, certify_channel varchar(16), certify_id varchar(128), certify_config text, certify_attempts int, certify_fee_order bigint, type int, name text, phone text, document_type int, id_card_no text, document_hash text, id_card_front text, id_card_back text, company_name text, company_license text, company_hash text, company_license_img text, legal_type int, authorization text, status int, reject_reason text, auditor_id bigint, audited_at datetime(3), created_at datetime(3), updated_at datetime(3))").Error; err != nil {
+	if err := db.Exec("CREATE TABLE IF NOT EXISTS customer.customer_realname (id bigint PRIMARY KEY, customer_id bigint, certify_channel varchar(16), certify_id varchar(128), certify_config text, certify_result mediumtext, certify_expires_at datetime(3), certify_attempts int, certify_fee_order bigint, type int, name text, phone text, document_type int, id_card_no text, document_hash text, id_card_front text, id_card_back text, company_name text, company_license text, company_hash text, company_license_img text, legal_type int, authorization text, status int, reject_reason text, auditor_id bigint, audited_at datetime(3), created_at datetime(3), updated_at datetime(3))").Error; err != nil {
 		t.Fatal(err)
 	}
 	s := New(db, nil, []byte("0123456789abcdef0123456789abcdef"), t.TempDir())
