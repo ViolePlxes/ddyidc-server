@@ -101,7 +101,8 @@ func TestManualProductRenewalInvoiceMySQL(t *testing.T) {
 	}
 }
 
-func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {	tx := manualProductFixtureDB(t).Begin()
+func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {
+	tx := manualProductFixtureDB(t).Begin()
 	defer tx.Rollback()
 	for _, q := range []string{
 		"INSERT INTO customer.customers(id,username) VALUES(99102,'isolated')",
@@ -137,5 +138,53 @@ func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {	tx := manualProductFixtureD
 	tx.Table("instance.instance_renewals").Select("state").Where("id=99108").Scan(&state)
 	if state != "uncertain" {
 		t.Fatal("read changed manual state")
+	}
+}
+
+// An empty upstream number is a stage, not an absence: the queue must explain
+// whether the supplier was never called, is still being called, or answered.
+func TestManualProductUpstreamStageMySQL(t *testing.T) {
+	tx := manualProductFixtureDB(t).Begin()
+	defer tx.Rollback()
+	for _, sql := range []string{
+		"INSERT INTO customer.customers(id,username) VALUES(99302,'stage customer')",
+		"INSERT INTO instance.instances(id,customer_id,order_id,product_name,instance_no,created_at,updated_at) VALUES(99301,99302,99303,'plan','STAGE-1',NOW(),NOW())",
+		"INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(99309,99301,3,'create',NOW())",
+		"INSERT INTO `order`.unit_procurements(id,order_id,supplier_id,upstream_order_id,status,last_error,updated_at) VALUES(99308,99303,1,'pending','not_submitted','quote timeout',1)",
+	} {
+		if err := tx.Exec(sql).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	row := func() Entry {
+		rows := []Entry{{Source: "instance", ID: "99301", InstanceID: "99301", CustomerID: "99302", OrderID: "99303"}}
+		if err := enrichManualProductDisplay(context.Background(), tx, rows); err != nil {
+			t.Fatal(err)
+		}
+		return rows[0]
+	}
+	if got := row(); got.UpstreamOrderID != "" || got.UpstreamOrderState != "not_submitted" {
+		t.Fatalf("unsent procurement stage not explained: %+v", got)
+	}
+	if err := tx.Exec("UPDATE `order`.unit_procurements SET status='unknown', upstream_order_id='pending' WHERE id=99308").Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := row(); got.UpstreamOrderState != "unknown" {
+		t.Fatalf("unknown procurement stage not explained: %+v", got)
+	}
+	if err := tx.Exec("DELETE FROM `order`.unit_procurements WHERE id=99308").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Exec("INSERT INTO instance.instance_renewals(id,instance_id,order_id,customer_id,state,invoice_id,created_at,updated_at) VALUES(99310,99301,99303,99302,'creating','',NOW(),NOW())").Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := row(); got.UpstreamOrderID != "" || got.UpstreamOrderState != "pending" {
+		t.Fatalf("renewal without invoice not explained: %+v", got)
+	}
+	if err := tx.Exec("INSERT INTO `order`.unit_procurements(id,order_id,supplier_id,upstream_order_id,status,updated_at) VALUES(99311,99303,1,'946271','unknown',2)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if got := row(); got.UpstreamOrderState != "unmatched" {
+		t.Fatalf("supplier document without a portal match not explained: %+v", got)
 	}
 }

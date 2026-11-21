@@ -32,3 +32,29 @@ func TestProcurementFailureKeepsCategoryWithoutRawSecret(t *testing.T) {
 		t.Fatal("diagnostic fields must be allowlisted")
 	}
 }
+
+func TestSupplierMessageSurvivesOnlyWhenProvablySafe(t *testing.T) {
+	kept := ClassifyProcurementFailure("payment", errors.New("Insufffcient balance 余额不足"))
+	if kept.SupplierMessage != "Insufffcient balance 余额不足" || !strings.Contains(kept.Error(), "上游返回 Insufffcient balance 余额不足") {
+		t.Fatalf("safe supplier text dropped: %#v", kept)
+	}
+	for name, cause := range map[string]error{
+		"url":    errors.New("call https://api.supplier.example/order failed"),
+		"secret": errors.New("PASSWORD_SECRET CUSTOMER_SECRET"),
+		"token":  errors.New("token=abc123 rejected"),
+		"email":  errors.New("contact ops@example.com for help"),
+		"blob":   errors.New("digest 35b52a92c566d36d53c897f179c33de82a5cffc796e2fb045c055c58d89b2266"),
+	} {
+		failure := ClassifyProcurementFailure("provider", cause)
+		if failure.SupplierMessage != "" {
+			t.Fatalf("%s leaked supplier text: %q", name, failure.SupplierMessage)
+		}
+		if strings.Contains(failure.Error(), "上游返回") {
+			t.Fatalf("%s leaked into the persisted text: %v", name, failure)
+		}
+	}
+	long := ClassifyProcurementFailure("provider", errors.New(strings.Repeat("拒", 400)))
+	if runes := []rune(long.SupplierMessage); len(runes) != 161 || runes[160] != '…' {
+		t.Fatalf("supplier text not truncated: %d", len(runes))
+	}
+}

@@ -641,6 +641,9 @@
   "ddyidc/internal/admintodo/TestManualProductRenewalInvoiceMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated FOUNDATION_MYSQL_SOCKET fixture run by deploy/linux/tests/test_manual_product_display.sh: a failed renewal with invoice_id 283705 must surface as the queue's upstream order without inventing a purchase-invoice link, and the list keeps the renewal reason. A skip is not a pass."
+  },  "ddyidc/internal/admintodo/TestManualProductUpstreamStageMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated FOUNDATION_MYSQL_SOCKET fixture run by deploy/linux/tests/test_manual_product_display.sh: an empty upstream document must be explained (未提交/结果未知/待上游返回/未匹配) from procurement or renewal rows only, without calling a supplier. A skip is not a pass."
   },  "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."
