@@ -11,7 +11,7 @@ const manualProductEventTypes = "'create','suspend','terminate','destroy','renew
 func manualProductReason(instance string) string {
 	return `COALESCE(` +
 		renewalText(instance) + `,` +
-		procurementText(instance) + `,` +
+		procurementText(instance, instance+`.order_id`) + `,` +
 		failedEventText(instance) + `,` +
 		taskText(instance, instance+`.order_id`) + `,'')`
 }
@@ -30,7 +30,7 @@ func manualProductReasonSource(instance string) string {
 // manualOrderReason applies the same priority to a paid order that has no
 // instance yet; the procurement row carries the supplier text.
 func manualOrderReason() string {
-	return `COALESCE(` + procurementText("o") + `,` + taskText("o", "o.id") + `,'')`
+	return `COALESCE(` + procurementText("o", "o.id") + `,` + taskText("o", "o.id") + `,'')`
 }
 
 func manualOrderReasonSource() string {
@@ -44,8 +44,8 @@ func renewalText(instance string) string {
 	return `(SELECT CONVERT(NULLIF(r.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM instance.instance_renewals r WHERE r.instance_id=` + instance + `.id AND r.state IN ('uncertain','failed') ORDER BY r.updated_at DESC LIMIT 1)`
 }
 
-func procurementText(instance string) string {
-	return `(SELECT CONVERT(NULLIF(p.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.unit_procurements p WHERE p.order_id=` + instance + `.order_id ORDER BY p.updated_at DESC, p.id DESC LIMIT 1)`
+func procurementText(alias, orderID string) string {
+	return `(SELECT CONVERT(NULLIF(p.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.unit_procurements p WHERE p.order_id=` + orderID + ` ORDER BY p.updated_at DESC, p.id DESC LIMIT 1)`
 }
 
 func failedEventText(instance string) string {
