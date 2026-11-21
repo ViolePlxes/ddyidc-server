@@ -188,3 +188,44 @@ func TestManualProductUpstreamStageMySQL(t *testing.T) {
 		t.Fatalf("supplier document without a portal match not explained: %+v", got)
 	}
 }
+
+// A machine can carry an older purchase invoice and a failing renewal invoice.
+// The queue must bind the document of the failure the row is about.
+func TestManualProductBindingFollowsReasonSourceMySQL(t *testing.T) {
+	tx := manualProductFixtureDB(t).Begin()
+	defer tx.Rollback()
+	for _, sql := range []string{
+		"INSERT INTO customer.customers(id,username) VALUES(99402,'binding customer')",
+		"INSERT INTO instance.instances(id,customer_id,order_id,product_name,instance_no,created_at,updated_at) VALUES(99401,99402,99403,'legacy plan','V10-480',NOW(),NOW())",
+		"INSERT INTO instance.instance_renewals(id,instance_id,order_id,customer_id,state,invoice_id,last_error,created_at,updated_at) VALUES(99408,99401,99403,99402,'uncertain','283706','renewal payment failed',NOW(),NOW())",
+		"INSERT INTO common.suppliers(id,url) VALUES(99404,'https://www.qkidc.cn')",
+		"INSERT INTO `order`.delivery_units(id,unit_no,instance_id,order_item_id,order_id,customer_id,status) VALUES(99411,1,99401,99412,99403,99402,'failed')",
+		"INSERT INTO `order`.unit_procurements(id,order_id,supplier_id,upstream_order_id,status,updated_at) VALUES(99411,99403,99404,'946271','unknown',1)",
+	} {
+		if err := tx.Exec(sql).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := []Entry{{Source: "instance", ID: "99401", InstanceID: "99401", CustomerID: "99402", OrderID: "99403", ReasonSource: "renewal"}}
+	if err := enrichManualProductDisplay(context.Background(), tx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].UpstreamOrderID != "283706" || rows[0].UpstreamBillingURL != "" {
+		t.Fatalf("renewal document must win over the purchase invoice: %+v", rows[0])
+	}
+	// The same machine without a renewal-sourced reason keeps the purchase invoice.
+	other := []Entry{{Source: "instance", ID: "99401", InstanceID: "99401", CustomerID: "99402", OrderID: "99403", ReasonSource: "procurement"}}
+	if err := enrichManualProductDisplay(context.Background(), tx, other); err != nil {
+		t.Fatal(err)
+	}
+	if other[0].UpstreamOrderID != "946271" || other[0].UpstreamBillingURL == "" {
+		t.Fatalf("procurement document lost: %+v", other[0])
+	}
+	page, err := List(context.Background(), tx, "manual-products", Filter{Page: 1, PageSize: 20, CustomerID: "99402"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].ReasonSource != "renewal" || page.Items[0].UpstreamOrderID != "283706" {
+		t.Fatalf("list must expose the reason source and the bound document: %+v", page.Items)
+	}
+}

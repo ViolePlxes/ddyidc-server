@@ -38,6 +38,9 @@ type Entry struct {
 	Number                 string               `json:"number"`
 	Status                 string               `json:"status"`
 	Reason                 string               `json:"reason,omitempty"`
+	// ReasonSource names the table Reason came from so the display binds the
+	// supplier document that belongs to that failure.
+	ReasonSource string `json:"reasonSource,omitempty"`
 	RefundableAmount       *string              `json:"refundableAmount,omitempty" gorm:"-"`
 	Amount                 string               `json:"amount"`
 	OrderID                string               `json:"orderId"`

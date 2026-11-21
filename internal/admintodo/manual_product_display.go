@@ -32,6 +32,17 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 				e.ExpiresAt = &expiry
 			}
 		}
+		// A failed renewal is the problem the row is about, so its supplier
+		// invoice is the document to bind, even when an older purchase invoice
+		// would also match. The number belongs to the renewal, never to the
+		// purchase portal link.
+		if e.Source == "instance" && e.ReasonSource == "renewal" {
+			if invoice := failingRenewalInvoice(ctx, db, e); invoice != "" {
+				e.UpstreamOrderID = invoice
+				e.UpstreamBillingURL = ""
+				continue
+			}
+		}
 		var bills []struct {
 			ID      string
 			BaseURL string
@@ -80,6 +91,19 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 		}
 	}
 	return nil
+}
+
+// failingRenewalInvoice returns the supplier document of the renewal that put
+// the machine in the queue; an empty value means the invoice was never opened.
+func failingRenewalInvoice(ctx context.Context, db *gorm.DB, e *Entry) string {
+	var renewal struct{ InvoiceID string }
+	if err := db.WithContext(ctx).Table("instance.instance_renewals").
+		Select("COALESCE(invoice_id,'') invoice_id").
+		Where("instance_id=? AND customer_id=? AND state IN ('uncertain','failed') AND COALESCE(invoice_id,'')<>''", e.InstanceID, e.CustomerID).
+		Order("updated_at DESC").Limit(1).Scan(&renewal).Error; err != nil {
+		return ""
+	}
+	return renewal.InvoiceID
 }
 
 // manualUpstreamStage reads only our own procurement/renewal rows: it never
