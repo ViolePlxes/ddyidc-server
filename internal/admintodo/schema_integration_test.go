@@ -59,7 +59,11 @@ func TestManualProductSchemaMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(ctx, pool, steps, false, nil); err != nil {
+	// The migration runner insists on a seed callback for its final synthetic
+	// step. Module registry rows are irrelevant to a schema smoke test, so the
+	// callback only satisfies that contract.
+	seed := func(context.Context) error { return nil }
+	if err := migrations.Apply(ctx, pool, steps, false, seed); err != nil {
 		t.Fatalf("apply official migrations: %v", err)
 	}
 	database, err := gorm.Open(mysql.New(mysql.Config{Conn: pool}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
