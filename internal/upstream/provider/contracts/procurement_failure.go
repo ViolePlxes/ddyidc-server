@@ -5,20 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"regexp"
+	"strings"
 )
 
 // ProcurementFailure is safe to persist/log. Cause may contain transport or
-// supplier secrets and must never be logged. Keep the public text categorical.
+// supplier secrets and must never be logged. SupplierMessage is the only
+// supplier-authored text that may be persisted, and only after sanitizeSupplierMessage
+// proves it carries no credentials, URLs, or opaque blobs.
 type ProcurementFailure struct {
-	Stage          string
-	Code           string
-	HTTPStatus     int
-	SupplierStatus int
-	TransportPhase string
-	RequestWritten bool
-	FirstByte      bool
-	ElapsedMS      int64
-	Cause          error `json:"-"`
+	Stage           string
+	Code            string
+	HTTPStatus      int
+	SupplierStatus  int
+	TransportPhase  string
+	RequestWritten  bool
+	FirstByte       bool
+	ElapsedMS       int64
+	SupplierMessage string
+	Cause           error `json:"-"`
 }
 
 func (e *ProcurementFailure) Error() string {
@@ -27,7 +32,11 @@ func (e *ProcurementFailure) Error() string {
 	if safe.TransportPhase != "" {
 		transport = fmt.Sprintf(" transport=%s written=%t first_byte=%t elapsed_ms=%d", safe.TransportPhase, safe.RequestWritten, safe.FirstByte, safe.ElapsedMS)
 	}
-	return fmt.Sprintf("采购失败 [stage=%s code=%s http=%d supplier=%d%s]，需人工核对，禁止重复下单", safe.Stage, safe.Code, safe.HTTPStatus, safe.SupplierStatus, transport)
+	message := ""
+	if safe.SupplierMessage != "" {
+		message = "：上游返回 " + safe.SupplierMessage
+	}
+	return fmt.Sprintf("采购失败 [stage=%s code=%s http=%d supplier=%d%s]%s，需人工核对，禁止重复下单", safe.Stage, safe.Code, safe.HTTPStatus, safe.SupplierStatus, transport, message)
 }
 
 func (e *ProcurementFailure) Unwrap() error { return e.Cause }
@@ -56,7 +65,47 @@ func ClassifyProcurementFailure(stage string, err error) *ProcurementFailure {
 		}
 	}
 	failure := sanitizeProcurementFailure(ProcurementFailure{Stage: stage, Code: code, Cause: err})
+	if existing == nil {
+		failure.SupplierMessage = sanitizeSupplierMessage(err)
+	}
 	return &failure
+}
+
+var (
+	supplierSecretPattern = regexp.MustCompile(`(?i)(password|passwd|pwd|secret|token|api[_-]?key|authorization|cookie|session|private[_-]?key)`)
+	supplierURLPattern    = regexp.MustCompile(`(?i)\b[a-z][a-z0-9+.-]*://\S+`)
+	supplierEmailPattern  = regexp.MustCompile(`[\w.+-]+@[\w-]+\.[\w.-]+`)
+	supplierBlobPattern   = regexp.MustCompile(`\b[0-9a-fA-F]{32,}\b|\b[A-Za-z0-9+/]{40,}={0,2}\b`)
+	supplierSpacePattern  = regexp.MustCompile(`\s+`)
+)
+
+// sanitizeSupplierMessage returns the supplier's own failure text only when it
+// is provably free of credentials, URLs, addresses and opaque blobs; otherwise
+// the administrator keeps the categorical Evidence text alone.
+func sanitizeSupplierMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	text := strings.TrimSpace(err.Error())
+	if text == "" {
+		return ""
+	}
+	for _, pattern := range []*regexp.Regexp{supplierSecretPattern, supplierURLPattern, supplierEmailPattern, supplierBlobPattern} {
+		if pattern.MatchString(text) {
+			return ""
+		}
+	}
+	text = strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' || r == '\t' || (r < 0x20) {
+			return ' '
+		}
+		return r
+	}, text)
+	text = strings.TrimSpace(supplierSpacePattern.ReplaceAllString(text, " "))
+	if runes := []rune(text); len(runes) > 160 {
+		text = string(runes[:160]) + "…"
+	}
+	return text
 }
 
 func sanitizeProcurementFailure(value ProcurementFailure) ProcurementFailure {

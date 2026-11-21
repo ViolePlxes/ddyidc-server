@@ -54,6 +54,9 @@ type Entry struct {
 	ExpiresAt              *time.Time           `json:"expiresAt,omitempty" gorm:"-"`
 	UpstreamOrderID        string               `json:"upstreamOrderId,omitempty" gorm:"-"`
 	UpstreamBillingURL     string               `json:"upstreamBillingUrl,omitempty" gorm:"-"`
+	// UpstreamOrderState explains an empty UpstreamOrderID: the platform order
+	// exists (or is being placed) but the supplier document is not known yet.
+	UpstreamOrderState string `json:"upstreamOrderState,omitempty" gorm:"-"`
 	Revision               string               `json:"revision,omitempty"`
 }
 type Filter struct {

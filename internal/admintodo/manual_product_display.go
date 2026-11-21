@@ -72,8 +72,59 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 				e.UpstreamOrderID = renewal.InvoiceID
 			}
 		}
+		// The platform order always exists before the supplier document does, so
+		// an empty number is a stage, not an absence. Say which stage it stopped
+		// at instead of showing a bare 未获取.
+		if e.UpstreamOrderID == "" {
+			e.UpstreamOrderState = manualUpstreamStage(ctx, db, e)
+		}
 	}
 	return nil
+}
+
+// manualUpstreamStage reads only our own procurement/renewal rows: it never
+// calls a supplier and never guesses a document number.
+func manualUpstreamStage(ctx context.Context, db *gorm.DB, e *Entry) string {
+	if e.OrderID != "" {
+		var purchase struct {
+			UpstreamOrderID string
+			Status          string
+		}
+		if err := db.WithContext(ctx).Table("`order`.unit_procurements").
+			Select("COALESCE(upstream_order_id,'') upstream_order_id,COALESCE(status,'') status").
+			Where("order_id=?", e.OrderID).
+			Order("updated_at DESC, id DESC").Limit(1).Scan(&purchase).Error; err != nil {
+			return ""
+		}
+		switch {
+		case purchase.Status == "":
+		case purchase.UpstreamOrderID != "" && purchase.UpstreamOrderID != "pending":
+			// A supplier document exists but could not be attached unambiguously.
+			return "unmatched"
+		case purchase.Status == "not_submitted":
+			return "not_submitted"
+		case purchase.Status == "unknown" || purchase.Status == "failed":
+			return "unknown"
+		default:
+			return "pending"
+		}
+	}
+	if e.Source == "instance" && e.InstanceID != "" {
+		var renewal struct{ State string }
+		if err := db.WithContext(ctx).Table("instance.instance_renewals").
+			Select("COALESCE(state,'') state").
+			Where("instance_id=? AND customer_id=?", e.InstanceID, e.CustomerID).
+			Order("created_at DESC").Limit(1).Scan(&renewal).Error; err != nil {
+			return ""
+		}
+		switch renewal.State {
+		case "creating", "paying", "verifying", "invoiced_verified":
+			return "pending"
+		case "uncertain", "failed":
+			return "unknown"
+		}
+	}
+	return ""
 }
 
 func manualBillingURL(base, id string) string {
