@@ -38,3 +38,14 @@
 - 关闭开关只跳过邮箱验证码，**不跳过**：实例归属、生产锁、自动续费、驳回中申请、退款核算与后台审核。
 - 缺省与异常配置一律要求验证码，避免一次配置损坏静默削弱校验。
 - 后台修改写审计（操作人、IP、开关值），客户侧接口不返回任何配置细节以外内容。
+
+## 2026-11-21 弹窗展示机器身份
+
+确认弹窗需要在提交前让客户看清「销毁的是哪一台」，因此报价与可销毁列表补充机器身份字段：
+
+- `DestroyView`（`GET /api/v1/instance/:id/destroy-quote`）与 `DestroyOption`（`GET /api/v1/destroy-options`）新增 `name`（优先取同步到快照的 hostname，其次实例编号，与列表/详情命名一致）、`remark`（空则不返回）、`ip`（主 IP，未分配为空串）；`productName`、`instanceId`、`instanceNo` 原样返回。
+- `hostDisplayName` 复用 `parseSnapshot`，避免弹窗与列表对同一机器显示不同名称。
+- 前端 `DestroyVerifyTarget` 增加 `name/remark/ip`，弹窗在「销毁原因」上方渲染信息块：产品名称、实例 ID、实例名称、备注信息（有才显示）、实例 IP、预计可退。
+- 两个入口（`/console/destroy` 列表、实例列表下拉条与控制台实例页按钮）分别从 option 与 quote 传入，不额外请求。
+- 隔离用例 `TestDestroyFlowMySQL` 断言 option 与 quote 的产品名、实例 ID、实例名称、IP、备注一致。
+
