@@ -17,6 +17,19 @@ func TestManualProductSchemaMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
+	// The fixture tests in this package share the isolated server and create
+	// their own tables, so the migration chain needs the application schemas
+	// removed first. The socket is disposable and prefixed with
+	// /tmp/ddyidc-foundation- per testenv.
+	var schemas []string
+	if err := db.Raw("SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('mysql','information_schema','performance_schema','sys')").Scan(&schemas).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, schema := range schemas {
+		if err := db.Exec("DROP DATABASE `" + schema + "`").Error; err != nil {
+			t.Fatalf("reset schema %s: %v", schema, err)
+		}
+	}
 	steps, err := migrations.Steps()
 	if err != nil {
 		t.Fatal(err)
