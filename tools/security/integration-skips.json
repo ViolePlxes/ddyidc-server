@@ -644,6 +644,9 @@
   },  "ddyidc/internal/admintodo/TestManualProductUpstreamStageMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated FOUNDATION_MYSQL_SOCKET fixture run by deploy/linux/tests/test_manual_product_display.sh: an empty upstream document must be explained (未提交/结果未知/待上游返回/未匹配) from procurement or renewal rows only, without calling a supplier. A skip is not a pass."
+  },  "ddyidc/internal/admintodo/TestManualProductBindingFollowsReasonSourceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated FOUNDATION_MYSQL_SOCKET fixture run by deploy/linux/tests/test_manual_product_display.sh: with both a purchase invoice and a failing renewal invoice, a renewal-sourced row binds the renewal document (283706) and a procurement-sourced row keeps the purchase document (946271). A skip is not a pass."
   },  "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."
