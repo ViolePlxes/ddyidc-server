@@ -67,8 +67,41 @@ func TestManualProductDisplayMySQL(t *testing.T) {
 	}
 }
 
-func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {
+// A failed renewal has no procurement row, so its supplier document is the
+// renewal invoice. The queue must show that number instead of "未获取".
+func TestManualProductRenewalInvoiceMySQL(t *testing.T) {
 	tx := manualProductFixtureDB(t).Begin()
+	defer tx.Rollback()
+	for _, sql := range []string{
+		"INSERT INTO customer.customers(id,username) VALUES(99202,'renewal customer')",
+		"INSERT INTO instance.instances(id,customer_id,order_id,product_name,instance_no,created_at,updated_at,expires_at) VALUES(99201,99202,99203,'legacy plan','V10-476',NOW(),NOW(),'2026-10-21 21:47:28')",
+		"INSERT INTO instance.instance_renewals(id,instance_id,order_id,customer_id,state,invoice_id,last_error,updated_at) VALUES(99208,99201,99203,99202,'uncertain','283705','upstream renewal payment failed',NOW())",
+		"INSERT INTO instance.instance_events(id,instance_id,status,event_type,updated_at) VALUES(99209,99201,3,'renew',NOW())",
+	} {
+		if err := tx.Exec(sql).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := []Entry{{Source: "instance", ID: "99201", InstanceID: "99201", CustomerID: "99202"}}
+	if err := enrichManualProductDisplay(context.Background(), tx, rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows[0].UpstreamOrderID != "283705" {
+		t.Fatalf("renewal invoice not shown as upstream order: %q", rows[0].UpstreamOrderID)
+	}
+	if rows[0].UpstreamBillingURL != "" {
+		t.Fatal("purchase invoice URL must not be guessed for a renewal")
+	}
+	page, err := List(context.Background(), tx, "manual-products", Filter{Page: 1, PageSize: 20, CustomerID: "99202"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].UpstreamOrderID != "283705" || page.Items[0].Reason != "upstream renewal payment failed" {
+		t.Fatalf("renewal row missing invoice or reason: %+v", page.Items)
+	}
+}
+
+func TestRenewalTodoAppearsOnceMySQL(t *testing.T) {	tx := manualProductFixtureDB(t).Begin()
 	defer tx.Rollback()
 	for _, q := range []string{
 		"INSERT INTO customer.customers(id,username) VALUES(99102,'isolated')",

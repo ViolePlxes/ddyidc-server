@@ -56,6 +56,22 @@ func enrichManualProductDisplay(ctx context.Context, db *gorm.DB, entries []Entr
 			e.UpstreamOrderID = bills[0].ID
 			e.UpstreamBillingURL = manualBillingURL(bills[0].BaseURL, bills[0].ID)
 		}
+		// A failed renewal never creates a procurement row: its supplier document
+		// is the renewal invoice, so show that number instead of "未获取". No link
+		// is built because the purchase invoice URL is not proven for renewals.
+		if e.UpstreamOrderID == "" && e.Source == "instance" {
+			var renewal struct{ InvoiceID string }
+			if err := db.WithContext(ctx).Table("instance.instance_renewals").
+				Select("COALESCE(invoice_id,'') invoice_id").
+				Where("instance_id=? AND customer_id=? AND COALESCE(invoice_id,'')<>''", e.InstanceID, e.CustomerID).
+				Order("CASE WHEN state IN ('uncertain','failed') THEN 0 ELSE 1 END, created_at DESC").
+				Limit(1).Scan(&renewal).Error; err != nil {
+				return err
+			}
+			if renewal.InvoiceID != "" {
+				e.UpstreamOrderID = renewal.InvoiceID
+			}
+		}
 	}
 	return nil
 }

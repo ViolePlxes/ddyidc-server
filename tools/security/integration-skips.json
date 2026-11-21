@@ -638,7 +638,10 @@
     "disposition": "isolated_suite_required",
     "verification": "Official migration chain on a disposable FOUNDATION_MYSQL_SOCKET only, run by deploy/linux/tests/test_manual_product_display.sh: the manual-product list, history and summary queries must execute against the migrated schema so a projection cannot reference a fixture-only column. A skip is not a pass."
   },
-  "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
+  "ddyidc/internal/admintodo/TestManualProductRenewalInvoiceMySQL": {
+    "disposition": "isolated_suite_required",
+    "verification": "Disposable migrated FOUNDATION_MYSQL_SOCKET fixture run by deploy/linux/tests/test_manual_product_display.sh: a failed renewal with invoice_id 283705 must surface as the queue's upstream order without inventing a purchase-invoice link, and the list keeps the renewal reason. A skip is not a pass."
+  },  "ddyidc/internal/certification/TestTencentStatusPassMySQL": {
     "disposition": "isolated_suite_required",
     "verification": "Disposable migrated MySQL/Redis with a fixed DetectAuth/GetDetectInfoEnhanced fixture: server-side decision, sealed certify_result, cleared snapshot, idempotent terminal status and exactly one auto-pass audit. A skip is not a pass."
   },
