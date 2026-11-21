@@ -28,7 +28,7 @@ func manualProductFixtureDB(t *testing.T) *gorm.DB {
 		"CREATE TABLE IF NOT EXISTS instance.instance_events(id BIGINT,instance_id BIGINT,status INT,event_type VARCHAR(32),updated_at DATETIME(3),error_msg TEXT,created_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS instance.instance_renewals(id BIGINT,instance_id BIGINT,order_id BIGINT,customer_id BIGINT,ownership_version BIGINT,supplier_id BIGINT,host_id VARCHAR(64),cycle VARCHAR(32),duration BIGINT,base_expiry DATETIME(3),state VARCHAR(32),updated_at DATETIME(3),last_error VARCHAR(255))",
 		"CREATE TABLE IF NOT EXISTS system.todo_event_resolutions(event_id BIGINT)",
-		"CREATE TABLE IF NOT EXISTS `order`.delivery_units(id BIGINT,unit_no BIGINT DEFAULT 1,instance_id BIGINT,order_item_id BIGINT,order_id BIGINT,customer_id BIGINT,status VARCHAR(32),last_error VARCHAR(512) NULL,updated_at DATETIME(3))",
+		"CREATE TABLE IF NOT EXISTS `order`.delivery_units(id BIGINT,unit_no BIGINT DEFAULT 1,instance_id BIGINT,order_item_id BIGINT,order_id BIGINT,customer_id BIGINT,status VARCHAR(32),updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS `order`.orders(id BIGINT,customer_id BIGINT,status INT,order_no VARCHAR(64),created_at DATETIME,paid_at DATETIME,pay_amount DECIMAL(14,2) NOT NULL DEFAULT 0)",
 		"CREATE TABLE IF NOT EXISTS `order`.order_items(id BIGINT PRIMARY KEY,order_id BIGINT,product_id BIGINT,product_name VARCHAR(128),delivery_status INT,updated_at DATETIME(3))",
 		"CREATE TABLE IF NOT EXISTS product.upstream_products(product_id BIGINT,auto_setup INT)",

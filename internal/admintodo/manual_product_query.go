@@ -3,13 +3,13 @@ package admintodo
 // Keep revision inputs identical to the event types that can open this queue.
 const manualProductEventTypes = "'create','suspend','terminate','destroy','renew','sync_due_time','unsuspend'"
 
-// manualProductReason prefers the supplier's own failure text: delivery and
-// procurement rows keep the error returned by the upstream call, renewals keep
-// the supplier detail appended by the renewal executor. The system-written
-// sentences are only a fallback so the column is never silently empty.
+// manualProductReason prefers the supplier's own failure text: procurement rows
+// keep the error returned by the upstream call and renewals keep the supplier
+// detail appended by the renewal executor. The system-written sentences are only
+// a fallback so the column is never silently empty. delivery_units has no
+// last_error column (see 008_delivery_units.sql), so it is not consulted.
 func manualProductReason(instance string) string {
 	return `COALESCE(` +
-		`(SELECT CONVERT(NULLIF(d.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.delivery_units d WHERE d.instance_id=` + instance + `.id AND d.status IN ('unknown','failed') ORDER BY d.updated_at DESC LIMIT 1),` +
 		`(SELECT CONVERT(NULLIF(p.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.unit_procurements p WHERE p.order_id=` + instance + `.order_id ORDER BY p.updated_at DESC, p.id DESC LIMIT 1),` +
 		`(SELECT CONVERT(NULLIF(r.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM instance.instance_renewals r WHERE r.instance_id=` + instance + `.id AND r.state IN ('uncertain','failed') ORDER BY r.updated_at DESC LIMIT 1),` +
 		`(SELECT CONVERT(NULLIF(e.error_msg,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM instance.instance_events e WHERE e.instance_id=` + instance + `.id AND e.status=3 AND e.event_type IN (` + manualProductEventTypes + `) AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=e.id) ORDER BY e.created_at DESC LIMIT 1),` +
@@ -18,10 +18,9 @@ func manualProductReason(instance string) string {
 }
 
 // manualOrderReason applies the same priority to a paid order that has no
-// instance yet; the delivery unit and procurement rows carry the supplier text.
+// instance yet; the procurement row carries the supplier text.
 func manualOrderReason() string {
 	return `COALESCE(` +
-		`(SELECT CONVERT(NULLIF(d.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.delivery_units d WHERE d.order_item_id=oi.id AND d.order_id=o.id AND d.status IN ('unknown','failed') ORDER BY d.updated_at DESC LIMIT 1),` +
 		`(SELECT CONVERT(NULLIF(p.last_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM ` + "`order`" + `.unit_procurements p WHERE p.order_id=o.id ORDER BY p.updated_at DESC, p.id DESC LIMIT 1),` +
 		`(SELECT CONVERT(NULLIF(t.safe_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM system.durable_tasks t WHERE t.kind='post_payment' AND t.status IN ('unknown','failed') AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.customerId'))=CAST(o.customer_id AS CHAR) AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessType'))='order' AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessId'))=CAST(o.id AS CHAR) ORDER BY t.updated_at DESC LIMIT 1),` +
 		`'')`
