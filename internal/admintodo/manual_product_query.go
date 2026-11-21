@@ -13,7 +13,7 @@ func manualProductReason(instance string) string {
 		renewalText(instance) + `,` +
 		procurementText(instance) + `,` +
 		failedEventText(instance) + `,` +
-		taskText(instance) + `,'')`
+		taskText(instance, instance+`.order_id`) + `,'')`
 }
 
 // manualProductReasonSource names the table the reason came from, so the display
@@ -30,7 +30,7 @@ func manualProductReasonSource(instance string) string {
 // manualOrderReason applies the same priority to a paid order that has no
 // instance yet; the procurement row carries the supplier text.
 func manualOrderReason() string {
-	return `COALESCE(` + procurementText("o") + `,` + taskText("o") + `,'')`
+	return `COALESCE(` + procurementText("o") + `,` + taskText("o", "o.id") + `,'')`
 }
 
 func manualOrderReasonSource() string {
@@ -52,8 +52,8 @@ func failedEventText(instance string) string {
 	return `(SELECT CONVERT(NULLIF(e.error_msg,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM instance.instance_events e WHERE e.instance_id=` + instance + `.id AND e.status=3 AND e.event_type IN (` + manualProductEventTypes + `) AND NOT EXISTS(SELECT 1 FROM system.todo_event_resolutions z WHERE z.event_id=e.id) ORDER BY e.created_at DESC LIMIT 1)`
 }
 
-func taskText(instance string) string {
-	return `(SELECT CONVERT(NULLIF(t.safe_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM system.durable_tasks t WHERE t.kind='post_payment' AND t.status IN ('unknown','failed') AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.customerId'))=CAST(` + instance + `.customer_id AS CHAR) AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessType'))='order' AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessId'))=CAST(` + instance + `.order_id AS CHAR) ORDER BY t.updated_at DESC LIMIT 1)`
+func taskText(alias, orderID string) string {
+	return `(SELECT CONVERT(NULLIF(t.safe_error,'') USING utf8mb4) COLLATE utf8mb4_unicode_ci FROM system.durable_tasks t WHERE t.kind='post_payment' AND t.status IN ('unknown','failed') AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.customerId'))=CAST(` + alias + `.customer_id AS CHAR) AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessType'))='order' AND JSON_UNQUOTE(JSON_EXTRACT(t.payload,'$.businessId'))=CAST(` + orderID + ` AS CHAR) ORDER BY t.updated_at DESC LIMIT 1)`
 }
 
 // Failed delivery reserves an instance ID before creating an instance row.
