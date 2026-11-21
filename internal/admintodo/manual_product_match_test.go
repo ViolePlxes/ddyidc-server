@@ -63,7 +63,7 @@ func TestManualProductCompleteRenewalMatchMySQL(t *testing.T) {
 		t.Fatal("provider duration in seconds ignored", e)
 	}
 	// Renewal orders retain their association, but only the instance is listed.
-	if e := tx.Exec("INSERT INTO `order`.orders VALUES(703,77,2,'REN-FIXTURE',NOW(),NOW())").Error; e != nil {
+	if e := tx.Exec("INSERT INTO `order`.orders VALUES(703,77,2,'REN-FIXTURE',NOW(),NOW(),0)").Error; e != nil {
 		t.Fatal(e)
 	}
 	if e := tx.Exec("INSERT INTO `order`.order_items VALUES(7031,703,101,'renewal',3,NOW())").Error; e != nil {
